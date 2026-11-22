@@ -416,6 +416,8 @@ static UILabel *monospaced(UIView *host, NSString *identifier, const void *findK
     }
     if (sg_rollingDigits) SGRRollDigits(label);
     else SGRMonospacedDigits(label);
+    // The Music app's type for the times (SGRTimeLabelStyle), over Spotify's.
+    SGRTimeLabelStyle(label);
     return label;
 }
 

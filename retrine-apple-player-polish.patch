@@ -1,0 +1,276 @@
+diff --git a/docs/tweaks.md b/docs/tweaks.md
+index fed07c0..db8251e 100644
+--- a/docs/tweaks.md
++++ b/docs/tweaks.md
+@@ -950,9 +950,9 @@ Shared:
+                   Lossless: a small capsule in semibold caption type and the secondary label color, centered under the
+                   progress bar between the two times and on their middle (AudioQuality.x, AudioQualityRules.m). The
+                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
+-                  4.6 pt corners (a quarter of its height) in regular caption type, lit by adding light to what is behind it
+-                  (plusL: 17 of 255 for the fill, 107 more for the text and glyph, measured on the Music app's iOS 26
+-                  player), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
++                  4.6 pt corners (a quarter of its height) in medium caption type, lit by adding light to what is behind it
++                  (plusL: 17 of 255 for the fill, 165 more for the text and glyph, the Music app's measured 107 lifted so
++                  the words read as clearly over the player's light lower half), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
+                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
+                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
+                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
+@@ -1657,7 +1657,8 @@ Redesigned:
+                   Spotify takes the pill away and brings the slot back already ends the title before it. Where
+                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
+                   in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
+-                  timestamps under the slider are metered (SGRMonospacedDigits) and, with Rolling time digits on (the
++                  timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
++                  the system font, semibold, 13 pt at the default text size, a minus sign before the time left) and, with Rolling time digits on (the
+                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
+                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
+                   Player page) draws the player's add button, now an item of its ⋯ menu, as a star — outlined in the primary color until the song
+@@ -1729,11 +1730,13 @@ Redesigned:
+                   player against 9% so (1.4% held still, 6.5% for Spotify's own player). A black gradient dims the clip by its brightness (the 75th
+                   percentile of the linear luminance of three frames), so white text keeps 4.5:1 (7:1 with Increase
+                   Contrast), from 0.10 to 0.80, only where text is: a band at the top and from above the title
+-                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is whole over the
+-                  status bar, and down over the header (to 14% of the screen) only while the header shows where it plays
+-                  from, Spotify's arrow or the AI DJ's buttons; with only the grabber it fades out right under the status
+-                  bar (issue #39). Over the dim, a second black deepens from where the dim turns whole down to the
+-                  bottom of the screen (0.35 there), so the lower part darkens toward the bottom as the Music app's
++                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is darkest at the very
++                  top and has no edge: the dim is 0.55 of itself where the band ends (over the status bar, and over the
++                  header, to 14% of the screen, only while the header shows where it plays from, Spotify's arrow or the
++                  AI DJ's buttons) and fades out from there over 72 points (issue #39). Down to the title it is eased the
++                  other way, light long after it starts and faster toward the title, so the lower half darkens as the
++                  Music app's does. Over the dim, a second black deepens from where the dim turns whole down to the
++                  bottom of the screen (0.30 there), so the lower part darkens toward the bottom as the Music app's
+                   does and is nowhere lighter than the dim alone. A track that changes
+                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
+                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer
+diff --git a/harness/player/main.m b/harness/player/main.m
+index 3ba8d19..977a673 100644
+--- a/harness/player/main.m
++++ b/harness/player/main.m
+@@ -2333,8 +2333,11 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+         // Dimmed by its brightness: HARNESS_DIM is what the clip in HARNESS_CANVAS_FILE should get (0.54 for white,
+         // 0.10 for black), which the clip's own dim eases to 0.7 of (kDimSoften in PlayerMotion.x); the rule itself is checked at its ends.
+         CAGradientLayer *dim = [motion valueForKey:@"_dim"];
+-        // Only where text is: whole at the top and from the seam's blur down, clear between (issue #101).
+-        BOOL banded = dim && stopAlpha(dim, 1) == 1 && stopAlpha(dim, 2) == 0 && stopAlpha(dim, 4) == 1;
++        // Whole at the very top and fading out from there with no edge, clear until the ramp, then whole from the seam's
++        // blur down (issue #101): stop 0 the top, 1 the end of the status bar's band (part of the dim), 5 the end of the
++        // fade, 6 the start of the ramp and 10 the whole dim.
++        BOOL banded = dim && dim.colors.count == 11 && stopAlpha(dim, 0) == 1 && stopAlpha(dim, 1) > 0 && stopAlpha(dim, 1) < 1
++                      && stopAlpha(dim, 5) == 0 && stopAlpha(dim, 6) == 0 && stopAlpha(dim, 10) == 1;
+         const char *expected = getenv("HARNESS_DIM");
+         BOOL rule = fabs(SGRPlayerClipDim(1, NO, NO) - 0.54) < 0.01 && fabs(SGRPlayerClipDim(1, YES, NO) - 0.65) < 0.01
+                     && SGRPlayerClipDim(0, NO, NO) == 0.10 && fabs(SGRPlayerClipDim(0, NO, YES) - 0.25) < 1e-6
+@@ -2342,7 +2345,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+         self->_dimAlone = dim.opacity;
+         [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected) * 0.7) < 0.02)
+                 step:@"the dim" detail:[NSString stringWithFormat:@"rule %@, dim %.2f %@%@", rule ? @"right" : @"wrong", dim.opacity,
+-                                        banded ? [NSString stringWithFormat:@"whole to %@ and from %@", dim.locations[1], dim.locations[4]] : @"not banded",
++                                        banded ? [NSString stringWithFormat:@"fading from the top to %@ and whole from %@", dim.locations[1], dim.locations[10]] : @"not banded",
+                                         expected ? [NSString stringWithFormat:@", %s expected", expected] : @""]];
+         // The band at the top: whole over the status bar only while the header shows nothing but the grabber, and over
+         // the header's row too while it shows where it plays from. The stored switch is put back as it was.
+@@ -2363,7 +2366,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+         [self layOut];
+         [motion layoutIfNeeded];
+         [self expect:safeTop > 0 && fabs(bare - safeTop) < 1 && shown >= rowBottom step:@"the band at the top"
+-              detail:[NSString stringWithFormat:@"whole to %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
++              detail:[NSString stringWithFormat:@"the band's end at %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
+                       bare, safeTop, shown, rowBottom]];
+         NSLog(@"[harness] motion: screenshot the clip now");
+         // Held here for a screenshot of the clip as it opened, the context as stored.
+diff --git a/tweak/Sources/Redesigned/Kit/SGRRestyle.h b/tweak/Sources/Redesigned/Kit/SGRRestyle.h
+index 4946950..97ec395 100644
+--- a/tweak/Sources/Redesigned/Kit/SGRRestyle.h
++++ b/tweak/Sources/Redesigned/Kit/SGRRestyle.h
+@@ -47,6 +47,11 @@ void SGRVanish(UIView *view);
+ // setFont: by a runtime subclass of the instance, like SGRSuppress. Idempotent.
+ void SGRMonospacedDigits(UILabel *label);
+ 
++// SGRMonospacedDigits, in the Music app's type for the player's times: the system font, semibold, footnote-sized
++// (it follows the text size), with a real minus sign in place of the hyphen before the time left. Kept through
++// Spotify's own setters as the digits are. Idempotent.
++void SGRTimeLabelStyle(UILabel *label);
++
+ // `changed` after every setImage: on the image view, Spotify's included, for as long as the view lives: by a
+ // runtime subclass of the instance like SGRSuppress, or, for one of Spotify's own classes (Encore's image
+ // views, which no instance of can be subclassed), by an override on that class, which only ever reports the
+diff --git a/tweak/Sources/Redesigned/Kit/SGRRestyle.m b/tweak/Sources/Redesigned/Kit/SGRRestyle.m
+index 5fc85d2..c0fb241 100644
+--- a/tweak/Sources/Redesigned/Kit/SGRRestyle.m
++++ b/tweak/Sources/Redesigned/Kit/SGRRestyle.m
+@@ -333,22 +333,52 @@ static BOOL hasMonospacedDigits(UIFont *font) {
+     return NO;
+ }
+ 
++// The Music app's times (SGRTimeLabelStyle): 13 pt like the footnote style, semibold, at most this large at the
++// biggest text sizes.
++static const CGFloat kTimeFontSize = 13, kTimeFontMost = 19;
++static char kTimeStyleKey;
++
++static UIFont *timeFont(void) {
++    UIFont *base = [UIFont systemFontOfSize:kTimeFontSize weight:UIFontWeightSemibold];
++    base = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:base maximumPointSize:kTimeFontMost];
++    return SGMonospacedDigitsFont(base);
++}
++
++static BOOL sameFont(UIFont *a, UIFont *b) {
++    return [a.fontName isEqualToString:b.fontName] && fabs(a.pointSize - b.pointSize) < 0.01;
++}
++
+ static void applyMonospaced(UILabel *label, Class original) {
+     NSAttributedString *text = label.attributedText;
+     struct objc_super parent = {label, original};
++    BOOL styled = objc_getAssociatedObject(label, &kTimeStyleKey) != nil;
++    UIFont *target = styled ? timeFont() : nil;
+     if (!text.length) {
+         UIFont *font = label.font;
+-        if (font && !hasMonospacedDigits(font)) {
++        if (target) {
++            if (!font || !sameFont(font, target)) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setFont:), target);
++        } else if (font && !hasMonospacedDigits(font)) {
+             ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setFont:), SGMonospacedDigitsFont(font));
+         }
+         return;
+     }
+     __block NSMutableAttributedString *mapped = nil;
+     [text enumerateAttribute:NSFontAttributeName inRange:NSMakeRange(0, text.length) options:0 usingBlock:^(UIFont *font, NSRange range, BOOL *stop) {
++        if (target) {
++            if (font && sameFont(font, target)) return;
++            if (!mapped) mapped = [text mutableCopy];
++            [mapped addAttribute:NSFontAttributeName value:target range:range];
++            return;
++        }
+         if (!font || hasMonospacedDigits(font)) return;
+         if (!mapped) mapped = [text mutableCopy];
+         [mapped addAttribute:NSFontAttributeName value:SGMonospacedDigitsFont(font) range:range];
+     }];
++    // The time left leads with a hyphen in Spotify's text; the Music app's is a minus sign, which is as wide as a plus.
++    if (styled && [text.string hasPrefix:@"-"]) {
++        if (!mapped) mapped = [text mutableCopy];
++        [mapped replaceCharactersInRange:NSMakeRange(0, 1) withString:@"\u2212"];
++    }
+     if (mapped) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setAttributedText:), mapped);
+ }
+ 
+@@ -423,6 +453,13 @@ void SGRMonospacedDigits(UILabel *label) {
+     keepMonospaced(label, original);
+ }
+ 
++void SGRTimeLabelStyle(UILabel *label) {
++    if (![label isKindOfClass:UILabel.class]) return;
++    objc_setAssociatedObject(label, &kTimeStyleKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++    // The override is in place or goes in now, and the label is given the style once at once.
++    SGRMonospacedDigits(label);
++}
++
+ // Only the views that asked: everything else of the class carrying the override goes straight back out.
+ static void reportImage(UIImageView *view) {
+     void (^block)(UIImageView *) = objc_getAssociatedObject(view, &kImageObserverKey);
+diff --git a/tweak/Sources/Redesigned/Player/PlayerControls.x b/tweak/Sources/Redesigned/Player/PlayerControls.x
+index dc6b9bd..c7a4693 100644
+--- a/tweak/Sources/Redesigned/Player/PlayerControls.x
++++ b/tweak/Sources/Redesigned/Player/PlayerControls.x
+@@ -416,6 +416,8 @@ static UILabel *monospaced(UIView *host, NSString *identifier, const void *findK
+     }
+     if (sg_rollingDigits) SGRRollDigits(label);
+     else SGRMonospacedDigits(label);
++    // The Music app's type for the times (SGRTimeLabelStyle), over Spotify's.
++    SGRTimeLabelStyle(label);
+     return label;
+ }
+ 
+diff --git a/tweak/Sources/Redesigned/Player/PlayerMotion.x b/tweak/Sources/Redesigned/Player/PlayerMotion.x
+index 19703bc..b88ef7a 100644
+--- a/tweak/Sources/Redesigned/Player/PlayerMotion.x
++++ b/tweak/Sources/Redesigned/Player/PlayerMotion.x
+@@ -105,12 +105,20 @@ static const CGFloat kStillLeastAspect = 4.0 / 3, kStillLeastPixels = 300;
+ static const CGFloat kStillScrimTop = 0.45, kStillScrimBelowSafeTop = 76;
+ // The dim's floor and ceiling, and what the lyrics add to it.
+ static const CGFloat kDimLeast = 0.10, kDimMost = 0.80, kDimLyrics = 0.15;
+-// The dim's band at the top: whole over the status bar, and down to this share of the screen while the header
+-// shows something to read, so its text gets all of it, then gone over kDimFade points.
+-static const CGFloat kDimTop = 0.14, kDimFade = 48;
++// The dim's band at the top: over the status bar, and down to this share of the screen while the header shows
++// something to read, so its text gets it, then gone over kDimFade points (eased as the next constants say).
++static const CGFloat kDimTop = 0.14, kDimFade = 72;
++// The Music app's top is not a band with an edge: it is darkest at the very top and lightens all the way down. The
++// dim is this share of itself where the band ends (over the status bar), whole only at the top edge, and from there
++// it fades out over kDimFade points along a curve (kDimCurve: 1 is a line, more lingers dark near the top and
++// clears sooner). The ramp down to the title is eased the other way, kDimEase 2 a parabola: it stays light long
++// after it starts and darkens faster toward the title, as the Music app's lower half does.
++static const CGFloat kDimBandShare = 0.55, kDimCurve = 1.5, kDimEase = 2;
++// How many steps each of those curves is drawn in.
++enum { kDimSteps = 4 };
+ // The black over the dim at the bottom of the screen, from none where the dim is whole above the title: the Music
+ // app's player darkens toward its foot (issue #39).
+-static const CGFloat kDeepenBottom = 0.15;
++static const CGFloat kDeepenBottom = 0.30;
+ // The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
+ // cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
+ // (SGRPlayerClipDim) asks for, and it grows over kDimRamp points above where it is whole, not over kBlurRamp. Increase
+@@ -317,11 +325,21 @@ static NSArray *footColors(CGImageRef poster) {
+ 
+ // What fades is the effect views' effect, never their alpha or an ancestor's: UIKit draws a blur under a
+ // fading alpha or a mask wrongly or not at all.
+-// The dim's stops: black at the top and from above the title down, clear between; black all over behind the
+-// lyrics, which run down the whole screen.
++// The dim's stops, top to bottom (11 of them; SGRPlayerMotionView's layout puts each at its place): the very top
++// (whole), the end of the band over the status bar (kDimBandShare), kDimSteps down the fade to nothing, where the
++// ramp starts (nothing), and kDimSteps up it to the whole dim. `whole` (the lyrics, which run down the whole
++// screen) is black at every stop.
+ static NSArray *dimColors(BOOL whole) {
+-    id black = (__bridge id)UIColor.blackColor.CGColor, between = whole ? black : (__bridge id)UIColor.clearColor.CGColor;
+-    return @[black, black, between, between, black];
++    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + 2 * kDimSteps];
++    void (^add)(CGFloat) = ^(CGFloat alpha) {
++        [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:whole ? 1 : alpha].CGColor];
++    };
++    add(1);
++    add(kDimBandShare);
++    for (int i = 1; i <= kDimSteps; i++) add(kDimBandShare * pow(1 - (CGFloat)i / kDimSteps, kDimCurve));
++    add(0);
++    for (int j = 1; j <= kDimSteps; j++) add(pow((CGFloat)j / kDimSteps, kDimEase));
++    return colors;
+ }
+ 
+ static UIBlurEffect *blurEffect(void) {
+@@ -459,7 +477,12 @@ static UIBlurEffect *blurEffect(void) {
+     // shows more than the grabber.
+     CGFloat bandEnd = SGRPlayerHeaderShowsIn(self) ? screen * kDimTop : safeTop;
+     CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kDimRamp);
+-    _dim.locations = @[@0, at(topEnd), at(MIN(topEnd + kDimFade, rampFrom)), at(rampFrom), at(dimFrom)];
++    CGFloat fadeEnd = MIN(topEnd + kDimFade, rampFrom);
++    NSMutableArray *stops = [NSMutableArray arrayWithObjects:@0, at(topEnd), nil];
++    for (int i = 1; i <= kDimSteps; i++) [stops addObject:at(topEnd + (fadeEnd - topEnd) * i / kDimSteps)];
++    [stops addObject:at(rampFrom)];
++    for (int j = 1; j <= kDimSteps; j++) [stops addObject:at(rampFrom + (dimFrom - rampFrom) * j / kDimSteps)];
++    _dim.locations = stops;
+     _deepen.locations = @[at(dimFrom), at(screen)];
+     _seamMask.frame = bounds;
+     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
+diff --git a/tweak/Sources/Shared/Player/AudioQuality.x b/tweak/Sources/Shared/Player/AudioQuality.x
+index 6e39725..26c578a 100644
+--- a/tweak/Sources/Shared/Player/AudioQuality.x
++++ b/tweak/Sources/Shared/Player/AudioQuality.x
+@@ -11,7 +11,9 @@ static const CGFloat kFontSize = 11, kFontMax = 15, kPadX = 7, kPadY = 2, kGlyph
+ // The redesign's, measured on the Music app's player (iOS 26, 3x): regular type in a rounded rectangle 18.3 pt tall
+ // with 4.6 pt corners, lit by adding light to what is behind it: 17 of 255 for the fill, 107 more for the ink.
+ // Increase Contrast draws it over the backdrop in the label colors instead, as the native look's.
+-static const CGFloat kRedesignPadY = 2.6, kRedesignCornerShare = 0.25, kRedesignFillLight = 17 / 255.0, kRedesignInkLight = 107 / 255.0;
++// The ink is lifted from 107 to 165 and the type from regular to medium: over the player's lower half, which is
++// light, the measured ink left the words faint beside the Music app's, whose quality text reads nearly white.
++static const CGFloat kRedesignPadY = 2.6, kRedesignCornerShare = 0.25, kRedesignFillLight = 17 / 255.0, kRedesignInkLight = 165 / 255.0;
+ // Kept clear between the badge and either time, and around the badge for a finger.
+ static const CGFloat kTimeGap = 8, kTouchOutset = 4;
+ static const NSTimeInterval kFade = 0.25;
+@@ -381,7 +383,7 @@ static void checkDetails(void) {
+ }
+ 
+ - (UIFont *)font {
+-    UIFontWeight weight = _redesigned ? UIFontWeightRegular : UIFontWeightSemibold;
++    UIFontWeight weight = _redesigned ? UIFontWeightMedium : UIFontWeightSemibold;
+     return [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption2] scaledFontForFont:[UIFont systemFontOfSize:kFontSize weight:weight]
+                                                                        maximumPointSize:kFontMax compatibleWithTraitCollection:self.traitCollection];
+ }

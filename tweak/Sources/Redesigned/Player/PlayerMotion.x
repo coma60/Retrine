@@ -105,12 +105,20 @@ static const CGFloat kStillLeastAspect = 4.0 / 3, kStillLeastPixels = 300;
 static const CGFloat kStillScrimTop = 0.45, kStillScrimBelowSafeTop = 76;
 // The dim's floor and ceiling, and what the lyrics add to it.
 static const CGFloat kDimLeast = 0.10, kDimMost = 0.80, kDimLyrics = 0.15;
-// The dim's band at the top: whole over the status bar, and down to this share of the screen while the header
-// shows something to read, so its text gets all of it, then gone over kDimFade points.
-static const CGFloat kDimTop = 0.14, kDimFade = 48;
+// The dim's band at the top: over the status bar, and down to this share of the screen while the header shows
+// something to read, so its text gets it, then gone over kDimFade points (eased as the next constants say).
+static const CGFloat kDimTop = 0.14, kDimFade = 72;
+// The Music app's top is not a band with an edge: it is darkest at the very top and lightens all the way down. The
+// dim is this share of itself where the band ends (over the status bar), whole only at the top edge, and from there
+// it fades out over kDimFade points along a curve (kDimCurve: 1 is a line, more lingers dark near the top and
+// clears sooner). The ramp down to the title is eased the other way, kDimEase 2 a parabola: it stays light long
+// after it starts and darkens faster toward the title, as the Music app's lower half does.
+static const CGFloat kDimBandShare = 0.55, kDimCurve = 1.5, kDimEase = 2;
+// How many steps each of those curves is drawn in.
+enum { kDimSteps = 4 };
 // The black over the dim at the bottom of the screen, from none where the dim is whole above the title: the Music
 // app's player darkens toward its foot (issue #39).
-static const CGFloat kDeepenBottom = 0.15;
+static const CGFloat kDeepenBottom = 0.30;
 // The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
 // cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
 // (SGRPlayerClipDim) asks for, and it grows over kDimRamp points above where it is whole, not over kBlurRamp. Increase
@@ -317,11 +325,21 @@ static NSArray *footColors(CGImageRef poster) {
 
 // What fades is the effect views' effect, never their alpha or an ancestor's: UIKit draws a blur under a
 // fading alpha or a mask wrongly or not at all.
-// The dim's stops: black at the top and from above the title down, clear between; black all over behind the
-// lyrics, which run down the whole screen.
+// The dim's stops, top to bottom (11 of them; SGRPlayerMotionView's layout puts each at its place): the very top
+// (whole), the end of the band over the status bar (kDimBandShare), kDimSteps down the fade to nothing, where the
+// ramp starts (nothing), and kDimSteps up it to the whole dim. `whole` (the lyrics, which run down the whole
+// screen) is black at every stop.
 static NSArray *dimColors(BOOL whole) {
-    id black = (__bridge id)UIColor.blackColor.CGColor, between = whole ? black : (__bridge id)UIColor.clearColor.CGColor;
-    return @[black, black, between, between, black];
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + 2 * kDimSteps];
+    void (^add)(CGFloat) = ^(CGFloat alpha) {
+        [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:whole ? 1 : alpha].CGColor];
+    };
+    add(1);
+    add(kDimBandShare);
+    for (int i = 1; i <= kDimSteps; i++) add(kDimBandShare * pow(1 - (CGFloat)i / kDimSteps, kDimCurve));
+    add(0);
+    for (int j = 1; j <= kDimSteps; j++) add(pow((CGFloat)j / kDimSteps, kDimEase));
+    return colors;
 }
 
 static UIBlurEffect *blurEffect(void) {
@@ -459,7 +477,12 @@ static UIBlurEffect *blurEffect(void) {
     // shows more than the grabber.
     CGFloat bandEnd = SGRPlayerHeaderShowsIn(self) ? screen * kDimTop : safeTop;
     CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kDimRamp);
-    _dim.locations = @[@0, at(topEnd), at(MIN(topEnd + kDimFade, rampFrom)), at(rampFrom), at(dimFrom)];
+    CGFloat fadeEnd = MIN(topEnd + kDimFade, rampFrom);
+    NSMutableArray *stops = [NSMutableArray arrayWithObjects:@0, at(topEnd), nil];
+    for (int i = 1; i <= kDimSteps; i++) [stops addObject:at(topEnd + (fadeEnd - topEnd) * i / kDimSteps)];
+    [stops addObject:at(rampFrom)];
+    for (int j = 1; j <= kDimSteps; j++) [stops addObject:at(rampFrom + (dimFrom - rampFrom) * j / kDimSteps)];
+    _dim.locations = stops;
     _deepen.locations = @[at(dimFrom), at(screen)];
     _seamMask.frame = bounds;
     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];

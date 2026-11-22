@@ -2333,8 +2333,11 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         // Dimmed by its brightness: HARNESS_DIM is what the clip in HARNESS_CANVAS_FILE should get (0.54 for white,
         // 0.10 for black), which the clip's own dim eases to 0.7 of (kDimSoften in PlayerMotion.x); the rule itself is checked at its ends.
         CAGradientLayer *dim = [motion valueForKey:@"_dim"];
-        // Only where text is: whole at the top and from the seam's blur down, clear between (issue #101).
-        BOOL banded = dim && stopAlpha(dim, 1) == 1 && stopAlpha(dim, 2) == 0 && stopAlpha(dim, 4) == 1;
+        // Whole at the very top and fading out from there with no edge, clear until the ramp, then whole from the seam's
+        // blur down (issue #101): stop 0 the top, 1 the end of the status bar's band (part of the dim), 5 the end of the
+        // fade, 6 the start of the ramp and 10 the whole dim.
+        BOOL banded = dim && dim.colors.count == 11 && stopAlpha(dim, 0) == 1 && stopAlpha(dim, 1) > 0 && stopAlpha(dim, 1) < 1
+                      && stopAlpha(dim, 5) == 0 && stopAlpha(dim, 6) == 0 && stopAlpha(dim, 10) == 1;
         const char *expected = getenv("HARNESS_DIM");
         BOOL rule = fabs(SGRPlayerClipDim(1, NO, NO) - 0.54) < 0.01 && fabs(SGRPlayerClipDim(1, YES, NO) - 0.65) < 0.01
                     && SGRPlayerClipDim(0, NO, NO) == 0.10 && fabs(SGRPlayerClipDim(0, NO, YES) - 0.25) < 1e-6
@@ -2342,7 +2345,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         self->_dimAlone = dim.opacity;
         [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected) * 0.7) < 0.02)
                 step:@"the dim" detail:[NSString stringWithFormat:@"rule %@, dim %.2f %@%@", rule ? @"right" : @"wrong", dim.opacity,
-                                        banded ? [NSString stringWithFormat:@"whole to %@ and from %@", dim.locations[1], dim.locations[4]] : @"not banded",
+                                        banded ? [NSString stringWithFormat:@"fading from the top to %@ and whole from %@", dim.locations[1], dim.locations[10]] : @"not banded",
                                         expected ? [NSString stringWithFormat:@", %s expected", expected] : @""]];
         // The band at the top: whole over the status bar only while the header shows nothing but the grabber, and over
         // the header's row too while it shows where it plays from. The stored switch is put back as it was.
@@ -2363,7 +2366,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         [self layOut];
         [motion layoutIfNeeded];
         [self expect:safeTop > 0 && fabs(bare - safeTop) < 1 && shown >= rowBottom step:@"the band at the top"
-              detail:[NSString stringWithFormat:@"whole to %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
+              detail:[NSString stringWithFormat:@"the band's end at %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
                       bare, safeTop, shown, rowBottom]];
         NSLog(@"[harness] motion: screenshot the clip now");
         // Held here for a screenshot of the clip as it opened, the context as stored.

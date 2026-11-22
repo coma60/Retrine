@@ -950,9 +950,9 @@ Shared:
                   Lossless: a small capsule in semibold caption type and the secondary label color, centered under the
                   progress bar between the two times and on their middle (AudioQuality.x, AudioQualityRules.m). The
                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
-                  4.6 pt corners (a quarter of its height) in regular caption type, lit by adding light to what is behind it
-                  (plusL: 17 of 255 for the fill, 107 more for the text and glyph, measured on the Music app's iOS 26
-                  player), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
+                  4.6 pt corners (a quarter of its height) in medium caption type, lit by adding light to what is behind it
+                  (plusL: 17 of 255 for the fill, 165 more for the text and glyph, the Music app's measured 107 lifted so
+                  the words read as clearly over the player's light lower half), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
@@ -1657,7 +1657,8 @@ Redesigned:
                   Spotify takes the pill away and brings the slot back already ends the title before it. Where
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
                   in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
-                  timestamps under the slider are metered (SGRMonospacedDigits) and, with Rolling time digits on (the
+                  timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
+                  the system font, semibold, 13 pt at the default text size, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
                   Player page) draws the player's add button, now an item of its ⋯ menu, as a star — outlined in the primary color until the song
@@ -1729,11 +1730,13 @@ Redesigned:
                   player against 9% so (1.4% held still, 6.5% for Spotify's own player). A black gradient dims the clip by its brightness (the 75th
                   percentile of the linear luminance of three frames), so white text keeps 4.5:1 (7:1 with Increase
                   Contrast), from 0.10 to 0.80, only where text is: a band at the top and from above the title
-                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is whole over the
-                  status bar, and down over the header (to 14% of the screen) only while the header shows where it plays
-                  from, Spotify's arrow or the AI DJ's buttons; with only the grabber it fades out right under the status
-                  bar (issue #39). Over the dim, a second black deepens from where the dim turns whole down to the
-                  bottom of the screen (0.35 there), so the lower part darkens toward the bottom as the Music app's
+                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is darkest at the very
+                  top and has no edge: the dim is 0.55 of itself where the band ends (over the status bar, and over the
+                  header, to 14% of the screen, only while the header shows where it plays from, Spotify's arrow or the
+                  AI DJ's buttons) and fades out from there over 72 points (issue #39). Down to the title it is eased the
+                  other way, light long after it starts and faster toward the title, so the lower half darkens as the
+                  Music app's does. Over the dim, a second black deepens from where the dim turns whole down to the
+                  bottom of the screen (0.30 there), so the lower part darkens toward the bottom as the Music app's
                   does and is nowhere lighter than the dim alone. A track that changes
                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer

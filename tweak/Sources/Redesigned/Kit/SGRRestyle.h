@@ -47,6 +47,11 @@ void SGRVanish(UIView *view);
 // setFont: by a runtime subclass of the instance, like SGRSuppress. Idempotent.
 void SGRMonospacedDigits(UILabel *label);
 
+// SGRMonospacedDigits, in the Music app's type for the player's times: the system font, semibold, footnote-sized
+// (it follows the text size), with a real minus sign in place of the hyphen before the time left. Kept through
+// Spotify's own setters as the digits are. Idempotent.
+void SGRTimeLabelStyle(UILabel *label);
+
 // `changed` after every setImage: on the image view, Spotify's included, for as long as the view lives: by a
 // runtime subclass of the instance like SGRSuppress, or, for one of Spotify's own classes (Encore's image
 // views, which no instance of can be subclassed), by an override on that class, which only ever reports the

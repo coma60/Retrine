@@ -333,22 +333,52 @@ static BOOL hasMonospacedDigits(UIFont *font) {
     return NO;
 }
 
+// The Music app's times (SGRTimeLabelStyle): 13 pt like the footnote style, semibold, at most this large at the
+// biggest text sizes.
+static const CGFloat kTimeFontSize = 13, kTimeFontMost = 19;
+static char kTimeStyleKey;
+
+static UIFont *timeFont(void) {
+    UIFont *base = [UIFont systemFontOfSize:kTimeFontSize weight:UIFontWeightSemibold];
+    base = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:base maximumPointSize:kTimeFontMost];
+    return SGMonospacedDigitsFont(base);
+}
+
+static BOOL sameFont(UIFont *a, UIFont *b) {
+    return [a.fontName isEqualToString:b.fontName] && fabs(a.pointSize - b.pointSize) < 0.01;
+}
+
 static void applyMonospaced(UILabel *label, Class original) {
     NSAttributedString *text = label.attributedText;
     struct objc_super parent = {label, original};
+    BOOL styled = objc_getAssociatedObject(label, &kTimeStyleKey) != nil;
+    UIFont *target = styled ? timeFont() : nil;
     if (!text.length) {
         UIFont *font = label.font;
-        if (font && !hasMonospacedDigits(font)) {
+        if (target) {
+            if (!font || !sameFont(font, target)) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setFont:), target);
+        } else if (font && !hasMonospacedDigits(font)) {
             ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setFont:), SGMonospacedDigitsFont(font));
         }
         return;
     }
     __block NSMutableAttributedString *mapped = nil;
     [text enumerateAttribute:NSFontAttributeName inRange:NSMakeRange(0, text.length) options:0 usingBlock:^(UIFont *font, NSRange range, BOOL *stop) {
+        if (target) {
+            if (font && sameFont(font, target)) return;
+            if (!mapped) mapped = [text mutableCopy];
+            [mapped addAttribute:NSFontAttributeName value:target range:range];
+            return;
+        }
         if (!font || hasMonospacedDigits(font)) return;
         if (!mapped) mapped = [text mutableCopy];
         [mapped addAttribute:NSFontAttributeName value:SGMonospacedDigitsFont(font) range:range];
     }];
+    // The time left leads with a hyphen in Spotify's text; the Music app's is a minus sign, which is as wide as a plus.
+    if (styled && [text.string hasPrefix:@"-"]) {
+        if (!mapped) mapped = [text mutableCopy];
+        [mapped replaceCharactersInRange:NSMakeRange(0, 1) withString:@"\u2212"];
+    }
     if (mapped) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setAttributedText:), mapped);
 }
 
@@ -421,6 +451,13 @@ void SGRMonospacedDigits(UILabel *label) {
     });
     Class original = kept ? class_getSuperclass(object_getClass(label)) : object_getClass(label);
     keepMonospaced(label, original);
+}
+
+void SGRTimeLabelStyle(UILabel *label) {
+    if (![label isKindOfClass:UILabel.class]) return;
+    objc_setAssociatedObject(label, &kTimeStyleKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The override is in place or goes in now, and the label is given the style once at once.
+    SGRMonospacedDigits(label);
 }
 
 // Only the views that asked: everything else of the class carrying the override goes straight back out.

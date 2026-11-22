@@ -11,7 +11,9 @@ static const CGFloat kFontSize = 11, kFontMax = 15, kPadX = 7, kPadY = 2, kGlyph
 // The redesign's, measured on the Music app's player (iOS 26, 3x): regular type in a rounded rectangle 18.3 pt tall
 // with 4.6 pt corners, lit by adding light to what is behind it: 17 of 255 for the fill, 107 more for the ink.
 // Increase Contrast draws it over the backdrop in the label colors instead, as the native look's.
-static const CGFloat kRedesignPadY = 2.6, kRedesignCornerShare = 0.25, kRedesignFillLight = 17 / 255.0, kRedesignInkLight = 107 / 255.0;
+// The ink is lifted from 107 to 165 and the type from regular to medium: over the player's lower half, which is
+// light, the measured ink left the words faint beside the Music app's, whose quality text reads nearly white.
+static const CGFloat kRedesignPadY = 2.6, kRedesignCornerShare = 0.25, kRedesignFillLight = 17 / 255.0, kRedesignInkLight = 165 / 255.0;
 // Kept clear between the badge and either time, and around the badge for a finger.
 static const CGFloat kTimeGap = 8, kTouchOutset = 4;
 static const NSTimeInterval kFade = 0.25;
@@ -381,7 +383,7 @@ static void checkDetails(void) {
 }
 
 - (UIFont *)font {
-    UIFontWeight weight = _redesigned ? UIFontWeightRegular : UIFontWeightSemibold;
+    UIFontWeight weight = _redesigned ? UIFontWeightMedium : UIFontWeightSemibold;
     return [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption2] scaledFontForFont:[UIFont systemFontOfSize:kFontSize weight:weight]
                                                                        maximumPointSize:kFontMax compatibleWithTraitCollection:self.traitCollection];
 }

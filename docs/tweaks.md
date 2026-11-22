@@ -1731,13 +1731,12 @@ Redesigned:
                   percentile of the linear luminance of three frames), so white text keeps 4.5:1 (7:1 with Increase
                   Contrast), from 0.10 to 0.80, only where text is: a band at the top and from above the title
                   down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is darkest at the very
-                  top and has no edge: the dim is 0.55 of itself where the band ends (over the status bar, and over the
+                  top and has no edge: the dim is 0.9 of itself at the very top and 0.49 where the band ends (over the status bar, and over the
                   header, to 14% of the screen, only while the header shows where it plays from, Spotify's arrow or the
-                  AI DJ's buttons) and fades out from there over 72 points (issue #39). Down to the title it is eased the
-                  other way, light long after it starts and faster toward the title, so the lower half darkens as the
-                  Music app's does. Over the dim, a second black deepens from where the dim turns whole down to the
-                  bottom of the screen (0.30 there), so the lower part darkens toward the bottom as the Music app's
-                  does and is nowhere lighter than the dim alone. A track that changes
+                  AI DJ's buttons) and fades out from there over 108 points (issue #39). The lower half is untouched down
+                  to 23% of the screen, then both the dim and a second black over it (0.40 at the foot) grow along x^1.75
+                  to the bottom of the screen, measured on the Music app's player (0.63 in all over a white cover), so the
+                  lower part darkens as the Music app's does, with no knee at the title. A track that changes
                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer
                   (PlayerVisualiser.m) draws two soft hills of the song's spectrum across the foot of the player, the kick

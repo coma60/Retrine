@@ -1,0 +1,180 @@
+diff --git a/docs/tweaks.md b/docs/tweaks.md
+index db8251e..c6a9bf2 100644
+--- a/docs/tweaks.md
++++ b/docs/tweaks.md
+@@ -1731,13 +1731,12 @@ Redesigned:
+                   percentile of the linear luminance of three frames), so white text keeps 4.5:1 (7:1 with Increase
+                   Contrast), from 0.10 to 0.80, only where text is: a band at the top and from above the title
+                   down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is darkest at the very
+-                  top and has no edge: the dim is 0.55 of itself where the band ends (over the status bar, and over the
++                  top and has no edge: the dim is 0.9 of itself at the very top and 0.49 where the band ends (over the status bar, and over the
+                   header, to 14% of the screen, only while the header shows where it plays from, Spotify's arrow or the
+-                  AI DJ's buttons) and fades out from there over 72 points (issue #39). Down to the title it is eased the
+-                  other way, light long after it starts and faster toward the title, so the lower half darkens as the
+-                  Music app's does. Over the dim, a second black deepens from where the dim turns whole down to the
+-                  bottom of the screen (0.30 there), so the lower part darkens toward the bottom as the Music app's
+-                  does and is nowhere lighter than the dim alone. A track that changes
++                  AI DJ's buttons) and fades out from there over 108 points (issue #39). The lower half is untouched down
++                  to 23% of the screen, then both the dim and a second black over it (0.40 at the foot) grow along x^1.75
++                  to the bottom of the screen, measured on the Music app's player (0.63 in all over a white cover), so the
++                  lower part darkens as the Music app's does, with no knee at the title. A track that changes
+                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
+                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer
+                   (PlayerVisualiser.m) draws two soft hills of the song's spectrum across the foot of the player, the kick
+diff --git a/harness/player/main.m b/harness/player/main.m
+index 977a673..f8a472d 100644
+--- a/harness/player/main.m
++++ b/harness/player/main.m
+@@ -2253,7 +2253,7 @@ static BOOL motionFootAcross(NSURL *file, NSString **detail) {
+ // (its last stop) to the bottom it gets darker, ending clearly darker than where it started, and nowhere lighter
+ // than it is there, which is the dim alone.
+ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+-    enum { kTall = 120 };
++    enum { kTall = 900 };
+     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+     format.scale = 1;
+     format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
+@@ -2266,7 +2266,8 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+     [probe playFile:file poster:poster];
+     [probe layoutIfNeeded];
+     CAGradientLayer *dim = [probe valueForKey:@"_dim"];
+-    NSUInteger whole = (NSUInteger)ceil([dim.locations.lastObject doubleValue] * kTall);
++    // Where the lower half starts to darken (stop 6): the picture is as light as it gets there and darkens to the foot.
++    NSUInteger whole = (NSUInteger)ceil([dim.locations[6] doubleValue] * kTall);
+     uint8_t pixels[kTall * 4] = {0};
+     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+     CGContextRef context = CGBitmapContextCreate(pixels, 1, kTall, 8, 4, space, kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+@@ -2333,11 +2334,11 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+         // Dimmed by its brightness: HARNESS_DIM is what the clip in HARNESS_CANVAS_FILE should get (0.54 for white,
+         // 0.10 for black), which the clip's own dim eases to 0.7 of (kDimSoften in PlayerMotion.x); the rule itself is checked at its ends.
+         CAGradientLayer *dim = [motion valueForKey:@"_dim"];
+-        // Whole at the very top and fading out from there with no edge, clear until the ramp, then whole from the seam's
+-        // blur down (issue #101): stop 0 the top, 1 the end of the status bar's band (part of the dim), 5 the end of the
+-        // fade, 6 the start of the ramp and 10 the whole dim.
+-        BOOL banded = dim && dim.colors.count == 11 && stopAlpha(dim, 0) == 1 && stopAlpha(dim, 1) > 0 && stopAlpha(dim, 1) < 1
+-                      && stopAlpha(dim, 5) == 0 && stopAlpha(dim, 6) == 0 && stopAlpha(dim, 10) == 1;
++        // Whole at the very top and fading out from there with no edge, clear until the ramp, then growing to whole at the
++        // foot of the screen (issue #101): stop 0 the top, 1 the end of the status bar's band (part of the dim), 5 the end of the
++        // fade, 6 the start of the lower half's curve and 14 the whole dim at the foot.
++        BOOL banded = dim && dim.colors.count == 15 && stopAlpha(dim, 0) > 0.8 && stopAlpha(dim, 1) > 0 && stopAlpha(dim, 1) < stopAlpha(dim, 0)
++                      && stopAlpha(dim, 5) == 0 && stopAlpha(dim, 6) == 0 && stopAlpha(dim, 14) == 1;
+         const char *expected = getenv("HARNESS_DIM");
+         BOOL rule = fabs(SGRPlayerClipDim(1, NO, NO) - 0.54) < 0.01 && fabs(SGRPlayerClipDim(1, YES, NO) - 0.65) < 0.01
+                     && SGRPlayerClipDim(0, NO, NO) == 0.10 && fabs(SGRPlayerClipDim(0, NO, YES) - 0.25) < 1e-6
+@@ -2345,7 +2346,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
+         self->_dimAlone = dim.opacity;
+         [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected) * 0.7) < 0.02)
+                 step:@"the dim" detail:[NSString stringWithFormat:@"rule %@, dim %.2f %@%@", rule ? @"right" : @"wrong", dim.opacity,
+-                                        banded ? [NSString stringWithFormat:@"fading from the top to %@ and whole from %@", dim.locations[1], dim.locations[10]] : @"not banded",
++                                        banded ? [NSString stringWithFormat:@"fading from the top to %@ and whole at %@", dim.locations[1], dim.locations[14]] : @"not banded",
+                                         expected ? [NSString stringWithFormat:@", %s expected", expected] : @""]];
+         // The band at the top: whole over the status bar only while the header shows nothing but the grabber, and over
+         // the header's row too while it shows where it plays from. The stored switch is put back as it was.
+diff --git a/tweak/Sources/Redesigned/Player/PlayerMotion.x b/tweak/Sources/Redesigned/Player/PlayerMotion.x
+index b88ef7a..5d583cc 100644
+--- a/tweak/Sources/Redesigned/Player/PlayerMotion.x
++++ b/tweak/Sources/Redesigned/Player/PlayerMotion.x
+@@ -107,23 +107,26 @@ static const CGFloat kStillScrimTop = 0.45, kStillScrimBelowSafeTop = 76;
+ static const CGFloat kDimLeast = 0.10, kDimMost = 0.80, kDimLyrics = 0.15;
+ // The dim's band at the top: over the status bar, and down to this share of the screen while the header shows
+ // something to read, so its text gets it, then gone over kDimFade points (eased as the next constants say).
+-static const CGFloat kDimTop = 0.14, kDimFade = 72;
+-// The Music app's top is not a band with an edge: it is darkest at the very top and lightens all the way down. The
+-// dim is this share of itself where the band ends (over the status bar), whole only at the top edge, and from there
++static const CGFloat kDimTop = 0.14, kDimFade = 108;
++// The Music app's top is not a band with an edge: it is darkest at the very top (kDimTopShare of the dim) and
++// lightens all the way down. The dim is this share of itself where the band ends (over the status bar), whole only at the top edge, and from there
+ // it fades out over kDimFade points along a curve (kDimCurve: 1 is a line, more lingers dark near the top and
+-// clears sooner). The ramp down to the title is eased the other way, kDimEase 2 a parabola: it stays light long
+-// after it starts and darkens faster toward the title, as the Music app's lower half does.
+-static const CGFloat kDimBandShare = 0.55, kDimCurve = 1.5, kDimEase = 2;
+-// How many steps each of those curves is drawn in.
+-enum { kDimSteps = 4 };
+-// The black over the dim at the bottom of the screen, from none where the dim is whole above the title: the Music
++// clears sooner). Measured on the Music app's player over a white cover (3x, 874 pt): the top is gone 167 pt down,
++// and the lower half is untouched down to 23% of the screen, then darkens along x^1.75 (x the share of the way from
++// there to the bottom) to the bottom's end, with no knee at the title. The dim and the black over it (kDeepenBottom)
++// each follow that curve (kDimEase) from kBottomStart of the screen to its foot, so together they come to the
++// measured 0.63 over a white cover.
++static const CGFloat kDimTopShare = 0.9, kDimBandShare = 0.49, kDimCurve = 1.5, kDimEase = 1.75, kBottomStart = 0.23;
++// How many steps the top's fade is drawn in, and the curve down the lower half.
++enum { kDimSteps = 4, kRampSteps = 8 };
++// The black over the dim at the bottom of the screen, from none where the lower half starts to darken: the Music
+ // app's player darkens toward its foot (issue #39).
+-static const CGFloat kDeepenBottom = 0.30;
++static const CGFloat kDeepenBottom = 0.40;
+ // The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
+ // cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
+-// (SGRPlayerClipDim) asks for, and it grows over kDimRamp points above where it is whole, not over kBlurRamp. Increase
++// (SGRPlayerClipDim) asks for, and it grows down the whole lower half (kBottomStart), not over kBlurRamp. Increase
+ // Contrast and the lyrics keep the full dim, so their contrast is not given up.
+-static const CGFloat kDimSoften = 0.7, kDimRamp = 320;
++static const CGFloat kDimSoften = 0.7;
+ // The material blur under the controls tints the bottom of the player gray, which the Music app's player does not
+ // have: its colors run on to the bottom untouched. NO leaves the blur's view in place with no effect on it.
+ static const BOOL kSeamBlur = NO;
+@@ -325,20 +328,28 @@ static NSArray *footColors(CGImageRef poster) {
+ 
+ // What fades is the effect views' effect, never their alpha or an ancestor's: UIKit draws a blur under a
+ // fading alpha or a mask wrongly or not at all.
+-// The dim's stops, top to bottom (11 of them; SGRPlayerMotionView's layout puts each at its place): the very top
++// The dim's stops, top to bottom (15 of them; SGRPlayerMotionView's layout puts each at its place): the very top
+ // (whole), the end of the band over the status bar (kDimBandShare), kDimSteps down the fade to nothing, where the
+-// ramp starts (nothing), and kDimSteps up it to the whole dim. `whole` (the lyrics, which run down the whole
+-// screen) is black at every stop.
++// lower half starts (nothing), and kRampSteps down it to the whole dim at the foot of the screen. `whole` (the
++// lyrics, which run down the whole screen) is black at every stop.
+ static NSArray *dimColors(BOOL whole) {
+-    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + 2 * kDimSteps];
++    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + kDimSteps + kRampSteps];
+     void (^add)(CGFloat) = ^(CGFloat alpha) {
+         [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:whole ? 1 : alpha].CGColor];
+     };
+-    add(1);
++    add(kDimTopShare);
+     add(kDimBandShare);
+     for (int i = 1; i <= kDimSteps; i++) add(kDimBandShare * pow(1 - (CGFloat)i / kDimSteps, kDimCurve));
+     add(0);
+-    for (int j = 1; j <= kDimSteps; j++) add(pow((CGFloat)j / kDimSteps, kDimEase));
++    for (int j = 1; j <= kRampSteps; j++) add(pow((CGFloat)j / kRampSteps, kDimEase));
++    return colors;
++}
++
++// The black over the dim: the same curve down the lower half, from nothing to whole (its opacity is kDeepenBottom).
++static NSArray *deepenColors(void) {
++    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
++    [colors addObject:(__bridge id)UIColor.clearColor.CGColor];
++    for (int j = 1; j <= kRampSteps; j++) [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:pow((CGFloat)j / kRampSteps, kDimEase)].CGColor];
+     return colors;
+ }
+ 
+@@ -378,7 +389,7 @@ static UIBlurEffect *blurEffect(void) {
+     _dim.opacity = kDimLeast;
+     [_picture.layer addSublayer:_dim];
+     _deepen = [CAGradientLayer layer];
+-    _deepen.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
++    _deepen.colors = deepenColors();
+     _deepen.opacity = kDeepenBottom;
+     [_picture.layer addSublayer:_deepen];
+     _scrim = [CAGradientLayer layer];
+@@ -476,14 +487,16 @@ static UIBlurEffect *blurEffect(void) {
+     // The band at the top reaches as far as there is something to read: the status bar, and the header while it
+     // shows more than the grabber.
+     CGFloat bandEnd = SGRPlayerHeaderShowsIn(self) ? screen * kDimTop : safeTop;
+-    CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kDimRamp);
+-    CGFloat fadeEnd = MIN(topEnd + kDimFade, rampFrom);
++    CGFloat topEnd = MIN(bandEnd, dimFrom);
++    CGFloat fadeEnd = topEnd + kDimFade, rampFrom = MAX(fadeEnd, screen * kBottomStart);
+     NSMutableArray *stops = [NSMutableArray arrayWithObjects:@0, at(topEnd), nil];
+     for (int i = 1; i <= kDimSteps; i++) [stops addObject:at(topEnd + (fadeEnd - topEnd) * i / kDimSteps)];
+     [stops addObject:at(rampFrom)];
+-    for (int j = 1; j <= kDimSteps; j++) [stops addObject:at(rampFrom + (dimFrom - rampFrom) * j / kDimSteps)];
++    for (int j = 1; j <= kRampSteps; j++) [stops addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
+     _dim.locations = stops;
+-    _deepen.locations = @[at(dimFrom), at(screen)];
++    NSMutableArray *deepen = [NSMutableArray arrayWithObject:at(rampFrom)];
++    for (int j = 1; j <= kRampSteps; j++) [deepen addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
++    _deepen.locations = deepen;
+     _seamMask.frame = bounds;
+     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
+     [CATransaction commit];

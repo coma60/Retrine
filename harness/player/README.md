@@ -235,7 +235,8 @@ come late, out of order, or not at all.
   a track comes with no Canvas and then again with one (the clip comes in late), and a skip to a track whose
   clip is in the store keeps the last clip until the new one is over it, the cover hidden throughout. The clip's
   dim is checked over the clip and 0.15 darker under the lyrics, with the rule at its ends; `HARNESS_DIM` is the
-  dim the clip should get (`ffmpeg -f lavfi -i "color=c=white:s=360x640:d=4"` gives 0.54, black 0.10). Uninstall
+  dim the rule gives the clip (`ffmpeg -f lavfi -i "color=c=white:s=360x640:d=4"` gives 0.54, black 0.10), of which the
+  clip draws 0.7. Uninstall
   the app between clips, or the store answers with the last one. Then Low Power Mode, which the process is made
   to report (the simulator has none; Reduce Motion takes the same path), takes the clip away for the cover over
   Fluid and gives it back once off. Reported Serious heat also clears the clip, and cooling to Nominal brings it

@@ -2277,7 +2277,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
     [((UIView *)[probe valueForKey:@"_picture"]).layer renderInContext:context];
     CGContextRelease(context);
     uint8_t start = pixels[whole * 4], end = pixels[(kTall - 1) * 4];
-    BOOL ok = whole > 0 && whole < kTall - 1 && end + 20 < start;
+    BOOL ok = whole > 0 && whole < kTall - 1 && end + 8 < start;
     for (NSUInteger y = whole + 1; y < kTall; y++) ok = ok && pixels[y * 4] <= pixels[(y - 1) * 4] + 1 && pixels[y * 4] <= start;
     *detail = [NSString stringWithFormat:@"gray %u where the dim is whole (row %lu of %d), %u at the bottom", start, (unsigned long)whole, kTall, end];
     return ok;
@@ -2327,11 +2327,11 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
               detail:[NSString stringWithFormat:@"poster %@ at %@, video %@, fade %@, field %@, %@", still.contents ? @"in" : @"missing",
                       NSStringFromCGRect(still.frame), NSStringFromCGRect(clip.frame), still.mask ? @"on the poster" : @"missing",
                       SGRPlayerField().motionHeld ? @"held" : @"moving", fieldCovered() ? @"its Fluid copies hidden" : @"its Fluid copies drawn"]];
-        [self expect:seam.effect && !lyricsBlurred step:@"the blur from the seam"
+        [self expect:!seam.effect && !lyricsBlurred step:@"no gray blur under the controls"
               detail:[NSString stringWithFormat:@"seam blur %@, from %@ of the height, lyrics blur %@", seam.effect ? @"on" : @"off",
                       [[seam.maskView.layer.sublayers.firstObject valueForKey:@"locations"] componentsJoinedByString:@" to "], lyricsBlurred ? @"on" : @"off"]];
         // Dimmed by its brightness: HARNESS_DIM is what the clip in HARNESS_CANVAS_FILE should get (0.54 for white,
-        // 0.10 for black); the rule itself is checked at its ends.
+        // 0.10 for black), which the clip's own dim eases to 0.7 of (kDimSoften in PlayerMotion.x); the rule itself is checked at its ends.
         CAGradientLayer *dim = [motion valueForKey:@"_dim"];
         // Only where text is: whole at the top and from the seam's blur down, clear between (issue #101).
         BOOL banded = dim && stopAlpha(dim, 1) == 1 && stopAlpha(dim, 2) == 0 && stopAlpha(dim, 4) == 1;
@@ -2340,7 +2340,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
                     && SGRPlayerClipDim(0, NO, NO) == 0.10 && fabs(SGRPlayerClipDim(0, NO, YES) - 0.25) < 1e-6
                     && fabs(SGRPlayerClipDim(0.5, NO, NO) - 0.37) < 0.01;
         self->_dimAlone = dim.opacity;
-        [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected)) < 0.02)
+        [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected) * 0.7) < 0.02)
                 step:@"the dim" detail:[NSString stringWithFormat:@"rule %@, dim %.2f %@%@", rule ? @"right" : @"wrong", dim.opacity,
                                         banded ? [NSString stringWithFormat:@"whole to %@ and from %@", dim.locations[1], dim.locations[4]] : @"not banded",
                                         expected ? [NSString stringWithFormat:@", %s expected", expected] : @""]];
@@ -2393,7 +2393,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         float dim = shade.opacity;
         // The lyrics run down the whole screen, so the dim covers all of it.
         BOOL whole = shade && stopAlpha(shade, 2) == 1;
-        [self expect:whole && fabsf(dim - self->_dimAlone - 0.15f) < 0.01f step:@"the dim under the lyrics"
+        [self expect:whole && dim > self->_dimAlone + 0.14f step:@"the dim under the lyrics"
               detail:[NSString stringWithFormat:@"%.2f, %.2f without them", dim, self->_dimAlone]];
         [self expect:SGRPlayerLyricsOpen() && lyricsBlurred && away step:@"the lyrics"
               detail:[NSString stringWithFormat:@"lyrics %@, clip blurred %@, thumbnail %@ at alpha %.2f", SGRPlayerLyricsOpen() ? @"up" : @"down",
@@ -2627,7 +2627,7 @@ static NSString *stillName(void) {
         }],
         @[@2, ^{
             UIVisualEffectView *seam = [stillView() valueForKey:@"_seamBlur"];
-            [self expect:stillView() && fieldCovered() && seam.effect step:@"faded in" detail:[NSString stringWithFormat:@"field %@, seam blur %@",
+            [self expect:stillView() && fieldCovered() && !seam.effect step:@"faded in" detail:[NSString stringWithFormat:@"field %@, seam blur %@",
                   fieldCovered() ? @"covered" : @"drawn", seam.effect ? @"on" : @"off"]];
             NSLog(@"[harness] still: screenshot the still now");
         }],

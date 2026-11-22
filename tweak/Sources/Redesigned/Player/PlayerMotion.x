@@ -110,7 +110,15 @@ static const CGFloat kDimLeast = 0.10, kDimMost = 0.80, kDimLyrics = 0.15;
 static const CGFloat kDimTop = 0.14, kDimFade = 48;
 // The black over the dim at the bottom of the screen, from none where the dim is whole above the title: the Music
 // app's player darkens toward its foot (issue #39).
-static const CGFloat kDeepenBottom = 0.35;
+static const CGFloat kDeepenBottom = 0.15;
+// The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
+// cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
+// (SGRPlayerClipDim) asks for, and it grows over kDimRamp points above where it is whole, not over kBlurRamp. Increase
+// Contrast and the lyrics keep the full dim, so their contrast is not given up.
+static const CGFloat kDimSoften = 0.7, kDimRamp = 320;
+// The material blur under the controls tints the bottom of the player gray, which the Music app's player does not
+// have: its colors run on to the bottom untouched. NO leaves the blur's view in place with no effect on it.
+static const BOOL kSeamBlur = NO;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -450,7 +458,7 @@ static UIBlurEffect *blurEffect(void) {
     // The band at the top reaches as far as there is something to read: the status bar, and the header while it
     // shows more than the grabber.
     CGFloat bandEnd = SGRPlayerHeaderShowsIn(self) ? screen * kDimTop : safeTop;
-    CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kBlurRamp);
+    CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kDimRamp);
     _dim.locations = @[@0, at(topEnd), at(MIN(topEnd + kDimFade, rampFrom)), at(rampFrom), at(dimFrom)];
     _deepen.locations = @[at(dimFrom), at(screen)];
     _seamMask.frame = bounds;
@@ -643,6 +651,9 @@ static UIBlurEffect *blurEffect(void) {
     // Reduce Transparency puts the lyrics on black, as the material it replaced went opaque there.
     BOOL contrast = UIAccessibilityDarkerSystemColorsEnabled();
     CGFloat dim = _lyricsUp && SGRReduceTransparency() ? 1 : SGRPlayerClipDim(brightEnd(_luminances), contrast, _lyricsUp);
+    // Eased toward the Music app's look, except where the text's contrast is a setting's (Increase Contrast) or the
+    // lyrics' own.
+    if (!_lyricsUp && !contrast) dim *= kDimSoften;
     _dim.opacity = (float)dim;
     _scrim.opacity = (float)(contrast ? kStillScrimTop * SGRPlayerClipDim(1, YES, NO) / SGRPlayerClipDim(1, NO, NO) : kStillScrimTop);
 }
@@ -652,7 +663,7 @@ static UIBlurEffect *blurEffect(void) {
     _picture.alpha = 0;
     void (^apply)(void) = ^{
         self->_picture.alpha = 1;
-        if (!self->_inCover) self->_seamBlur.effect = blurEffect();
+        if (!self->_inCover && kSeamBlur) self->_seamBlur.effect = blurEffect();
     };
     if (animated) {
         SGRAnimate(SGRMotionFade, apply, ^(BOOL finished) {

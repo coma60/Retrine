@@ -25,7 +25,8 @@
 // The row's own accessibility label still names the artists and says explicit; the picture is not an element.
 //
 // **Play counts.** A track played in Listening stats says how many times, "12 plays", in the secondary color on
-// the row's middle just before ⋯, as small as the row's own type allows; none for a track never played. The
+// the row's middle just before ⋯ (before the green check Spotify puts there on a liked track), as small as the row's
+// own type allows; none for a track never played. The
 // count is the album's title and the row's title matched in the log (AlbumPlays.m), so the rows are laid out
 // again when the header's title arrives and when the counts change. The title and the artist line are narrowed
 // so neither runs under it. This is done before the artist line's change, which then measures the narrowed
@@ -62,7 +63,8 @@
 static const CGFloat kHairline = 0.5;
 // Between the end of the title's text and the badge drawn after it.
 static const CGFloat kBadgeGap = 4;
-// Between the play count and ⋯'s box, whose glyph is inset in it already, and between the text and the count.
+// Between the play count and the box of ⋯ or of the liked check before it, whose glyph is inset in it already, and
+// between the text and the count.
 static const CGFloat kCountGap = 2, kCountTextGap = 8;
 
 static char kRowKey, kSubtitleKey, kLineKey, kTitleKey, kBadgeKey, kArtistKey, kChangeKey;
@@ -549,6 +551,29 @@ static BOOL restoreCount(UIView *cell) {
     return YES;
 }
 
+// Whether `view` draws, as far as its own and its ancestors' hidden and alpha say, up to `top`.
+static BOOL shownUnder(UIView *view, UIView *top) {
+    for (UIView *v = view; v && v != top; v = v.superview) {
+        if (v.hidden || v.alpha < 0.01) return NO;
+    }
+    return YES;
+}
+
+// The box, in the row, of what trails its text: ⋯ and every control shown in the stack it sits in, each by its box as ⋯
+// is. On a liked track that is the green check before ⋯ (Components.UI.AddToButton, in an element view of its own that
+// Spotify hides on a track not liked), which the count was drawn over (issue #41).
+static CGRect trailingFrameOf(UIView *menu, UIView *row) {
+    __block CGRect frame = [menu.superview convertRect:menu.frame toView:row];
+    UIView *stack = menu.superview;
+    while (stack && stack != row && ![stack.accessibilityIdentifier isEqualToString:@"Encore.StackView"]) stack = stack.superview;
+    if (!stack || stack == row) return frame;
+    SGForEachView(stack, ^(UIView *v) {
+        if (![v isKindOfClass:UIControl.class] || CGRectIsEmpty(v.bounds) || !shownUnder(v, stack)) return;
+        frame = CGRectUnion(frame, [v.superview convertRect:v.frame toView:row]);
+    });
+    return frame;
+}
+
 static void applyCount(UIView *cell, UIView *row, UIView *page) {
     NSString *album = objc_getAssociatedObject(page, &kAlbumKey);
     BOOL spotify = SGRAlbumUsesSpotifyCounts();
@@ -582,8 +607,8 @@ static void applyCount(UIView *cell, UIView *row, UIView *page) {
     size = CGSizeMake(ceil(size.width), ceil(size.height));
 
     BOOL rtl = row.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
-    CGRect menuFrame = [menu.superview convertRect:menu.frame toView:row];
-    CGFloat x = rtl ? CGRectGetMaxX(menuFrame) + kCountGap : CGRectGetMinX(menuFrame) - kCountGap - size.width;
+    CGRect trailing = trailingFrameOf(menu, row);
+    CGFloat x = rtl ? CGRectGetMaxX(trailing) + kCountGap : CGRectGetMinX(trailing) - kCountGap - size.width;
     CGFloat scale = row.window.screen.scale ?: UIScreen.mainScreen.scale;
     CGFloat y = round((CGRectGetMidY(row.bounds) - size.height / 2) * scale) / scale;
     CGRect frame = CGRectMake(x, y, size.width, size.height);

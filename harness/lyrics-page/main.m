@@ -6,6 +6,8 @@
 //   -sheet S    opens the sliders' sheet S seconds in, as a tap on its button would
 //   -check 1    asserts the page's behavior (see runChecks), prints PASS and FAIL lines and quits with the
 //               number of failures
+//   -pushCheck 1 pushes the page as Mod Settings does, for Apple Music, Vivid and a look of the sliders', and checks
+//               the presets arrive where they rest (see runPushCase), the same way
 //   -textCheck 1 asserts the Text sizes page and each text's look (see runTextChecks) the same way
 //   -textPage N opens the Text sizes page, then text N's own page (0 lyrics, 1 pronunciation, 2 translation),
 //               for a screenshot; -textLook 1 stores 130%, regular and 140% for it first
@@ -106,6 +108,97 @@ static void runChecks(UIViewController *page) {
             printf("%d failed\n", sg_failures);
             fflush(stdout);
             exit(sg_failures);
+        });
+    });
+}
+
+#pragma mark - the page pushed
+
+// Where the strip is drawn each frame: its presentation while UIKit animates it, else the model.
+@interface SGStripSampler : NSObject
+@property (nonatomic, weak) UIViewController *page;
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *offsets;
+@end
+
+@implementation SGStripSampler
+- (void)tick:(CADisplayLink *)link {
+    UIViewController *page = self.page;
+    if (!page.isViewLoaded || !page.view.window) return;
+    UIScrollView *strip = [page valueForKey:@"strip"];
+    CALayer *shown = strip.layer.presentationLayer ?: strip.layer;
+    [self.offsets addObject:@(shown.bounds.origin.x)];}
+@end
+
+static SGStripSampler *sampling(UIViewController *page, CADisplayLink **link) {
+    SGStripSampler *sampler = [SGStripSampler new];
+    sampler.page = page;
+    sampler.offsets = [NSMutableArray array];
+    *link = [CADisplayLink displayLinkWithTarget:sampler selector:@selector(tick:)];
+    [*link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    return sampler;
+}
+
+static NSString *offsetsText(NSArray<NSNumber *> *offsets) {
+    NSMutableArray *seen = [NSMutableArray array];
+    for (NSNumber *x in offsets) if (![seen.lastObject isEqual:x]) [seen addObject:x];
+    return [seen componentsJoinedByString:@" "];
+}
+
+// Mod Settings pushes the page: the presets come in already where they rest -- the chosen one in sight, or the first at
+// the card's inset for a look of the sliders' -- and do not move once it is on screen (issue #41). A preset picked after
+// that still scrolls to it.
+static void runPushCase(UINavigationController *nav, NSArray *cases, NSUInteger index) {
+    if (index == cases.count) {
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:SGRKeyLyricsLook];
+        printf("%d failed\n", sg_failures);
+        fflush(stdout);
+        exit(sg_failures);
+    }
+    NSInteger preset = [cases[index] integerValue];
+    SGRLyricsLook look = SGRLyricsLookPreset(preset < 0 ? 0 : (NSUInteger)preset);
+    if (preset < 0) look.size += 1;
+    SGRSetLyricsLook(look, nil);
+    NSString *name = preset < 0 ? @"the sliders' own look" : SGRLyricsLookPresetNames()[(NSUInteger)preset];
+    if (preset < 0) expect(SGRLyricsLookPresetIndex(SGRLyricsLookNow()) < 0, @"the sliders' own look is no preset");
+    UIViewController *page = SGRLyricsSettingsPage(@"Lyrics", SGRestartNote, @[]);
+    CADisplayLink *link;
+    SGStripSampler *sampler = sampling(page, &link);
+    [nav pushViewController:page animated:YES];
+    after(1.5, ^{
+        [link invalidate];
+        UIScrollView *strip = [page valueForKey:@"strip"];
+        UIView *card = [page valueForKey:@"card"];
+        NSArray<UIButton *> *chips = chipsOf(page);
+        NSArray<NSNumber *> *offsets = sampler.offsets;
+        CGFloat rest = strip.contentOffset.x;
+        BOOL still = offsets.count > 0;
+        for (NSNumber *x in offsets) still &= fabs(x.doubleValue - rest) < 0.5;
+        expect(still, [NSString stringWithFormat:@"%@: the presets are where they rest from the first frame on screen (%@ over %lu frames)",
+                       name, offsetsText(offsets), (unsigned long)offsets.count]);
+        if (preset < 0) {
+            expect(fabs(rest + CGRectGetMinX(card.frame)) < 0.5,
+                   [NSString stringWithFormat:@"%@: the first preset starts at the card's inset (offset %.1f, card %.1f)", name, rest, CGRectGetMinX(card.frame)]);
+        } else {
+            UIButton *chosen = chips[(NSUInteger)preset];
+            CGRect shown = [strip convertRect:chosen.bounds fromView:chosen];
+            expect(CGRectContainsRect(strip.bounds, shown), [NSString stringWithFormat:@"%@: the chosen preset is in sight", name]);
+        }
+        // Picked from the other end, the strip scrolls there over several frames.
+        UIButton *other = preset == (NSInteger)chips.count - 1 ? chips.firstObject : chips.lastObject;
+        CADisplayLink *pickLink;
+        SGStripSampler *picked = sampling(page, &pickLink);
+        [other sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
+        after(1.0, ^{
+            [pickLink invalidate];
+            NSMutableSet *distinct = [NSMutableSet setWithArray:picked.offsets];
+            CGRect shown = [strip convertRect:other.bounds fromView:other];
+            BOOL moves = fabs(strip.contentOffset.x - rest) >= 0.5;
+            BOOL within = strip.contentOffset.x > -strip.adjustedContentInset.left - 0.5;
+            expect(CGRectContainsRect(strip.bounds, shown) && within && (!moves || distinct.count > 2),
+                   [NSString stringWithFormat:@"%@: a preset picked afterwards is scrolled into sight%@ (%@)", name,
+                    moves ? @" smoothly" : @"", offsetsText(picked.offsets)]);
+            [nav popToRootViewControllerAnimated:NO];
+            after(0.3, ^{ runPushCase(nav, cases, index + 1); });
         });
     });
 }
@@ -328,7 +421,9 @@ static void runTextChecks(UINavigationController *nav) {
     [args removeObjectForKey:SGRKeyLyricsLook];   // each launch starts from its own arguments
     if ([args objectForKey:@"preset"]) SGRSetLyricsLook(SGRLyricsLookPreset((NSUInteger)[args integerForKey:@"preset"]), nil);
     SGModSection *stand = SGSection(@"Sources", @[SGSwitchRow(@"Lyrics for every track", @"Even where Spotify has none", @"harness.everyTrack")]);
-    UIViewController *page = SGRLyricsSettingsPage(@"Lyrics", SGRestartNote, @[stand]);
+    BOOL push = [args boolForKey:@"pushCheck"];
+    UIViewController *page = push ? [[UITableViewController alloc] initWithStyle:UITableViewStyleInsetGrouped]
+                                  : SGRLyricsSettingsPage(@"Lyrics", SGRestartNote, @[stand]);
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:page];
     nav.navigationBar.prefersLargeTitles = NO;
     nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
@@ -340,6 +435,7 @@ static void runTextChecks(UINavigationController *nav) {
             [(UIButton *)[page valueForKey:@"adjust"] sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];
         });
     }
+    if (push) after(1.0, ^{ runPushCase(nav, @[@0, @4, @-1], 0); });
     if ([args boolForKey:@"check"]) after(2.5, ^{ runChecks(page); });   // the preview measures its lines off the main thread
     if ([args boolForKey:@"textCheck"]) after(1.5, ^{ runTextChecks(nav); });
     if ([args objectForKey:@"textPage"]) {

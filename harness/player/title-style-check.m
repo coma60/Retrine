@@ -17,10 +17,11 @@
 @end
 
 static SGAppFont drawn = SGAppFontSystem;
-static BOOL lyricsOpen;
+static BOOL lyricsOpen, starAdd;
 static int checked, failed;
 
 SGAppFont SGAppFontDrawn(void) { return drawn; }
+BOOL SGRStarAddOn(void) { return starAdd; }
 BOOL SGRedesignedUI(void) { return YES; }
 BOOL SGFlag(NSString *key, BOOL fallback) { return fallback; }
 NSInteger SGInt(NSString *key, NSInteger fallback) { return fallback; }
@@ -77,7 +78,8 @@ static CGFloat heightFor(NSString *text, UIFont *font) {
 
 // The information unit's title row as Spotify 9.2.0 builds it (design/spotify-920/device/920-track-more-tree.txt:476-528)
 // in the redesign's 32 pt margins: a row stack of the track info, Spotify's X (24 pt) and add button (48 pt) 12 pt
-// apart, both put away by alpha with the ⋯ standing in the add button's slot (PlayerMenu.m); in the track info the
+// apart, both put away by alpha with the ⋯ standing in the add button's slot (PlayerMenu.m), or with Star add button on
+// the add button's kept for the star and the ⋯ standing in the row's end; in the track info the
 // title marquee over a stack of badges leading the artist marquee 8 pt after it, the two explicit marks each in a
 // 12 pt holder Spotify hides or shows.
 typedef struct {
@@ -124,11 +126,12 @@ static MarqueeMock *marquee(NSString *identifier, NSString *text, UIFont *font) 
 // slots hidden and the ⋯ standing in the row's end (PlayerMenu.m's fallback, as for a local file); the AI DJ's, no ⋯
 // and a 48 pt button of Spotify's arranged after the title; nothing at all after the title; and an episode's with
 // Spotify's skip ad pill up (SkipAdButtonProps, arranged between the title and the X's slot, 9.2.0 tree), the add
-// button's slot after it holding the ⋯, or hidden with the ⋯ in the row's end (issue #28's iPad).
-typedef NS_ENUM(NSInteger, RowShape) { RowAddSlot, RowNoAddSlot, RowDJ, RowBare, RowPill, RowPillNoAdd };
+// button's slot after it holding the ⋯, or hidden with the ⋯ in the row's end (issue #28's iPad); and Star add
+// button's, the add button's slot drawing the star with Spotify's X put away and the ⋯ in the row's end (issue #44).
+typedef NS_ENUM(NSInteger, RowShape) { RowAddSlot, RowNoAddSlot, RowDJ, RowBare, RowPill, RowPillNoAdd, RowStar };
 static NSString *const kShapeNames[] = {@"with the ⋯ in the add button's slot", @"without an add button", @"of the AI DJ",
                                         @"with nothing after the title", @"with the skip pill and the ⋯ in the add button's slot",
-                                        @"with the skip pill and no add button"};
+                                        @"with the skip pill and no add button", @"with the star and the ⋯ in the row's end"};
 // The pill as 9.2.0 draws "건너뛰기": a 16 pt icon, the word and 13 pt insets (design/issue28/IMG_0116.png, 91 pt).
 static const CGFloat kPillWidth = 91;
 
@@ -145,8 +148,8 @@ static Row buildRow(UIWindow *window, NSString *title, BOOL rtl, RowShape shape,
     [banSlot.widthAnchor constraintEqualToConstant:24].active = YES;
     [r.addSlot.widthAnchor constraintEqualToConstant:48].active = YES;
     banSlot.alpha = 0;
-    r.addSlot.alpha = shape == RowDJ ? 1 : 0;
-    banSlot.hidden = shape != RowAddSlot && shape != RowPill;
+    r.addSlot.alpha = shape == RowDJ || shape == RowStar ? 1 : 0;
+    banSlot.hidden = shape != RowAddSlot && shape != RowPill && shape != RowStar;
     r.addSlot.hidden = shape == RowNoAddSlot || shape == RowBare || shape == RowPillNoAdd;
     if (shape != RowDJ) {
         UIView *add = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 48, 48)];
@@ -204,7 +207,7 @@ static Row buildRow(UIWindow *window, NSString *title, BOOL rtl, RowShape shape,
     if (shape == RowDJ || shape == RowBare) return r;
     UIButton *more = [UIButton buttonWithType:UIButtonTypeSystem];
     CGRect bounds = r.row.bounds;
-    more.frame = !r.addSlot.hidden ? r.addSlot.frame : CGRectMake(rtl ? 0 : CGRectGetMaxX(bounds) - 48, 0, 48, 48);
+    more.frame = !r.addSlot.hidden && shape != RowStar ? r.addSlot.frame : CGRectMake(rtl ? 0 : CGRectGetMaxX(bounds) - 48, 0, 48, 48);
     [r.row addSubview:more];
     r.more = more;
     return r;
@@ -606,6 +609,61 @@ static void runPill(UIWindow *window) {
     }
 }
 
+// Star add button on (issue #44), in both directions: Spotify's add button stays in its slot, drawing the star, and the
+// ⋯ stands in the row's end, the row's arranged views ending before it, so the star and the ⋯ sit side by side in the
+// row; a short title's view reaches the star; a long 19+ title, its one mark and the artist end at the star, and 12 pt
+// short of it with the lyrics open; closed again, the row is as it was.
+static void runStar(UIWindow *window) {
+    starAdd = YES;
+    for (int direction = 0; direction < 2; direction++) {
+        BOOL rtl = direction == 1;
+        NSString *name = rtl ? @"right to left" : @"left to right";
+        Row r = buildRow(window, @"Whiplash - Remastered", rtl, RowStar, @"Metallica");
+        SGRShownTitleWatch(r.unit);
+        settle();
+        CGRect star = inRow(r, r.addSlot), more = inRow(r, r.more), bounds = r.row.bounds;
+        CGRect inBounds = CGRectInset(bounds, -0.5, -0.5);
+        check(r.addSlot.alpha == 1 && star.size.width == 48 && trailOf(star, rtl) <= leadOf(more, rtl) + 0.5
+              && fabs(trailOf(more, rtl) - trailOf(bounds, rtl)) < 0.5 && CGRectContainsRect(inBounds, star) && CGRectContainsRect(inBounds, more),
+              [NSString stringWithFormat:@"with Star add button %@ the star's slot ends where the ⋯ in the row's end starts (star %@, ⋯ %@)",
+               name, NSStringFromCGRect(star), NSStringFromCGRect(more)]);
+        CGRect element = inRow(r, r.element);
+        check(fabs(trailOf(element, rtl) - leadOf(star, rtl)) < 0.5,
+              [NSString stringWithFormat:@"with Star add button %@ a short title's view reaches the star (%@, star %@)", name,
+               NSStringFromCGRect(element), NSStringFromCGRect(star)]);
+        [r.unit removeFromSuperview];
+
+        r = buildRow(window, @"Holy Wars... The Punishment Due (Remastered 2004)", rtl, RowStar,
+                     @"Megadeth, Dave Mustaine, David Ellefson, Marty Friedman, Nick Menza");
+        r.explicitHolder.hidden = r.ageHolder.hidden = NO;
+        SGRShownTitleWatch(r.unit);
+        settle();
+        CGRect closed = inRow(r, r.element);
+        UIView *mark = drawnMark(r);
+        star = inRow(r, r.addSlot);
+        for (int open = 0; open < 2; open++) {
+            if (open) slideRow(r, kLyricsSlide);
+            CGFloat limit = leadOf(star, rtl) - (open ? 12 : 0);
+            CGRect title = inRow(r, r.title), markFrame = inRow(r, mark), artist = inRow(r, r.artist);
+            BOOL before = YES;
+            for (NSValue *frame in @[[NSValue valueWithCGRect:title], [NSValue valueWithCGRect:markFrame], [NSValue valueWithCGRect:artist]]) {
+                before &= trailOf(frame.CGRectValue, rtl) <= limit + 0.5;
+            }
+            check(marksSeen(r) == 1 && shownWhole(mark) && before && trailOf(markFrame, rtl) > limit - 1
+                  && fabs(leadOf(markFrame, rtl) - trailOf(title, rtl) - markFrame.size.width / 2) < 0.5,
+                  [NSString stringWithFormat:@"with Star add button %@%@ the long title, then its one mark, and the artist end %@the star "
+                   "(title %.1f-%.1f, mark %.1f-%.1f, artist %.1f-%.1f, star %@)", name, open ? @" and the lyrics open" : @"",
+                   open ? @"12 pt short of " : @"at ", CGRectGetMinX(title), CGRectGetMaxX(title), CGRectGetMinX(markFrame),
+                   CGRectGetMaxX(markFrame), CGRectGetMinX(artist), CGRectGetMaxX(artist), NSStringFromCGRect(star)]);
+        }
+        slideRow(r, 0);
+        check(CGRectEqualToRect(inRow(r, r.element), closed) && CGRectEqualToRect(inRow(r, r.addSlot), star),
+              [NSString stringWithFormat:@"with Star add button %@, the lyrics closed, the row is as it was (%@)", name, NSStringFromCGRect(inRow(r, r.element))]);
+        [r.unit removeFromSuperview];
+    }
+    starAdd = NO;
+}
+
 static void run(UIWindow *window) {
     NSString *titleText = @"밤양갱", *artistText = @"비비 (BIBI)";
     UIFont *spotifyTitle = [UIFont fontWithName:@"Georgia-Bold" size:24], *spotifyArtist = [UIFont fontWithName:@"Georgia" size:16];
@@ -661,6 +719,7 @@ static void run(UIWindow *window) {
     runRow(window);
     runShapes(window);
     runPill(window);
+    runStar(window);
     printf("title style checks: %d of %d right -- %s\n", checked - failed, checked, failed ? "FAIL" : "PASS");
     fflush(stdout);
     exit(failed ? 1 : 0);

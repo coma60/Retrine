@@ -54,6 +54,7 @@ NSString *SGLyricsTranslatedTitle(NSString *track, NSString *title, NSString *ar
 }
 SGAppFont SGAppFontDrawn(void) { return SGAppFontSystem; }
 BOOL SGRPlayerTwoColumns(void) { return NO; }
+BOOL SGRStarAddOn(void) { return NO; }
 UIView *SGRFindByIdentifier(UIView *root, NSString *identifier, const void *key) { return SGFindIdentifier(root, identifier, key); }
 NSNotificationName const SGSimplifyTitlesDidChangeNotification = @"harness.simplify";
 // The names are test-local; every subscriber/poster uses the production extern symbols.

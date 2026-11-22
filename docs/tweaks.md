@@ -692,7 +692,7 @@ Shared:
                   system's now playing through this hook and Player/NowPlayingExtras.x is checked by harness/now-playing/
     AnimatedArtwork/ moving artwork (AnimatedArtwork.h): the track's Canvas, else Apple Music's animated album cover
                   (SGMotionCatalog.m: the full release title including the edition and the album artist suffice, even
-                  when a song's title differs. Otherwise a single release must contain the song with its artist credit;
+                  when a song's title differs; Apple Music's " - EP" suffix is not part of the title. Otherwise a single release must contain the song with its artist credit;
                   trailing features and version tags are simplified on the song, never on the album. A soundtrack's songs
                   share the title search; only a full page with no identified release can be narrowed by artist.
                   If the title search cannot identify the release and the Spotify album URI is known, Spotify's album metadata
@@ -1431,7 +1431,8 @@ Redesigned:
                   the row, over the shrinking main bar. Expanding, Search's glyph goes back to its place in the row as
                   a view of its own over both bars, on the bar's spring, drawn as the row draws it (lit when Search is
                   the tab selected), the row's Search glyph cleared and its name left to the row; the circle, its own
-                  glyph hidden, goes under the main bar and along with the glyph, and its glass goes in the very frame
+                  glyph hidden, travels horizontally under the main bar, level with the row even when the glyph rises
+                  above its name, and its glass goes in the very frame
                   the growing platter reaches it (issue #35: drawn over the row it was a darker disc), timed off the
                   spring UIKit made, its layer's opacity held over a model of 0 so a busy main thread cannot make it
                   late. As the spring ends the row's own glyph, which the spring has brought to the same place, takes
@@ -1482,8 +1483,8 @@ Redesigned:
                   own hidden in the header: the menu opens on touch down with the quick row (Spotify's items 9, 19 and
                   11), the title row's add button, named for what its tap does (Save to Your Library, or Change Where
                   It's Saved for a saved song, which opens Spotify's sheet of where it is saved; never read as Liked
-                  Songs, Spotify's own Like row staying in the menu), drawn as the player drew it (Star add button's
-                  star), and Spotify's X where the
+                  Songs, Spotify's own Like row staying in the menu), drawn as Spotify's plus or circled tick, and left
+                  out with Star add button on, which keeps the add button on the row as a star, and Spotify's X where the
                   row has one, each left out while Spotify's rows in the menu offer its action, matched by the row's
                   identifier (Spotify's item number, the same on 9.1.90 and 9.2.0), never by its words: Add to Liked
                   Songs (18; Add to Your Episodes for an episode), which a song not saved yet has, for the add button, and Hide in this playlist or album
@@ -1631,7 +1632,7 @@ Redesigned:
                   regular in the secondary color (Title 3, capped at XXXL), 17 over 17 beside the lyrics' thumbnail
                   (PlayerTitle.x), in the app's chosen font (Spotify's own family when Spotify Mix is chosen), Spotify's
                   labels and marquees keeping their text, simplification and translation. The title and artist reach
-                  the ⋯, the add button's and X's slots (put away by PlayerMenu.m) given to them by a custom spacing after
+                  the ⋯ (the star with Star add button on, below), the add button's and X's slots (put away by PlayerMenu.m) given to them by a custom spacing after
                   the track info's arranged view, so the marquee scrolls or ends there; slid beside the lyrics' thumbnail
                   (toward the ⋯, mirrored right to left, PlayerLyrics.x) the same spacing narrows it by the slide and
                   12 pt -- the row's trailing layout margin where nothing is arranged after the title (no add button,
@@ -1661,8 +1662,13 @@ Redesigned:
                   the system font, semibold, 13 pt at the default text size, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
-                  Player page) draws the player's add button, now an item of its ⋯ menu, as a star — outlined in the primary color until the song
-                  is saved, filled in the accent once it is — and in the player it wins over Plain checkmark, which
+                  Player page) keeps the player's add button on the title row, which the ⋯ otherwise stands in for, and
+                  draws it as a star — outlined in the primary color until the song is saved, filled in the accent once
+                  it is — its tap, selected state and accessibility Spotify's; the ⋯ then stands in the row's end after
+                  it, the row's arranged views held in before it as for a row without the add button, the title and
+                  its mark ending at the star (12 pt short of it beside the lyrics' thumbnail), and the ⋯ menu leaves
+                  out its add item (issue #44; harness/player/title-style-check.sh, harness/system-menu `star`). In
+                  the player it wins over Plain checkmark, which
                   keeps every other add button; a disabled player button goes back to Spotify's own glyph, which shows
                   it disabled, and gets the star again once enabled (SGRPlainCheck.x, which owns the add button's glyph
                   and finds the player's by the InformationElementsUnit its button answers to). A Free account gets it too: Spotify's Reinvented Free player mode, whose units none of

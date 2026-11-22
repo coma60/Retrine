@@ -46,6 +46,7 @@ class Fixture:
     frameworks: tuple[str, ...] = ("Foundation",)
     scenarios: tuple[tuple[str, ...], ...] = ((),)
     defines: tuple[str, ...] = ()
+    admitted: bool = True
 
 
 # basename resolution allows the production tree to be reorganized without
@@ -85,6 +86,7 @@ FIXTURES = (
     Fixture("export_storage", "export", ("CacheStorageKey.m", "cache_storage_key.m")),
     Fixture("export_workflow", "export", ("export_native_workflow.m", "WireProto.m", "NativeCacheMap.m", "CacheStorageKey.m", "CacheEnvelope.c", "OggExport.c", "OggArtwork.c", "ExportArtworkMetadata.m", "ExportLibrary.m", "MediaDecode.c")),
     Fixture("audio_probe", "audio", ("AudioProbe.c", "test_probe.c"), diagnostics=True, frameworks=("Foundation", "AudioToolbox")),
+    Fixture("audio_probe_unadmitted", "audio", ("AudioProbe.c", "test_probe_unadmitted.c"), diagnostics=True, frameworks=("Foundation", "AudioToolbox"), admitted=False),
     Fixture("av_hooks", "audio", ("AudioProbe.c", "AVAudioHooks.m", "av_hooks.m"), diagnostics=True, frameworks=("Foundation", "AudioToolbox", "AVFoundation", "CoreMedia")),
     Fixture("offline_flags", "config", ("OfflineFlags.m", "offline_flags.m"), diagnostics=True),
     Fixture("offline_config", "config", ("OfflineConfig.m", "offline_config.m"), diagnostics=True),
@@ -136,7 +138,7 @@ def include_dirs() -> list[Path]:
 
 
 def fixture_sources(test: Fixture) -> list[Path]:
-    paths = [source("admitted_host.c"), *[source(n) for n in test.sources]]
+    paths = [source("admitted_host.c" if test.admitted else "unadmitted_host.c"), *[source(n) for n in test.sources]]
     if "Foundation" in test.frameworks:
         paths.append(source("Localization.m"))
     for name in test.groups:

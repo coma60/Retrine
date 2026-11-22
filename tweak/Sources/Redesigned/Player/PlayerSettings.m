@@ -1214,7 +1214,7 @@ UIViewController *SGRPlayerSettingsPage(NSArray *more) {
         [weakPlayerPage.preview reloadLook];
     };
     SGModRow *starAdd = SGWithNew(SGOptionRow(SGL(@"settings.player.star_add.title", @"Star add button"),
-                                              SGL(@"settings.player.star_add.subtitle", @"The add button as a star, filled in the accent once the song is saved. In the player's ⋯ menu it takes the place of Plain checkmark."),
+                                              SGL(@"settings.player.star_add.subtitle", @"The player's add button as a star beside the song title, next to the ⋯: outlined until the song is saved, filled in the accent once it is. The ⋯ menu then leaves out its add item."),
                                               SGRKeyPlayerStarAdd), @"playerStarAdd");
     starAdd.changed = ^(BOOL on) { [weakPlayerPage.preview reloadLook]; };
     // iPad turns Spotify's own player.

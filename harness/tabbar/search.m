@@ -284,6 +284,7 @@ static BOOL looksLikeRowSearch(UIImageView *glyph) {
 // times it by the expand's own spring, which an expand turning a minimize back shares with what is left of the minimize's.
 @property (nonatomic) BOOL expandsFromRest;
 @property (nonatomic) CGFloat largestStep, comesOutAt, deepestOnRow;
+@property (nonatomic) CGFloat circleCenterErrorY;
 @property (nonatomic) CGPoint lastGlyph;          // Search's glyph center the last frame it was known, in the window
 @property (nonatomic) NSTimeInterval lastTick;     // and when
 @end
@@ -311,6 +312,7 @@ static BOOL looksLikeRowSearch(UIImageView *glyph) {
     self.goneEarly = 0;
     self.expandsFromRest = YES;
     self.deepestOnRow = 0;
+    self.circleCenterErrorY = 0;
     self.unlikeRow = 0;
     self.largestStep = 0;
     self.comesOutAt = NAN;
@@ -403,6 +405,9 @@ static BOOL looksLikeRowSearch(UIImageView *glyph) {
             if (CGRectIsNull(glass)) continue;
             CGFloat gap = capsuleGap(rowGlass, glass);
             BOOL drawnGlass = shownOpacity(platterOf(bar)) > kDrawnFraction;
+            if (drawnGlass) {
+                self.circleCenterErrorY = MAX(self.circleCenterErrorY, fabs(CGRectGetMidY(glass) - CGRectGetMidY(rowGlass)));
+            }
             if (drawnGlass && gap < -kOverlapSlackPt) {
                 self.glassOnRow++;
                 self.deepestOnRow = MAX(self.deepestOnRow, -gap);
@@ -433,6 +438,7 @@ static BOOL looksLikeRowSearch(UIImageView *glyph) {
     if (self.unlikeRow) CASE_FAIL(@"%@: Search's travelling glyph unlike the row's in %lu frames", self.moment, (unsigned long)self.unlikeRow);
     if (self.fadedGlass) CASE_FAIL(@"%@: glass partly faded in %lu frames", self.moment, (unsigned long)self.fadedGlass);
     if (self.glassOnRow) CASE_FAIL(@"%@: another bar's glass on the expanding row's in %lu frames", self.moment, (unsigned long)self.glassOnRow);
+    if (self.circleCenterErrorY > 0.5) CASE_FAIL(@"%@: returning circle off the row's vertical center by %.1f pt", self.moment, self.circleCenterErrorY);
     if (self.goneEarly) CASE_FAIL(@"%@: the circle's glass gone before the expanding row reached it in %lu frames", self.moment, (unsigned long)self.goneEarly);
     if (comesOut && !(self.comesOutAt <= kComesOutWithinPt)) CASE_FAIL(@"%@: the trailing circle was first shown %.1f pt from Search's glyph", self.moment, self.comesOutAt);
     printf("PASS %s: Search drawn once in each of %lu frames\n", self.moment.UTF8String, (unsigned long)self.frames);

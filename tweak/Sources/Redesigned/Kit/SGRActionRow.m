@@ -684,9 +684,12 @@ static void keepOnTop(UIView *page, UIView *button) {
     else if (page.subviews.lastObject != button) [page bringSubviewToFront:button];
 }
 
-// Level with the window's safe area at the top, kCornerSide in from the trailing edge of the page. The height is measured in the window and converted back, never from the page's own safe area: a
-// page under a navigation bar counts the bar into its inset, so the playlist's read 116 where the window's
-// reads 62 and the button sat a bar's height below the back button. The inset from the side is taken from
+// Level with the back button, at the top of the navigation bar shown over the page, kCornerSide in from the trailing
+// edge of the page. Not the window's safe area: on an iPhone the bar starts there (62), but on an iPad Spotify sets
+// its pages in a card inset from the window (40) with the bar 10 down inside it, and ⋯ sat 18pt above the back
+// button (issue #41). Without a bar shown, the window's safe area. Never the page's own safe area: a page under a
+// navigation bar counts the bar into its inset, so the playlist's read 116 where the window's reads 62 and the
+// button sat a bar's height below the back button. The inset from the side is taken from
 // the page's own bounds and not converted from the window: the swipe back slides the page across the
 // window, and a frame converted from the window's x would hold the button still while the page left under
 // it, over the screen below, until the page was gone and took it along.
@@ -699,13 +702,26 @@ static BOOL laidOutRightToLeft(UIView *page) {
     return page.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
 }
 
+// The navigation bar shown over `page` in its window, or nil.
+static UINavigationBar *shownBarOver(UIView *page) {
+    for (UIResponder *r = page.nextResponder; r; r = r.nextResponder) {
+        if (![r isKindOfClass:UIViewController.class]) continue;
+        UINavigationController *navigation = ((UIViewController *)r).navigationController;
+        UINavigationBar *bar = navigation.navigationBar;
+        return !navigation.navigationBarHidden && page.window && bar.window == page.window ? bar : nil;
+    }
+    return nil;
+}
+
 static void placeInCorner(UIView *page, UIView *button, CGFloat along) {
     UIWindow *window = page.window;
     UIView *space = window ?: page;
     CGFloat side = SGRGlassCircleSize;
     CGFloat x = laidOutRightToLeft(page) ? kCornerSide + along : page.bounds.size.width - kCornerSide - side - along;
+    UINavigationBar *bar = shownBarOver(page);
     CGFloat y = space.safeAreaInsets.top;
-    if (window) y = [page convertPoint:CGPointMake(0, y) fromView:nil].y;
+    if (bar) y = [page convertPoint:CGPointZero fromView:bar].y;
+    else if (window) y = [page convertPoint:CGPointMake(0, y) fromView:nil].y;
     CGRect frame = CGRectMake(x, y, side, side);
     if (!CGRectIsEmpty(frame) && !CGRectEqualToRect(button.frame, frame)) button.frame = frame;
 }

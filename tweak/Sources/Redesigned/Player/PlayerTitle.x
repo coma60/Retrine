@@ -11,7 +11,8 @@
 // phone-v100/trees/player-off-full-tree.txt:1856; 9.2.0, design/spotify-920/device/920-track-more-tree.txt:491) is one
 // arranged view of the row's UIStackView, beside the add button's and the X's slots, which PlayerMenu.m puts away by
 // alpha with the ⋯ standing in the add button's: the arranged view is given the room up to the ⋯ by a custom spacing
-// after it, so the title and the artist reach the ⋯ and the marquee scrolls or ends there. Under the title, a
+// after it, so the title and the artist reach the ⋯ and the marquee scrolls or ends there. With Star add button on the
+// add button's slot stays, drawing the star, the ⋯ stands in the row's end after it, and the title reaches the star. Under the title, a
 // UIStackView of badges leads the artist's line; in it a UIView holds each explicit mark, Components.UI.ExplicitIcon
 // (a square "19" in Korea, "E" elsewhere) and Components.UI.19andOverIcon (a circled "19"), which Spotify shows or
 // hides by the holder's hidden flag. The holders are kept hidden (each given a subclass of its own class whose
@@ -33,6 +34,7 @@
 #import <objc/message.h>
 #import "Core/SGCore.h"
 #import "Redesigned/Kit/SGRKit.h"
+#import "Redesigned/Kit/SGRRefinements.h"
 #import "Settings/SGPageStyle.h"
 #import "Shared/Fonts/Fonts.h"
 #import "Shared/Lyrics/Lyrics.h"
@@ -42,7 +44,7 @@
 #import "Player.h"
 
 static char kOriginalKey, kRoleKey, kWantsHiddenKey, kMarkKey, kSpacingKey, kMarginsKey, kTitleHoldKey, kAddKey;
-// Spotify's add button, whose slot in the title row PlayerMenu.m gives the ⋯.
+// Spotify's add button, whose slot in the title row PlayerMenu.m gives the ⋯, or leaves to the star.
 static NSString *const kAddButtonID = @"Components.UI.AddToButton";
 // Spotify's own class's setText:, setFont:, setTextColor: and a mark holder's setHidden: for each subclass made, by
 // the subclass and the selector. Found by the class the subclass was made of, never by the view's class at the time
@@ -361,10 +363,11 @@ static UIView *moreIn(UIStackView *row, UIView *element, BOOL rtl) {
     return more;
 }
 
-// The slot the ⋯ takes as PlayerMenu.m places it after the title's layout: Spotify's add button's arranged slot while
-// Spotify shows it, put away for the ⋯; nil where the ⋯ goes to the row's end. Read from the slot rather than from
-// where the ⋯ was drawn last, which is a pass behind Spotify bringing the slot back or taking it away.
-static UIView *moreSlotIn(UIStackView *row) {
+// Spotify's add button's arranged slot while Spotify shows it, nil when it is gone. PlayerMenu.m, after the title's
+// layout, puts it away for the ⋯ standing in it, or with Star add button on keeps the star in it and the ⋯ in the row's
+// end. Read from the slot rather than from where the ⋯ was drawn last, which is a pass behind Spotify bringing the
+// slot back or taking it away.
+static UIView *addSlotIn(UIStackView *row) {
     UIView *slot = SGRFindByIdentifier(row, kAddButtonID, &kAddKey);
     while (slot && slot.superview != row) slot = slot.superview;
     return slot && !slot.hidden ? slot : nil;
@@ -372,9 +375,10 @@ static UIView *moreSlotIn(UIStackView *row) {
 
 // The title row as the Music app's: the title, any button of Spotify's arranged after it (an episode's skip ad pill,
 // the AI DJ's) and the ⋯ (PlayerMenu.m) side by side, never over one another.
-// The ⋯ standing in the row's end (a row without the add button, an episode's while its skip ad pill is up) has the
-// row's arranged views end before it by the row's trailing margin. The title's arranged view then reaches the ⋯ where
-// the ⋯ is the nearest view on its trailing side, by a custom spacing after it, or the margin where nothing is arranged
+// The ⋯ standing in the row's end (a row without the add button, an episode's while its skip ad pill is up, or any row
+// with Star add button on, the star kept in the add button's slot) has the row's arranged views end before it by the
+// row's trailing margin. The title's arranged view then reaches the ⋯ or the star where it is the nearest view on its
+// trailing side, by a custom spacing after it, or the margin where nothing is arranged
 // after the title; ends Spotify's spacing short of an arranged view of Spotify's seen first (the pill); and in either,
 // `markRoom` sooner when the title is too long to leave the mark room. Slid by the lyrics, it reaches the nearest view
 // on its trailing side, else the row's end, less the slide and kSlidGap. Where none of these asks for room, Spotify's
@@ -389,9 +393,10 @@ static void widenRow(UIView *titleView, UILabel *title, CGFloat markRoom) {
     for (NSUInteger i = [arranged indexOfObject:element] + 1; i < arranged.count && !next; i++) {
         if (!arranged[i].hidden) next = arranged[i];
     }
-    UIView *more = moreIn(row, element, rtl), *moreSlot = more ? moreSlotIn(row) : nil;
+    // The add button's slot, where the ⋯ or the star stands: the title reaches it, the ⋯ there counted though put away.
+    UIView *more = moreIn(row, element, rtl), *addSlot = more ? addSlotIn(row) : nil;
     // The ⋯ in the row's end takes its own width there.
-    CGFloat moreRoom = more && !moreSlot ? more.bounds.size.width : 0;
+    CGFloat moreRoom = more && (!addSlot || SGRStarAddOn()) ? more.bounds.size.width : 0;
     // What stands after the title placed first: the title's own hold kept only while nothing is arranged after it.
     CGFloat titleHold = next ? 0 : [objc_getAssociatedObject(row, &kTitleHoldKey) doubleValue];
     if (holdTrailing(row, moreRoom + titleHold)) [row layoutIfNeeded];
@@ -402,7 +407,7 @@ static void widenRow(UIView *titleView, UILabel *title, CGFloat markRoom) {
     CGFloat edge = rtl ? CGRectGetMinX(row.bounds) : CGRectGetMaxX(row.bounds);
     // The ⋯ counted where the menu puts it this pass, its slot (put away, alpha 0) or the row's end, not where it is.
     for (UIView *view in row.subviews) {
-        if (view == element || view == more || view.hidden || (view.alpha < 0.01 && view != moreSlot) || view.bounds.size.width < 1) continue;
+        if (view == element || view == more || view.hidden || (view.alpha < 0.01 && view != addSlot) || view.bounds.size.width < 1) continue;
         CGRect frame = view.frame;
         BOOL trailing = rtl ? CGRectGetMaxX(frame) < CGRectGetMaxX(own) : CGRectGetMinX(frame) > CGRectGetMinX(own);
         CGFloat x = rtl ? CGRectGetMaxX(frame) : CGRectGetMinX(frame);
@@ -421,7 +426,7 @@ static void widenRow(UIView *titleView, UILabel *title, CGFloat markRoom) {
         spotifys = @([row customSpacingAfterView:element]);
         objc_setAssociatedObject(element, &kSpacingKey, spotifys, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    BOOL spotifysView = edgeView && edgeView != moreSlot && [arranged containsObject:edgeView];
+    BOOL spotifysView = edgeView && edgeView != addSlot && [arranged containsObject:edgeView];
     CGFloat spotifysGap = spotifys.doubleValue == UIStackViewSpacingUseDefault ? row.spacing : spotifys.doubleValue;
     CGFloat stop = sg_slide ? sg_slide + kSlidGap : spotifysView ? spotifysGap : 0;
     CGFloat reach = (rtl ? CGRectGetMaxX(own) - edge : edge - CGRectGetMinX(own)) - stop;

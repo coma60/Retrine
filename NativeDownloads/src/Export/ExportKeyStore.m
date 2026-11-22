@@ -4,6 +4,7 @@
 #import "ExportObservation.h"
 #import "ExportLayout.h"
 #import "ExportMediaUnsealPatch.h"
+#import "ExportSites.h"
 #import "DiagnosticTrace.h"
 #import <mach/mach.h>
 #import <os/lock.h>
@@ -37,11 +38,13 @@ void SAPExportObserveUnsealedMediaKey(const SAPExportRegisterFrame *frame,uintpt
        !readMemory(image+SAPMediaUnsealCallerOffset,code,sizeof(SAPMediaUnsealCallerCode))||
        memcmp(code,SAPMediaUnsealCallerCode,sizeof(SAPMediaUnsealCallerCode)))return;
 #endif
-    // 0x103cc6148 saves caller x20 at [fp-16] and caller LR at [fp+8].
-    // Only the native key-store call at 0x1020fd5d4 has a proven file-ID x20.
+    // The native key-store call saves caller x20 at [fp-16] and caller LR at [fp+8]; only that call
+    // site, the instruction after the unseal BL, has a proven file-ID x20. Its return address is
+    // SAPExportUnsealCallerReturnOffset, generated per target from the unseal_caller window, so this
+    // holds across builds instead of the 9.1.90-only address the check used to pin.
     uintptr_t fp=(uintptr_t)frame->x[29],caller=0,fileAddress=0;
     uint8_t file[20]={0},key[16]={0};
-    if(fp<16||fp>UINTPTR_MAX-8||!readMemory(fp+8,&caller,8)||caller!=image+0x20fd5d8||
+    if(fp<16||fp>UINTPTR_MAX-8||!readMemory(fp+8,&caller,8)||caller!=image+SAPExportUnsealCallerReturnOffset||
        !readMemory(fp-16,&fileAddress,8)||!readMemory(fileAddress,file,sizeof(file))) {
         atomic_fetch_add(&unsealedScopeRejections,1);return;
     }

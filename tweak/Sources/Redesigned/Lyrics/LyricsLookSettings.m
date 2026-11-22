@@ -143,6 +143,17 @@ static UIColor *readableOn(UIColor *color) {
     return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.55 ? UIColor.blackColor : UIColor.whiteColor;
 }
 
+// The least scroll from where the strip is that shows rect between its insets, kept within the range the insets allow.
+// scrollRectToVisible: does not keep to that range: it took the first preset's gap past the inset, and the strip
+// bounced back after (issue #41).
+static CGPoint stripOffsetShowing(UIScrollView *strip, CGRect rect) {
+    UIEdgeInsets inset = strip.adjustedContentInset;
+    CGFloat x = strip.contentOffset.x, width = strip.bounds.size.width;
+    if (CGRectGetMaxX(rect) > x + width - inset.right) x = CGRectGetMaxX(rect) - width + inset.right;
+    if (CGRectGetMinX(rect) < x + inset.left) x = CGRectGetMinX(rect) - inset.left;
+    return CGPointMake(MAX(-inset.left, MIN(x, strip.contentSize.width + inset.right - width)), 0);
+}
+
 static UIButtonConfiguration *chipConfiguration(NSString *title, NSString *symbol, BOOL chosen) {
     UIButtonConfiguration *config;
     if (@available(iOS 26.0, *)) {
@@ -177,7 +188,7 @@ static UIButtonConfiguration *chipConfiguration(NSString *title, NSString *symbo
     UIButton *_drawingStyle;
     UILabel *_note;
     UISelectionFeedbackGenerator *_feedback;
-    BOOL _stripPlaced, _showChosen;
+    BOOL _appeared, _showChosen;
 }
 
 - (instancetype)initWithTitle:(NSString *)title note:(NSString *)note sections:(NSArray<SGModSection *> *)sections {
@@ -268,6 +279,11 @@ static UIButtonConfiguration *chipConfiguration(NSString *title, NSString *symbo
     presentStyleSheet(self);
 }
 
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    _appeared = YES;
+}
+
 // The header keeps the height it is given, so it is measured here and handed back to the table when it
 // changes: the card at the table's inset, the presets and then the sliders' button in a strip that scrolls
 // from edge to edge of the screen, and the note under them.
@@ -289,13 +305,16 @@ static UIButtonConfiguration *chipConfiguration(NSString *title, NSString *symbo
     _strip.frame = CGRectMake(0, top, width, kChipHeight + 2 * kStripPad);
     _strip.contentInset = UIEdgeInsetsMake(0, inset, 0, inset);
     _strip.contentSize = CGSizeMake(MAX(0, x - kChipGap), _strip.bounds.size.height);
-    if (!_stripPlaced) {   // the first button at the inset, where the card starts
-        _strip.contentOffset = CGPointMake(-inset, 0);
-        _stripPlaced = YES;
-    }
     NSInteger chosen = SGRLyricsLookPresetIndex(SGRLyricsLookNow());
-    if (_showChosen && chosen >= 0) {
-        [_strip scrollRectToVisible:CGRectInset(_chips[(NSUInteger)chosen].frame, -kChipGap, 0) animated:self.view.window != nil];
+    CGRect chosenRect = chosen >= 0 ? CGRectInset(_chips[(NSUInteger)chosen].frame, -kChipGap, 0) : CGRectNull;
+    if (!_appeared) {
+        // Until the page is on screen the strip is put where it rests on every pass, as the push settles the table's
+        // margins, so the presets come in already there: the first button at the inset, where the card starts, then
+        // the chosen one in sight. Scrolled once shown, they slid in late (issue #41).
+        _strip.contentOffset = CGPointMake(-inset, 0);
+        if (chosen >= 0) _strip.contentOffset = stripOffsetShowing(_strip, chosenRect);
+    } else if (_showChosen && chosen >= 0) {
+        [_strip setContentOffset:stripOffsetShowing(_strip, chosenRect) animated:self.view.window != nil];
     }
     _showChosen = NO;
     CGFloat styleHeight = MAX(44, ceil([_drawingStyle sizeThatFits:CGSizeMake(inner, CGFLOAT_MAX)].height));

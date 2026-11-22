@@ -665,6 +665,12 @@ static NSString *coverKey(id name) {
         range:NSMakeRange(0, text.length)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
 }
 
+// A release's name as both catalogs agree on it: Apple Music names an EP "X - EP" where Spotify names it "X".
+static NSString *releaseKey(id name) {
+    NSString *key = coverKey(name);
+    return [key hasSuffix:@" - ep"] ? [key substringToIndex:key.length - 5] : key;
+}
+
 static NSString *joinedCredit(NSString *key) {
     return [key stringByReplacingOccurrencesOfString:@" & " withString:@", "];
 }
@@ -698,7 +704,7 @@ static NSString *coverVideo(NSArray *records, NSString *album, NSString *artist,
     NSString *video = nil;
     *matches = 0;
     for (id record in records) {
-        if (![coverKey(dig(record, @"attributes/name")) isEqual:album]) continue;
+        if (![releaseKey(dig(record, @"attributes/name")) isEqual:album]) continue;
         id single = dig(record, @"attributes/isSingle");
         if (![album hasSuffix:@" - single"] && ([single isEqual:@YES] || (song.length && ![single isEqual:@NO]))) continue;
         if (song.length ? !containsSong(record, song, artist)
@@ -862,7 +868,7 @@ static SGRowVideo rowVideoIndex(NSArray *records, NSString *artist, NSString *al
     NSMutableArray *candidates = [NSMutableArray array], *videos = [NSMutableArray array];
     BOOL single = [album hasSuffix:@" - single"];
     for (id record in records) {
-        if (![coverKey(dig(record, @"attributes/name")) isEqual:album]) continue;
+        if (![releaseKey(dig(record, @"attributes/name")) isEqual:album]) continue;
         id isSingle = dig(record, @"attributes/isSingle");
         if (!single && [isSingle isEqual:@YES]) continue;
         NSString *video = videoOf(dig(record, @"attributes/editorialVideo"));
@@ -907,7 +913,7 @@ static SGRowVideo rowVideoIndex(NSArray *records, NSString *artist, NSString *al
 
 void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(SGMotionRowMatch), void (^found)(NSURL *)) {
     NSUInteger generation = sg_generation;
-    NSString *albumKey = coverKey(album);
+    NSString *albumKey = releaseKey(album);
     songCoverRecords(album, ^(NSArray *records) {
         if (!records || generation != sg_generation) { ready(nil); return; }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -941,13 +947,14 @@ void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pix
 // Cache values: URL for a clip, @NO for an identified release without video, nil for no match.
 static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString *song, NSString *albumURI, NSString *trackURI, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     SGMotionTicket *ticket = [SGMotionTicket new];
-    NSString *artistKey = coverKey(artist), *albumKey = coverKey(album), *songKey = coverKey(song);
+    NSString *artistKey = coverKey(artist), *albumKey = releaseKey(album), *songKey = coverKey(song);
     if (!artistKey.length || !albumKey.length) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (!ticket.cancelled) done(nil, NO); });
         return ticket;
     }
-    // A legacy URL (or miss) was decided with editions collapsed and no track evidence.
-    NSString *base = [NSString stringWithFormat:@"album\n2\n%@\n%@", artistKey, albumKey];
+    // A legacy URL (or miss) was decided with editions collapsed and no track evidence; a "2" miss could
+    // be an EP that Apple Music names with " - EP".
+    NSString *base = [NSString stringWithFormat:@"album\n3\n%@\n%@", artistKey, albumKey];
     setUp();
     BOOL needsSong = songKey.length && (!sg_kept[base] || sg_kept[base] == NSNull.null);
     // Older song-level misses could also mean the track identified a release without video, so only the clips
@@ -956,7 +963,7 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     if (needsSong) {
         NSString *song = [NSString stringWithFormat:@"%@\n%@\n%@", artistKey, albumKey, songKey];
         NSString *older = [@"album\nsong4\n" stringByAppendingString:song];
-        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong5\n" stringByAppendingString:song];
+        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong6\n" stringByAppendingString:song];
     }
     NSUInteger generation = sg_generation;
     // The remote file is what is kept: the store may drop its local copy later in the launch.

@@ -2674,7 +2674,7 @@
 "settings.player.sleep_fade.subtitle" = "While Labs' Fade out is forced on, Spotify's own timer fades its own way.";
 "settings.player.song_card.menu" = "Share Song Card";
 "settings.player.sound_menu" = "Speed, Pitch & Reverb";
-"settings.player.star_add.subtitle" = "The add button as a star, filled in the accent once the song is saved. In the player's ⋯ menu it takes the place of Plain checkmark.";
+"settings.player.star_add.subtitle" = "The player's add button as a star beside the song title, next to the ⋯: outlined until the song is saved, filled in the accent once it is. The ⋯ menu then leaves out its add item.";
 "settings.player.star_add.title" = "Star add button";
 "settings.player.title" = "Player";
 "settings.player.visualizer_heat.subtitle" = "Keeps the Visualizer moving while the iPhone is hot. Uses more battery.";

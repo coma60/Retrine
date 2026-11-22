@@ -232,6 +232,13 @@ into the late turn; with the circle's glass taken away at once it failed `gone b
 in 3 to 5 frames of every expand, and with the travelling glyph drawn from the row's plain copy `expand from Search`
 failed `unlike the row's`. After the change all pass, also under Reduce Motion.
 
+Issue #41: the same frame sampler also checks that the returning Search circle, while drawn, stays within
+0.5 pt of the row platter's vertical center. Before the fix, `search labels` on an iPhone 17 Pro simulator
+(iOS 26.5) failed `expand from Home: returning circle off the row's vertical center by 5.0 pt`.
+It did not reproduce the iOS 27 recording's late disappearance: in `search capture labels` the circle was
+last visible at frame 004, gone at 005, and Search's name appeared progressively from 006, before the
+last moving frame (016). The glass overlap check remains in force with and without names.
+
 `states` checks what an earlier state leaves on the bar (`bar-check.sh` runs both). Alone: the bar minimized in a compact
 width, then the window made regular (an iPad's narrow window widened) with no tab changed, and Spotify's bar laid out
 again: the bar is expanded with every tab on it. With `split`: Search, the only split tab, picked on its bar; Home chosen

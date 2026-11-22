@@ -71,8 +71,12 @@ SAP_EXPORT void SpotifyAudioProbeInitialize(void) {
     pthread_once(&initializeOnce, resolveBackend);
 }
 
+// Spotify's five audio imports are bound to this library in the executable, so
+// they must reach AudioToolbox even where Pixie is not admitted (LiveContainer
+// runs Spotify as a later image than dyld's image 0). Only the PCM observation
+// below waits for admission.
 static bool ready(void) {
-    if (!atomic_load_explicit(&backendReady, memory_order_acquire)) SpotifyAudioProbeInitialize();
+    if (!atomic_load_explicit(&backendReady, memory_order_acquire)) pthread_once(&initializeOnce, resolveBackend);
     return atomic_load_explicit(&backendReady, memory_order_acquire);
 }
 
@@ -263,7 +267,7 @@ SAP_EXPORT OSStatus AudioUnitSetProperty(AudioUnit unit, AudioUnitPropertyID pro
                                         AudioUnitElement element, const void *data, UInt32 size) {
     if (!ready()) return kAudioUnitErr_Uninitialized;
     atomic_fetch_add(&setCalls, 1);
-    if (property == kAudioUnitProperty_SetRenderCallback && data && size == sizeof(AURenderCallbackStruct)) {
+    if (property == kAudioUnitProperty_SetRenderCallback && data && size == sizeof(AURenderCallbackStruct) && SAPRuntimeProfileAdmitted()) {
         const AURenderCallbackStruct *incoming = data;
         AudioComponentDescription description = {0};
         atomic_fetch_add(&callbackAttempts, 1);

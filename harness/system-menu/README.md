@@ -37,9 +37,14 @@ selection or dismissal, then deliver or withhold Spotify's sheet.
   X put away (alpha 0, hidden from VoiceOver), VoiceOver reading it with Spotify's ⋯'s words; a touch in the slot
   reaches it, nothing opens before the finger, a finger sends its touch down and opens the menu, and the press
   holds while the menu is up and is let go as it ends.
+- `star`: Star add button on (the harness's `SGRStarAddOn` is on for this scenario alone; the rest run with it off):
+  the add button's slot stays drawn and read by VoiceOver, the X is put away, the ⋯ stands in the row's 48 pt end, and
+  with the row's arranged views held in before it (as `PlayerTitle.x` holds them, which
+  `harness/player/title-style-check.sh` checks) the add button ends where the ⋯ starts; a finger on the add button
+  runs Spotify's add action and opens no menu, and the ⋯'s menu, Spotify's rows held back, has no add item.
 - `titleitems`: a saved song out of a playlist with Spotify's X shown, its sheet with neither a Like row nor Hide in
   this playlist (as 9.1.90's and 9.2.0's): once Spotify's rows are in, the add button (Spotify's words "Added to
-  playlist") is still in the menu as Change Where It's Saved, not checked, with a filled star, beside the quick row's
+  playlist") is still in the menu as Change Where It's Saved, not checked, with Spotify's circled tick, beside the quick row's
   Add to Playlist, and Don't play this is a plain item; picking the X fires Spotify's X (not the add button) and the
   sheet goes.
 - `playlist`: a song not saved yet in a playlist with the X shown, its sheet with Add to Liked Songs (18) and Hide in
@@ -152,6 +157,7 @@ is a shown row's: `playlist` must fail; make `fireTitle:` fire the first lead it
 its live rows lack the title, or drop `refreshLead` where the row poll gives up: `stalecache` must fail. For the
 iPad popover, skip moving its source into the mod's window in `adoptSheet:`: `popover` must fail; let the request
 window's timeout end with adoption again (`if (!session || sg_requesting != session) return;`): `notup` and
-`notup-stored` must fail; drop the request window's branch for a sheet still being presented (its presenting
+`notup-stored` must fail; let `titleRowItems` offer the add button's item with Star add button on: `star` must
+fail; drop the request window's branch for a sheet still being presented (its presenting
 controller set): `slowsheet` must fail. Mutate only a temporary source copy, never the working source.
 Remove only those temporary build/source directories after the runs.

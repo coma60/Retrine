@@ -2648,7 +2648,7 @@
 "settings.player.sleep_fade.subtitle" = "실험실의 페이드 아웃을 강제로 켜 두면 Spotify 자체 타이머는 Spotify 방식으로 페이드됩니다.";
 "settings.player.song_card.menu" = "곡 카드 공유";
 "settings.player.sound_menu" = "속도, 음정 및 리버브";
-"settings.player.star_add.subtitle" = "별 모양 추가 버튼으로, 곡이 저장되면 강조 색상으로 채워집니다. 플레이어의 ⋯ 메뉴에서는 단순 체크표시를 대신합니다.";
+"settings.player.star_add.subtitle" = "플레이어의 추가 버튼을 곡 제목 옆, ⋯ 앞에 별 모양으로 표시합니다. 저장 전에는 윤곽선만, 저장되면 강조 색상으로 채워지며, ⋯ 메뉴에는 추가 항목이 나오지 않습니다.";
 "settings.player.star_add.title" = "별 모양 추가 버튼";
 "settings.player.title" = "플레이어";
 "settings.player.visualizer_heat.subtitle" = "iPhone이 뜨거울 때도 비주얼라이저를 계속 움직입니다. 배터리를 더 사용합니다.";

@@ -1147,7 +1147,7 @@ static CASpringAnimation *lastSpringOf(UIView *view) {
 // it, and a glyph drawn on the circle kept the circle's glass over the row as a darker disc (issue #35). So the glyph
 // travels as a view of its own over both bars, drawn as the row draws it, from the circle's glyph to the row's on the
 // bar's spring, the row's glyphs for the tab cleared and its name left to the row. The circle, its own button hidden,
-// goes under the main bar and along with the glyph, and is drawn until the spring reaches the share of its way at which
+// goes under the main bar along x, and is drawn until the spring reaches the share of its way at which
 // the growing platter touches it, so its glass is never over the row's nor under it: its layer's opacity is held at 1
 // that long over a model of 0, in the same transaction as the spring, so the render server takes it away in that very
 // frame however busy the main thread is. The view's alpha would not do: UIKit hands it to the glass, which went at
@@ -1302,8 +1302,8 @@ static void setMinimized(BOOL minimized, BOOL animated) {
     }
     // A tab moving between the row and the trailing circle is never under another bar's glass. Minimizing, the circle
     // comes out of the place the tab had in the row, over the main bar. Expanding, the main bar stands over the circle,
-    // and the tab's glyph travels over both to the row (SGRHandOver), the circle going along with it to where its glyph
-    // lands on the row's until the growing platter reaches it; the row's own glyph takes over as the spring ends (settle).
+    // and the tab's glyph travels over both to the row (SGRHandOver). Only the glyph rises to make room for its name;
+    // the circle stays level with the growing platter until they touch.
     apartBar = objc_getAssociatedObject(stockBar, &kApartBarKey);
     __block UIView *rowButton = nil;
     __block CGRect glyphTo = CGRectNull;
@@ -1315,7 +1315,7 @@ static void setMinimized(BOOL minimized, BOOL animated) {
                 UIImageView *rowGlyph = glyphView(rowButton), *ownGlyph = glyphView(circleButton);
                 glyphTo = [host convertRect:rowGlyph.bounds fromView:rowGlyph];
                 CGRect from = [host convertRect:ownGlyph.bounds fromView:ownGlyph];
-                apartBar.frame = CGRectOffset(apartBar.frame, CGRectGetMidX(glyphTo) - CGRectGetMidX(from), CGRectGetMidY(glyphTo) - CGRectGetMidY(from));
+                apartBar.frame = CGRectOffset(apartBar.frame, CGRectGetMidX(glyphTo) - CGRectGetMidX(from), 0);
                 UIView *rowGlass = platterOf(bar), *circleGlass = platterOf(apartBar);
                 circleShare = touchFraction(rowGlassFrom, [host convertRect:rowGlass.bounds fromView:rowGlass],
                                             circleGlassFrom, [host convertRect:circleGlass.bounds fromView:circleGlass]);

@@ -397,6 +397,17 @@ static void checkSoundtrack(void) {
     coverResults = @[release(@"Soundtrack", @"Cast", NO, @[@{@"attributes":
         @{@"name": @"Theme (2017 Remaster)", @"artistName": @"Singer"}}])];
     CHECK(songCover(@"Singer", @"Soundtrack", @"Theme - 2021 Remaster"));
+    // Apple Music names an EP "X - EP" where Spotify names it "X" (aespa's Rich Man, issue #43).
+    NSString *ep = @"Rich Man - The 6th Mini Album";
+    coverResults = @[release([ep stringByAppendingString:@" - EP"], @"aespa", NO,
+        @[@{@"attributes": @{@"name": @"Rich Man", @"artistName": @"aespa"}}])];
+    BOOL epCover = songCover(@"aespa", ep, nil) != nil;
+    __block BOOL epRow = NO, epRowClip = NO;
+    SGMotionAlbumRowMatcher(@"aespa", ep, 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+        ^(NSURL *clip) { epRowClip = clip != nil; epRow = YES; });
+    waitFor(^BOOL { return epRow; });
+    fprintf(stderr, "motion: EP suffix cover %s, rows %s\n", epCover ? "PASS" : "FAIL", epRowClip ? "PASS" : "FAIL");
+    CHECK(epCover && epRowClip);
 
     coverResults = @[release(@"Original (Deluxe)", @"Artist", NO, tracks)];
     CHECK(!album(@"Original"));
@@ -508,12 +519,12 @@ int main(int argc, char **argv) {
             URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
         CHECK([NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil]);
         store = argc == 3 ? [NSURL fileURLWithPath:@(argv[2])] : [root URLByAppendingPathComponent:@"answers.plist"];
-        if (argc != 3) CHECK(([@{@"album\n2\nartist\nexpired": @{@"url": @"https://fixture.invalid/expired.mp4",
+        if (argc != 3) CHECK(([@{@"album\n3\nartist\nexpired": @{@"url": @"https://fixture.invalid/expired.mp4",
             @"at": [NSDate dateWithTimeIntervalSinceNow:-8 * 24 * 3600]},
             @"album\n1\nartist\noriginal": @{@"url": @"https://fixture.invalid/wrong-edition.mp4", @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy still\none": @{@"url": @"", @"identified": @NO, @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy clip\none": @{@"url": @"https://fixture.invalid/legacy-clip.mp4", @"at": NSDate.date},
-            @"album\n2\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved.mp4", @"at": NSDate.date}}
+            @"album\n3\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved.mp4", @"at": NSDate.date}}
             writeToURL:store atomically:YES]));
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         NSString *tokenKey = @"spotifyglass.motion.token";
@@ -558,10 +569,10 @@ int main(int argc, char **argv) {
             CHECK(album(name) != nil);
         }
         waitFor(^BOOL {
-            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n2\nartist\nalbum 200"] != nil;
+            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n3\nartist\nalbum 200"] != nil;
         });
         NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:store];
-        CHECK(saved.count == 200 && !saved[@"album\n2\nartist\nexpired"] && !saved[@"album\n2\nartist\nalbum 0"]);
+        CHECK(saved.count == 200 && !saved[@"album\n3\nartist\nexpired"] && !saved[@"album\n3\nartist\nalbum 0"]);
         edition = @"second";
         CHECK([album(@"Album 200").absoluteString isEqual:@"https://fixture.invalid/first/Album-200/clip.mp4"]);
         CHECK([album(@"Album 0").absoluteString isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"]);
@@ -599,7 +610,7 @@ int main(int argc, char **argv) {
         [NSURLProtocol unregisterClass:CatalogProtocol.class];
         if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
         waitFor(^BOOL {
-            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n2\nartist\nalbum 0"][@"url"]
+            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n3\nartist\nalbum 0"][@"url"]
                 isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"];
         });
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:nil]);

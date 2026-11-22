@@ -25,8 +25,8 @@ void SGAlbumQueueInstall(UIViewController *menu) {}
 
 void SGRPlayerMenuWatch(UIView *button);
 void SGRPlayerMenuInTitleRow(UIView *title);
-// The Kit around PlayerMenu.m: Star add button on, the title's white.
-BOOL SGRStarAddOn(void) { return YES; }
+// The Kit around PlayerMenu.m: the title's white, and Star add button (below) on for the `star` scenario alone.
+BOOL SGRStarAddOn(void);
 UIColor *SGRPrimary(void) { return UIColor.whiteColor; }
 // SGRRestyle.m is not built: the view under `root` with that identifier, looked for afresh each time.
 UIView *SGRFindByIdentifier(UIView *root, NSString *identifier, const void *cacheKey) {
@@ -64,6 +64,8 @@ static NSString *scenario(void) {
 static BOOL is(NSString *run) {
     return [scenario() isEqualToString:run];
 }
+
+BOOL SGRStarAddOn(void) { return is(@"star"); }
 
 static void check(BOOL ok, NSString *what) {
     if (!ok) HARNESS_FAIL(@"%@", what);
@@ -823,7 +825,7 @@ static NSArray<NSString *> *quickTitles(void) {
         return;
     }
     sg_rowsHeld = is(@"loading") || is(@"quick") || is(@"quicklate") || is(@"podcast") || is(@"stored") || is(@"playlist") || is(@"stalecache")
-               || is(@"slowsheet");
+               || is(@"slowsheet") || is(@"star");
     sg_rowsNever = is(@"quicklate");
     sg_rowsAfter = is(@"quick") ? 1.2 : is(@"loading") || is(@"podcast") ? 1.5 : is(@"slowsheet") ? 3.4 : 0;
 
@@ -967,6 +969,33 @@ static NSArray<NSString *> *quickTitles(void) {
                         finish();
                     });
                 });
+            }];
+        });
+        return;
+    }
+    if ([run isEqualToString:@"star"]) {
+        // Star add button on (issue #44): Spotify's add button stays on the row, drawn and read, its tap Spotify's, the X
+        // put away and the ⋯ in the row's end. The harness holds the row's arranged views in before the ⋯ by its width,
+        // as PlayerTitle.x does (harness/player/title-style-check.sh checks that). Spotify's rows held back, the menu,
+        // which would have the add button's item then, has none: the button is on the row.
+        UIView *front = self.front;
+        CGRect bounds = self.titleRow.bounds;
+        check(front.superview == self.titleRow && fabs(CGRectGetMaxX(front.frame) - CGRectGetMaxX(bounds)) < 0.5 && front.frame.size.width == 48,
+              [NSString stringWithFormat:@"the ⋯ in the row's end (%@, the row %@)", NSStringFromCGRect(front.frame), NSStringFromCGRect(bounds)]);
+        self.titleRow.layoutMarginsRelativeArrangement = YES;
+        self.titleRow.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(0, 0, 0, front.frame.size.width);
+        [self.view layoutIfNeeded];
+        check(self.addElement.alpha == 1 && !self.addElement.accessibilityElementsHidden && self.banElement.alpha == 0 && self.banElement.accessibilityElementsHidden,
+              @"the add button stays on the row, drawn and read; the X is put away");
+        check(CGRectGetMaxX(self.addElement.frame) <= CGRectGetMinX(front.frame) + 0.5,
+              [NSString stringWithFormat:@"the add button ends where the ⋯ starts (%@, ⋯ %@)", NSStringFromCGRect(self.addElement.frame), NSStringFromCGRect(front.frame)]);
+        [self touch:self.addElement];
+        after(0.3, ^{
+            check(self.addTaps == 1 && !openMenu() && self.frontDowns == 0, @"a finger on the add button runs Spotify's add action, not the menu");
+            [self tap:^(CFTimeInterval took) {
+                check(took >= 0 && menuShowsAll(quickTitles()), @"a finger on the ⋯ opens the menu");
+                check(!menuShowsAny(@[@"Save to Your Library", @"Change Where It's Saved"]), @"the menu has no add item, the add button being on the row");
+                finish();
             }];
         });
         return;
@@ -1282,15 +1311,15 @@ static NSArray<NSString *> *quickTitles(void) {
     }
     if ([run isEqualToString:@"titleitems"]) {
         // The title row's buttons as items, after the quick row: a saved song's add button named for what its tap does
-        // (not Spotify's "Added to playlist", nor a Liked Songs checkmark), its star filled, beside the quick row's
+        // (not Spotify's "Added to playlist", nor a Liked Songs checkmark), drawn as Spotify's circled tick, beside the quick row's
         // playlist picker; and Spotify's X while Spotify shows it; a pick fires the button. Out of a playlist, a saved
         // song's sheet has neither a Like row nor Hide in this playlist, so both stay once Spotify's rows are in.
         waitFor(^BOOL { return menuShows(@"Go to album"); }, 3, ^{
             UIMenuElement *add = sg_elements[@"Change Where It's Saved"], *ban = sg_elements[@"Don't play this"];
             check(menuShows(@"Go to album") && menuShowsAll(@[@"Change Where It's Saved", @"Don't play this"]) && !menuShows(@"Added to playlist")
                   && !menuShows(@"Save to Your Library"), @"with Spotify's rows in, the saved song's add button and the X are in the menu");
-            check([add isKindOfClass:UIAction.class] && ((UIAction *)add).state == UIMenuElementStateOff && [((UIAction *)add).image.description containsString:@"star.fill"],
-                  [NSString stringWithFormat:@"the saved song's add button: not checked, a filled star (%@)", ((UIAction *)add).image]);
+            check([add isKindOfClass:UIAction.class] && ((UIAction *)add).state == UIMenuElementStateOff && [((UIAction *)add).image.description containsString:@"checkmark.circle.fill"],
+                  [NSString stringWithFormat:@"the saved song's add button: not checked, Spotify's circled tick (%@)", ((UIAction *)add).image]);
             check(menuShows(@"Add to Playlist"), @"the quick row's playlist picker stays its own");
             check([ban isKindOfClass:UIAction.class] && ((UIAction *)ban).state == UIMenuElementStateOff, @"the X is a plain item");
             pick(@"Don't play this");

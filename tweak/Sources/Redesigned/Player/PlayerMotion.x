@@ -168,8 +168,13 @@ static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
 // deepening ended a dark cover a third too light and a light one too dark, and darkened late, so the controls stood on
 // the cover's colors and the foot came in under them. So each row of the veil takes the luma that straight line puts
 // there as it will be seen, the dim and the deepening over it included (veilShade), from what shows at the cover's
-// edge to kVeilFootLuma at the bottom of the screen, scaled by at most kVeilGainLeast to kVeilGainMost of its own.
-static const CGFloat kVeilFootLuma = 0.184, kVeilGainLeast = 0.35, kVeilGainMost = 1.8;
+// edge to the foot's luma (kVeilFootShare) at the bottom of the screen, scaled by at most kVeilGainLeast to kVeilGainMost of its own.
+// The line ends at the bottom of the screen (the ramp's end), not the view's: the view runs the field's bleed (600 pt)
+// past it, and a line to there stood a third of the way at the screen's foot, a light cover's foot left gray at 125
+// of 255 where the Music app's is 72. A light foot ends lighter than a dark one: kVeilFootShare of what shows at the
+// cover's edge (the Music app's 72 under a beige wall at 184, 47 under a collage at 125), never under kVeilFootLuma
+// (a dark pink and a dark blue cover end at 50 and 46), joined by a soft maximum of power kVeilFootSoft.
+static const CGFloat kVeilFootLuma = 0.184, kVeilFootShare = 0.38, kVeilFootSoft = 4, kVeilGainLeast = 0.35, kVeilGainMost = 1.8;
 enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
 // The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
 // last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
@@ -456,7 +461,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
         for (int c = 0; c < 3; c++) mean[c] += w * row[j * 3 + c];
     }
     for (int c = 0; c < 3; c++) mean[c] /= weights;
-    CGFloat edgeShade = veilShade(shade, bottom), run = MAX(1, total - bottom);
+    CGFloat edgeShade = veilShade(shade, bottom), run = MAX(1, MIN(total, shade.rampTo) - bottom);
     uint8_t *pixels = calloc(kVeilColumns * kVeilRows * 4, 1);
     // Each column's two colors, the near and the far, once for every row.
     CGFloat narrowAt[kVeilColumns][3], farAt[kVeilColumns][3];
@@ -466,6 +471,11 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
         smoothedAt(row, kVeilWide, u, wide);
         for (int c = 0; c < 3; c++) farAt[k][c] = wide[c] * (1 - kVeilMean) + mean[c] * kVeilMean;
     }
+    // Where the line ends: from the luma at the cover's edge as it is seen (kVeilFootShare).
+    CGFloat edgeLuma = 0;
+    for (int k = 0; k < kVeilColumns; k++) edgeLuma += 0.299 * narrowAt[k][0] + 0.587 * narrowAt[k][1] + 0.114 * narrowAt[k][2];
+    edgeLuma = edgeLuma / kVeilColumns * edgeShade;
+    CGFloat footLuma = pow(pow(kVeilFootShare * edgeLuma, kVeilFootSoft) + pow(kVeilFootLuma, kVeilFootSoft), 1 / kVeilFootSoft);
     for (int r = 0; r < kVeilRows; r++) {
         CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
         CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);
@@ -477,9 +487,9 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
             luma += 0.299 * colors[k][0] + 0.587 * colors[k][1] + 0.114 * colors[k][2];
         }
         luma = MAX(0.01, luma / kVeilColumns);
-        // The straight line from what shows at the cover's edge to kVeilFootLuma, as seen through the dim and the
+        // The straight line from what shows at the cover's edge to the foot's luma, as seen through the dim and the
         // deepening at this row.
-        CGFloat along = MIN(1, d / run), seen = luma * edgeShade * (1 - along) + kVeilFootLuma * along;
+        CGFloat along = MIN(1, d / run), seen = luma * edgeShade * (1 - along) + footLuma * along;
         CGFloat gain = MIN(kVeilGainMost, MAX(kVeilGainLeast, seen / (luma * MAX(0.05, veilShade(shade, y)))));
         for (int k = 0; k < kVeilColumns; k++) {
             uint8_t *pixel = pixels + (r * kVeilColumns + k) * 4;

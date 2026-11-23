@@ -29,6 +29,11 @@ on:
         default: "app.retrine.player"
         required: false
         type: string
+      runner:
+        description: "macOS runner. A run whose build is not given its runner within 5 s starts again on the next one (macos-latest -> macos-26 -> macos-15)"
+        default: macos-latest
+        type: choice
+        options: [macos-latest, macos-26, macos-15]
 
 permissions:
   contents: read
@@ -37,8 +42,99 @@ env:
   THEOS: ${{ github.workspace }}/theos
 
 jobs:
+  # GitHub has no fallback for a runner label that is not acquired: the job waits in the queue. This job watches
+  # the build; if it is still queued RUNNER_WAIT_SECONDS after it was created, it dispatches this workflow again
+  # with the same inputs on the next runner in FALLBACK and cancels this run. The last runner has no watchdog, so
+  # it never loops.
+  runner-watchdog:
+    if: inputs.runner != 'macos-15'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Move a build that got no runner to the next macOS version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REF: ${{ github.ref_name }}
+          RUNNER_WAIT_SECONDS: "5"
+          FALLBACK: "macos-latest=macos-26 macos-26=macos-15"
+          CURRENT_RUNNER: ${{ inputs.runner || 'macos-latest' }}
+          IN_IPA_URL: ${{ inputs.ipa_url }}
+          IN_UPLOAD_METHOD: ${{ inputs.upload_method }}
+          IN_REMOVE_PLUGINS: ${{ inputs.remove_plugins }}
+          IN_ENABLE_WIREGUARD: ${{ inputs.enable_wireguard }}
+          IN_ENABLE_PIXIE: ${{ inputs.enable_pixie }}
+          IN_BUNDLE_ID: ${{ inputs.bundle_id }}
+        shell: bash
+        run: |
+          # The IPA URL can carry a private share token.
+          echo "::add-mask::$IN_IPA_URL"
+          python3 -B - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+          from datetime import datetime, timezone
+
+          repo, run_id = os.environ["GH_REPO"], os.environ["RUN_ID"]
+          wait = float(os.environ["RUNNER_WAIT_SECONDS"])
+          current = os.environ["CURRENT_RUNNER"]
+          fallback = dict(pair.split("=", 1) for pair in os.environ["FALLBACK"].split())
+          after = fallback.get(current)
+          if not after:
+              print(f"{current} is the last runner; nothing to fall back to")
+              raise SystemExit(0)
+
+          def build_job():
+              out = subprocess.check_output(
+                  ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"], text=True)
+              return next((j for j in json.loads(out)["jobs"] if j["name"] == "build"), None)
+
+          def created(job):
+              return datetime.fromisoformat(job["created_at"].replace("Z", "+00:00"))
+
+          job = None
+          for _ in range(60):
+              job = build_job()
+              if job:
+                  break
+              time.sleep(1)
+          if not job:
+              print("the build job was not found; leaving the run as it is")
+              raise SystemExit(0)
+          while True:
+              if job["status"] != "queued":
+                  print(f"build got a runner ({job.get('runner_name') or job['status']}) on {current}")
+                  raise SystemExit(0)
+              elapsed = (datetime.now(timezone.utc) - created(job)).total_seconds()
+              if elapsed >= wait:
+                  break
+              time.sleep(max(0.5, min(1.0, wait - elapsed)))
+              job = build_job()
+
+          print(f"::warning::build waited {elapsed:.0f} s for {current} without a runner; starting again on {after}")
+          inputs = {
+              "ipa_url": os.environ["IN_IPA_URL"],
+              "upload_method": os.environ["IN_UPLOAD_METHOD"] or "artifacts",
+              "remove_plugins": os.environ["IN_REMOVE_PLUGINS"] or "false",
+              "enable_wireguard": os.environ["IN_ENABLE_WIREGUARD"] or "true",
+              "enable_pixie": os.environ["IN_ENABLE_PIXIE"] or "true",
+              "bundle_id": os.environ["IN_BUNDLE_ID"],
+              "runner": after,
+          }
+          command = ["gh", "workflow", "run", "build-ipa.yml", "--ref", os.environ["REF"]]
+          for key, value in inputs.items():
+              command += ["-f", f"{key}={value}"]
+          subprocess.run(command, check=True)
+          # Dispatched first: cancelling this run also stops this job.
+          subprocess.run(["gh", "run", "cancel", run_id], check=True)
+          PY
+
   build:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner || 'macos-latest' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 

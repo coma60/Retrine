@@ -42,6 +42,12 @@ static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
 // size) and 52,96,108 (the waves' teal). Modelled from the same covers: a 30 px blur (Blur 24), 110% saturation and
 // this gain on linear light, times the Brightness setting, give 42,32,27 and 56,70,84.
 static const CGFloat kBaseGain = 0.35;
+// A dark cover is not darkened with the rest: the Music app's player lifts it. Over a near-black cover (mean 22 of
+// 255) its background stood at 31,33,33 above the title, where the gain left 10. Its background is about 0.55 of the
+// cover's encoded value with a floor near 30 of 255: the shown luminance is kept at least this much (linear, 30 of
+// 255) by a soft maximum, (shown^kFloorSoft + kFloor^kFloorSoft)^(1/kFloorSoft), which leaves the lighter covers
+// within a few levels (the red and gold emblem's 37 comes to 38), in the cover's own hue, a black pixel taking gray.
+static const CGFloat kFloor = 0.0127, kFloorSoft = 4;
 
 NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.redesign.fluidSettingsDidChange";
 
@@ -130,9 +136,13 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         }
         CGFloat light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
         CGFloat cap = MIN(gain * (light > ceiling ? ceiling / light : 1), ceiling / light);
-        if (i / width >= lowerRow) { lowerSum += MIN(ceiling, light * cap); lowerCount++; }
+        // The floor (kFloor), never over the ceiling; a pixel with no light to scale takes the floor's gray.
+        CGFloat shown = MIN(ceiling, light * cap), floored = MIN(ceiling, pow(pow(shown, kFloorSoft) + pow(kFloor, kFloorSoft), 1 / kFloorSoft));
+        BOOL gray = light < 1e-5;
+        if (!gray) cap = floored / light;
+        if (i / width >= lowerRow) { lowerSum += floored; lowerCount++; }
         for (int c = 0; c < 3; c++) {
-            CGFloat v = MIN(1, rgb[c] * cap);
+            CGFloat v = MIN(1, gray ? floored : rgb[c] * cap);
             p[c] = floor(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055));
         }
         p[3] = 255;

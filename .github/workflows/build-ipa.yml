@@ -30,7 +30,7 @@ on:
         required: false
         type: string
       runner:
-        description: "macOS runner (both have Xcode 26.6). A build not given its runner within 3 min starts again on the other one"
+        description: "macOS runner (both have Xcode 26.6). A build not given its runner within 30 s starts again on the other one"
         default: macos-latest
         type: choice
         options: [macos-latest, macos-26-intel]
@@ -57,7 +57,7 @@ jobs:
   #   macos-26-intel = macOS 26 x64,   Xcode 26.6
   # Left out: macos-26 (the same pool as macos-latest), macOS 15 (newest Xcode 26.3, an older iOS SDK the code was
   # never built against) and macOS 14 (no Xcode 26, retired). The two take turns up to MAX_HOPS moves, then the
-  # build waits where it is. 180 s: a healthy pool hands a macOS runner over in well under a minute.
+  # build waits where it is. 30 s: a healthy pool hands a macOS runner over in about 5 s (runs 1 to 35).
   runner-watchdog:
     if: inputs.runner_hops < 5
     runs-on: ubuntu-latest
@@ -74,7 +74,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           REF: ${{ github.ref_name }}
-          RUNNER_WAIT_SECONDS: "180"
+          RUNNER_WAIT_SECONDS: "30"
           FALLBACK: "macos-latest=macos-26-intel macos-26-intel=macos-latest"
           MAX_HOPS: "5"
           HOPS: ${{ inputs.runner_hops || 0 }}

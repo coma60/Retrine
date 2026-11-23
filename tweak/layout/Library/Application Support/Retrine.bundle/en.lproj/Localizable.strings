@@ -500,7 +500,8 @@
 "settings.automix.blendlength.format" = "%ld s";
 "settings.automix.blendlength.title" = "Blend length";
 "settings.automix.footer.note" = "AutoMix needs Premium, or Spoof Premium under Premium, ads & privacy.";
-"settings.automix.player.footer" = "In the redesigned player.";
+"settings.automix.footer.style" = "Beat-matched works only on some playlists Spotify made. For your own playlists, also turn on Mix, left of Shuffle in the queue.";
+"settings.automix.player.footer" = "In the redesigned player. The progress bar and the cover show crossfades only, as Spotify gives no times for a beat-matched blend.";
 "settings.automix.preview.accessibility" = "AutoMix, %@, %@";
 "settings.automix.preview.beatmatched.subtitle" = "%ld s blend, on the beat";
 "settings.automix.preview.beatmatched.title" = "Beat-matched mix";
@@ -1683,6 +1684,10 @@
 "settings.mod.share_diagnostics.title" = "Share diagnostics";
 "settings.mod.spotify_version.likely_works" = ", likely works";
 "settings.mod.spotify_version.made_for" = "%@, made for %@";
+"settings.mod.storage.footer" = "Spotify trims its cache to the size you choose and keeps your downloads. With a small cache, Pixie may need to download a streamed track before exporting it.";
+"settings.mod.storage.limit" = "Show cache size limit";
+"settings.mod.storage.open" = "Open Spotify storage settings";
+"settings.mod.storage.title" = "Storage";
 "settings.mod.title" = "Mod";
 "settings.mod.tour.title" = "Welcome tour";
 "settings.mod.update.all_releases.subtitle" = "Every version, this one and the ones before it";

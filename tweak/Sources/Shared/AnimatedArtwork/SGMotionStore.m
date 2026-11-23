@@ -1,6 +1,6 @@
 // Remote videos kept as local files in Caches/Retrine/Motion, named by a hash of their address, and the
 // videos the mod makes, named by a hash of their key. A video asked for again while it downloads joins the
-// download in flight. The folder keeps the newest kFiles.
+// download in flight. Trimming keeps the newest clips within both budgets, except those still in use.
 #import <AVFoundation/AVFoundation.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <objc/runtime.h>
@@ -13,6 +13,7 @@
 #import "SGMotionTicket.h"
 
 static const NSUInteger kFiles = 40;
+static const uint64_t kStoreBytes = 300 * 1000 * 1000;
 static NSCountedSet<NSString *> *sg_inUse; // store queue only; counts retained handoff URLs
 // Bumped by each clear. A file the mod was asked to make before a clear is not made after it.
 static _Atomic uint64_t sg_clearGeneration;
@@ -27,6 +28,11 @@ static dispatch_queue_t storeQueue(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{ queue = dispatch_queue_create("retrine.motion.store", DISPATCH_QUEUE_SERIAL); });
     return queue;
+}
+
+// An existing cache can be over budget even if artwork is never requested this launch.
+__attribute__((constructor)) static void scheduleLaunchTrim(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), storeQueue(), ^{ trim(); });
 }
 
 // The URL is the consumer's existing ownership handle. Its lease does not retain the
@@ -64,25 +70,6 @@ static NSURL *localFor(NSString *key) {
     NSMutableString *name = [NSMutableString string];
     for (int i = 0; i < CC_SHA1_DIGEST_LENGTH; i++) [name appendFormat:@"%02x", digest[i]];
     return [folder() URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"mp4"]];
-}
-
-static void trim(void) {
-    NSArray<NSURLResourceKey> *keys = @[NSURLContentModificationDateKey];
-    NSArray<NSURL *> *files = [NSFileManager.defaultManager contentsOfDirectoryAtURL:folder() includingPropertiesForKeys:keys
-                                                                             options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
-    if (files.count <= kFiles) return;
-    NSArray<NSURL *> *oldestFirst = [files sortedArrayUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
-        NSDate *left = nil, *right = nil;
-        [a getResourceValue:&left forKey:NSURLContentModificationDateKey error:nil];
-        [b getResourceValue:&right forKey:NSURLContentModificationDateKey error:nil];
-        return [left compare:right];
-    }];
-    NSUInteger excess = files.count - kFiles;
-    for (NSURL *file in oldestFirst) {
-        if (!excess) break;
-        if ([sg_inUse containsObject:file.URLByResolvingSymlinksInPath.path]) continue;
-        if ([NSFileManager.defaultManager removeItemAtURL:file error:nil]) excess--;
-    }
 }
 
 CGFloat SGMotionPixels(void) {
@@ -318,7 +305,8 @@ static BOOL ownedClip(NSURL *file) {
 // Store queue. *error is set when a folder that exists could not be read; one not made yet has no clips.
 static NSArray<NSURL *> *ownedClips(NSError **error) {
     NSError *listing = nil;
-    NSArray<NSURL *> *files = [NSFileManager.defaultManager contentsOfDirectoryAtURL:folder() includingPropertiesForKeys:@[NSURLFileSizeKey]
+    NSArray *keys = @[NSURLFileSizeKey, NSURLIsRegularFileKey, NSURLContentModificationDateKey];
+    NSArray<NSURL *> *files = [NSFileManager.defaultManager contentsOfDirectoryAtURL:folder() includingPropertiesForKeys:keys
                                                                              options:NSDirectoryEnumerationSkipsHiddenFiles error:&listing];
     if (!files) {
         if (![NSFileManager.defaultManager fileExistsAtPath:folder().path]) return @[];
@@ -326,18 +314,46 @@ static NSArray<NSURL *> *ownedClips(NSError **error) {
         return @[];
     }
     NSMutableArray<NSURL *> *owned = [NSMutableArray array];
-    for (NSURL *file in files) if (ownedClip(file)) [owned addObject:file];
+    for (NSURL *file in files) {
+        NSNumber *regular = nil;
+        if (ownedClip(file) && [file getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil] && regular.boolValue)
+            [owned addObject:file];
+    }
     return owned;
+}
+
+static uint64_t clipBytes(NSURL *file) {
+    NSNumber *size = nil;
+    [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+    return size.unsignedLongLongValue;
+}
+
+static void trim(void) {
+    NSArray<NSURL *> *files = ownedClips(NULL);
+    NSUInteger count = files.count;
+    uint64_t bytes = 0;
+    for (NSURL *file in files) bytes += clipBytes(file);
+    if (count <= kFiles && bytes <= kStoreBytes) return;
+    NSArray *oldestFirst = [files sortedArrayUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+        NSDate *left = nil, *right = nil;
+        [a getResourceValue:&left forKey:NSURLContentModificationDateKey error:nil];
+        [b getResourceValue:&right forKey:NSURLContentModificationDateKey error:nil];
+        return [left compare:right];
+    }];
+    for (NSURL *file in oldestFirst) {
+        if ([sg_inUse containsObject:file.URLByResolvingSymlinksInPath.path]) continue;
+        uint64_t size = clipBytes(file);
+        if (![NSFileManager.defaultManager removeItemAtURL:file error:nil]) continue;
+        count--;
+        bytes -= size;
+        if (count <= kFiles && bytes <= kStoreBytes) break;
+    }
 }
 
 void SGMotionStoreBytes(void (^done)(uint64_t bytes)) {
     dispatch_async(storeQueue(), ^{
         uint64_t total = 0;
-        for (NSURL *file in ownedClips(NULL)) {
-            NSNumber *size = nil;
-            [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-            total += size.unsignedLongLongValue;
-        }
+        for (NSURL *file in ownedClips(NULL)) total += clipBytes(file);
         dispatch_async(dispatch_get_main_queue(), ^{ done(total); });
     });
 }

@@ -578,7 +578,8 @@
 "settings.automix.blendlength.format" = "%ld초";
 "settings.automix.blendlength.title" = "블렌드 길이";
 "settings.automix.footer.note" = "AutoMix를 사용하려면 Premium이 필요합니다. 무료 계정은 'Premium, 광고 및 개인정보 보호'에서 'Premium 위장'을 켜세요.";
-"settings.automix.player.footer" = "재설계 플레이어에서 적용됩니다.";
+"settings.automix.footer.style" = "비트 일치는 Spotify가 만든 일부 플레이리스트에만 적용됩니다. 내 플레이리스트는 대기열에서 셔플 왼쪽의 믹스 버튼도 켜세요.";
+"settings.automix.player.footer" = "재설계 플레이어에서 적용됩니다. 진행 막대와 커버에는 크로스페이드만 표시됩니다. 비트 일치 전환은 Spotify가 시각을 알려 주지 않기 때문입니다.";
 "settings.automix.preview.accessibility" = "AutoMix, %@, %@";
 "settings.automix.preview.beatmatched.subtitle" = "%ld초 블렌드, 비트에 맞춤";
 "settings.automix.preview.beatmatched.title" = "비트 매칭 믹스";
@@ -1708,6 +1709,10 @@
 "settings.mod.language.english" = "English";
 "settings.mod.language.korean" = "한국어";
 "settings.mod.language.footer" = "Spotify를 다시 시작하면 적용됩니다.";
+"settings.mod.storage.title" = "저장 공간";
+"settings.mod.storage.limit" = "캐시 크기 제한 표시";
+"settings.mod.storage.open" = "Spotify 저장 공간 설정 열기";
+"settings.mod.storage.footer" = "Spotify가 설정한 크기에 맞춰 캐시를 정리하고 다운로드한 곡은 그대로 둡니다. 캐시가 작으면 Pixie가 스트리밍으로 들은 곡을 내보내기 전에 다시 다운로드해야 할 수 있습니다.";
 "settings.mod.keychain.action.clear" = "키체인 비우기";
 "settings.mod.keychain.alert.message" = "Gemini, Claude, OpenAI 호환, DeepL API 키와 Spicy Lyrics 키, Deezer ARL이 이 iPhone에서 삭제됩니다. 설정은 그대로 남습니다.";
 "settings.mod.keychain.alert.title" = "키체인을 비울까요?";

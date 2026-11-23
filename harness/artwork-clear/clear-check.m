@@ -418,7 +418,7 @@ int main(void) {
         CHECK([NSURLProtocol registerClass:CatalogProtocol.class]);
 
         // A clear before anything was looked up: it does not read the answers file first, and what was saved does not come back.
-        CHECK(([@{@"album\n2\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved/clip.mp4", @"at": NSDate.date}} writeToURL:answers atomically:YES]));
+        CHECK(([@{@"album\n4\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved/clip.mp4", @"at": NSDate.date}} writeToURL:answers atomically:YES]));
         __block BOOL firstDone = NO, firstComplete = NO;
         watchReads = YES;
         SGMotionCacheClear(^(BOOL complete) { firstComplete = complete; firstDone = YES; });
@@ -427,7 +427,7 @@ int main(void) {
         CHECK(firstComplete && ![files() fileExistsAtPath:answers.path] && answerReads == 0);   // and no read of what it removes
         NSString *remote;
         CHECK(album(@"Saved", &remote) && [remote isEqual:@"https://fixture.invalid/first/Saved/clip.mp4"] && albumSearches == 1);
-        waitFor(^BOOL { return [NSDictionary dictionaryWithContentsOfURL:answers][@"album\n2\nartist\nsaved"] != nil; });
+        waitFor(^BOOL { return [NSDictionary dictionaryWithContentsOfURL:answers][@"album\n4\nartist\nsaved"] != nil; });
 
         // Owned files: three more clips (one held by a consumer), the Saved clip and the saved answers.
         NSURL *leased = nil;
@@ -441,7 +441,7 @@ int main(void) {
         CHECK(album(@"Fresh", &remote) && !remote && albumSearches == 2);
         CHECK(!isBlue(logo(@"Singer")) && artistSearches == 1 && logoFetches == 1);
         CHECK(!isBlue(logo(@"Singer")) && artistSearches == 1 && logoFetches == 1);
-        waitFor(^BOOL { return [NSDictionary dictionaryWithContentsOfURL:answers][@"album\n2\nartist\nfresh"] != nil; });
+        waitFor(^BOOL { return [NSDictionary dictionaryWithContentsOfURL:answers][@"album\n4\nartist\nfresh"] != nil; });
 
         // The row names the size on disk.
         SGModRow *row = SGArtworkCacheRow();
@@ -526,7 +526,7 @@ int main(void) {
         waitFor(^BOOL { return slowDone; });
         CHECK(!slowFile && sessions.count == count + 2);
         cacheBytes();   // the answers file has written everything queued
-        CHECK([[NSDictionary dictionaryWithContentsOfURL:answers][@"album\n2\nartist\nslow"][@"url"] isEqual:@"https://fixture.invalid/second/Slow/clip.mp4"]);
+        CHECK([[NSDictionary dictionaryWithContentsOfURL:answers][@"album\n4\nartist\nslow"][@"url"] isEqual:@"https://fixture.invalid/second/Slow/clip.mp4"]);
 
         // The other answers and the artist image are fetched again too.
         blue = YES;

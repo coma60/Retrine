@@ -55,6 +55,7 @@ hero() {
 hero "$OUT/hero"
 "$OUT/hero/cover-hero-check" rebuilt
 "$OUT/hero/cover-hero-check" motion-row
+"$OUT/hero/cover-hero-check" motion-identifiers -spotifyglass.redesign.album.adaptiveCover YES
 "$OUT/hero/cover-hero-check" on -spotifyglass.redesign.album.adaptiveCover YES
 "$OUT/hero/cover-hero-check" swap -spotifyglass.redesign.album.adaptiveCover YES
 "$OUT/hero/cover-hero-check" still-swap -spotifyglass.redesign.album.adaptiveCover YES

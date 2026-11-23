@@ -46,7 +46,7 @@ class Fixture:
     frameworks: tuple[str, ...] = ("Foundation",)
     scenarios: tuple[tuple[str, ...], ...] = ((),)
     defines: tuple[str, ...] = ()
-    admitted: bool = True
+    admitted: bool | None = True  # None links the production NativeAdmission.m instead of a host double
 
 
 # basename resolution allows the production tree to be reorganized without
@@ -88,6 +88,7 @@ FIXTURES = (
     Fixture("audio_probe", "audio", ("AudioProbe.c", "test_probe.c"), diagnostics=True, frameworks=("Foundation", "AudioToolbox")),
     Fixture("audio_probe_unadmitted", "audio", ("AudioProbe.c", "test_probe_unadmitted.c"), diagnostics=True, frameworks=("Foundation", "AudioToolbox"), admitted=False),
     Fixture("av_hooks", "audio", ("AudioProbe.c", "AVAudioHooks.m", "av_hooks.m"), diagnostics=True, frameworks=("Foundation", "AudioToolbox", "AVFoundation", "CoreMedia")),
+    Fixture("host_executable_image", "config", ("NativeAdmission.m", "host_executable_image.m"), admitted=None),
     Fixture("offline_flags", "config", ("OfflineFlags.m", "offline_flags.m"), diagnostics=True),
     Fixture("offline_config", "config", ("OfflineConfig.m", "offline_config.m"), diagnostics=True),
     Fixture("download_evidence", "config", ("download_evidence.m",)),
@@ -138,7 +139,8 @@ def include_dirs() -> list[Path]:
 
 
 def fixture_sources(test: Fixture) -> list[Path]:
-    paths = [source("admitted_host.c" if test.admitted else "unadmitted_host.c"), *[source(n) for n in test.sources]]
+    host = {True: ["admitted_host.c"], False: ["unadmitted_host.c"], None: []}[test.admitted]
+    paths = [*map(source, host), *[source(n) for n in test.sources]]
     if "Foundation" in test.frameworks:
         paths.append(source("Localization.m"))
     for name in test.groups:
@@ -206,11 +208,12 @@ def run_fixture(test: Fixture, build: Path, sanitize: bool):
         helpers = ui[ui.index("static NSString * const SAPOfflineUnknownArtist"):ui.index("@class SAPOfflineLibraryController")]
         (folder / "OfflineLibraryRefreshHelpers.inc").write_text(helpers)
         (folder / "OfflineLibraryRefreshState.inc").write_text("\n".join(method(x) for x in (
-            "- (instancetype)init {\n", "- (void)load {", "- (void)refresh {",
+            "- (instancetype)init {\n", "- (void)load {", "- (void)refresh {", "- (void)cancelWork {",
             "- (void)beginExport:(NSArray<NSDictionary *> *)rows zip:(BOOL)zip save:(BOOL)save {", "- (void)releasePendingPackage {", "- (void)appendExportRows:(NSArray<NSDictionary *> *)rows {")))
         (folder / "OfflineLibraryRefreshController.inc").write_text("\n".join(method(x) for x in (
             "+ (NSArray<NSDictionary *> *)artistRowsForTracks:(NSArray<NSDictionary *> *)tracks {", "- (NSArray<NSDictionary *> *)buildReleaseSections {",
-            "- (void)viewDidAppear:", "- (void)updateLoading {", "- (void)refreshCatalog {", "- (void)progressActionTapped {", "- (NSArray<NSDictionary *> *)selectedRows {", "- (NSArray<NSDictionary *> *)newExportRows {")))
+            "- (void)viewDidAppear:", "- (void)updateLoading {", "- (void)refreshCatalog {", "- (void)progressActionTapped {", "- (NSArray<NSDictionary *> *)selectedRows {", "- (NSArray<NSDictionary *> *)newExportRows {",
+            "- (void)dealloc {", "- (NSArray<NSDictionary *> *)artists {", "- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {")))
         command.append("-I" + str(folder))
     command.extend("-I" + str(p) for p in include_directories(include))
     command.extend("-D" + s for s in test.defines)

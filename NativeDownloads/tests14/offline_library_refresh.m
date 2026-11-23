@@ -7,21 +7,51 @@
 #define SAP_TRACE(...) ((void)0)
 #include <assert.h>
 #include "OfflineLibraryRefreshHelpers.inc"
-@class SAPOfflineLibraryController;
+@class SAPOfflineLibraryController,RefreshNavigation;
 @interface UIViewController:NSObject
 @property(nonatomic,getter=isViewLoaded) BOOL viewLoaded;
 @property(nonatomic,strong) UIViewController *presentedViewController;
+@property(nonatomic,weak) RefreshNavigation *navigationController;
 - (void)viewDidAppear:(BOOL)animated;
+- (void)didMoveToParentViewController:(UIViewController *)parent;
 @end
 @implementation UIViewController
 - (void)viewDidAppear:(BOOL)animated {}
+- (void)didMoveToParentViewController:(UIViewController *)parent {}
 @end
 @interface RefreshNavigation:NSObject
 @property(nonatomic,copy) NSArray *viewControllers;
 @property(nonatomic,readonly) UIViewController *topViewController;
+- (void)pushViewController:(UIViewController *)controller animated:(BOOL)animated;
+- (void)setToolbarHidden:(BOOL)hidden animated:(BOOL)animated;
 @end
 @implementation RefreshNavigation
+- (void)setToolbarHidden:(BOOL)hidden animated:(BOOL)animated {}
 - (UIViewController *)topViewController{return self.viewControllers.lastObject;}
+- (void)pushViewController:(UIViewController *)controller animated:(BOOL)animated{self.viewControllers=[self.viewControllers arrayByAddingObject:controller];controller.navigationController=self;}
+@end
+@interface UITableView:NSObject
+- (void)deselectRowAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated;
+@end
+@implementation UITableView
+- (void)deselectRowAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated {}
+@end
+@interface NSIndexPath (RefreshRows)
++ (instancetype)indexPathForRow:(NSInteger)row inSection:(NSInteger)section;
+@property(nonatomic,readonly) NSInteger row,section;
+@end
+@implementation NSIndexPath (RefreshRows)
++ (instancetype)indexPathForRow:(NSInteger)row inSection:(NSInteger)section {NSUInteger path[2]={(NSUInteger)section,(NSUInteger)row};return [self indexPathWithIndexes:path length:2];}
+- (NSInteger)row {return (NSInteger)[self indexAtPosition:1];}
+- (NSInteger)section {return (NSInteger)[self indexAtPosition:0];}
+@end
+@interface RefreshChrome:NSObject
+- (void)detach;
+- (void)removeFromSuperview;
+@end
+@implementation RefreshChrome
+- (void)detach {}
+- (void)removeFromSuperview {}
 @end
 @interface RefreshLabel:NSObject
 @property(nonatomic) BOOL hidden;
@@ -49,8 +79,9 @@
 @property(nonatomic,strong) SAPOfflineLibraryProgress *progressModel;
 @property(nonatomic,strong) NSURL *pendingPackage;
 @property(nonatomic,copy) NSArray *pendingFailures;
-@property(nonatomic) BOOL exportCancelled,selecting,pendingSave;
+@property(nonatomic) BOOL exportCancelled,selecting,pendingSave,originalToolbarHidden;
 @property(nonatomic) NSUInteger reviews;
+- (void)cancelWork;
 - (void)beginExport:(NSArray *)rows zip:(BOOL)zip save:(BOOL)save;
 - (void)appendExportRows:(NSArray *)rows;
 - (void)releasePendingPackage;
@@ -69,7 +100,10 @@
 @property(nonatomic) NSUInteger applications;
 @property(nonatomic,strong) RefreshLabel *loadingLabel;
 @property(nonatomic,strong) RefreshSpinner *loadingSpinner;
+@property(nonatomic,strong) RefreshChrome *bottomChrome,*exportToolbar;
 + (NSArray *)artistRowsForTracks:(NSArray *)tracks;
+- (NSArray *)artists;
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath;
 - (NSArray *)buildReleaseSections;
 - (void)applyCatalogSnapshot;
 - (void)updateLoading;
@@ -224,4 +258,19 @@ int main(void) {@autoreleasepool {
     assert(state.exportProgress==operation && [[state.progressModel snapshotForTracks:nil][@"total"]unsignedIntegerValue]==2 && state.selectedArtistKeys.count==0);
     [root progressActionTapped];exportCompletion(nil,@[],@"cancelled");
     puts("PASS: fresh native catalog adds the selected artist's new single without queuing its existing track twice");
+    // Tapping a track on a release page outside selection opens nothing. It must not end the manager: an export
+    // started afterwards would drop every event and its package, leaving "Waiting for selected files…".
+    root=openManager(@[a]);state=root.state;root.navigationController=state.navigation;
+    @autoreleasepool {[root tableView:UITableView.new didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];}
+    SAPOfflineLibraryController *artistPage=state.navigation.viewControllers.lastObject;
+    assert(artistPage!=root && artistPage.level==1 && !state.dismissed);
+    @autoreleasepool {[artistPage tableView:UITableView.new didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];}
+    SAPOfflineLibraryController *releasePage=state.navigation.viewControllers.lastObject;
+    assert(releasePage.level==2 && state.navigation.viewControllers.count==3 && !state.dismissed);
+    @autoreleasepool {[releasePage tableView:UITableView.new didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];}
+    assert(state.navigation.viewControllers.count==3 && !state.dismissed && "a track tap on a release page must not dismiss the manager");
+    [state beginExport:@[a] zip:NO save:YES];exportEvent(@{@"phase":@"failed",@"message":@"failed"});
+    assert([[state.progressModel snapshotForTracks:nil][@"phase"]isEqual:@"failed"]);
+    exportCompletion(nil,@[],@"failed");assert(state.messages==1 && state.exportProgress==nil);
+    puts("PASS: a track tap on a release page leaves the manager live, so export progress and failure still reach it");
 }return 0;}

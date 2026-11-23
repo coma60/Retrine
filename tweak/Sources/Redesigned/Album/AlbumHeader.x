@@ -913,13 +913,17 @@ static char kScrollContext;
         if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != owner) return;
         if (file) { [hero showMotion:file]; return; }
         if (identified || !SGMotionAppleMusicOn()) return;
+        // The rows and the identifiers may both answer; the first clip stays, so a second does not restart it.
+        __block BOOL shown = NO;
+        void (^show)(NSURL *) = ^(NSURL *clip) {
+            SGRAlbumHero *target = weakSelf;
+            if (shown || !clip || !target || target->_motionGeneration != generation || SGRAlbumPageOf(target) != weakPage) return;
+            shown = YES;
+            [target showMotion:clip];
+        };
         void (^tryIdentifiers)(void) = ^{
             if (!albumURI) return;
-            SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *clip) {
-                SGRAlbumHero *target = weakSelf;
-                if (clip && target && target->_motionGeneration == generation && SGRAlbumPageOf(target) == weakPage)
-                    [target showMotion:clip];
-            });
+            SGMotionPageIdentifierCover(albumURI, album, pixels, show);
         };
         if (!SGRAlbumMotionRowsAllowed(owner)) { tryIdentifiers(); return; }
         BOOL (^stillCurrent)(void) = ^BOOL {
@@ -930,11 +934,14 @@ static char kScrollContext;
         BOOL (^startRows)(NSString *, NSString *) = ^BOOL(NSString *credit, NSString *song) {
             if (!stillCurrent()) return YES;
             SGMotionAlbumRowMatcher(artist, album, pixels, ^(SGMotionRowMatch match) {
+                if (!stillCurrent()) return;
                 // Read rows again from the settled list, not strings captured before the search.
-                if (stillCurrent()) SGRAlbumWaitForMotionRow(weakPage, YES, match);
+                SGRAlbumWaitForMotionRow(weakPage, YES, match);
+                // A row may never match (a credit Spotify shows in another script than Apple Music, say "아이유" for
+                // "IU"), and when the rows are done is never known: the identifiers are asked alongside them.
+                if (match) tryIdentifiers();
             }, ^(NSURL *clip) {
-                SGRAlbumHero *target = weakSelf;
-                if (clip && stillCurrent()) [target showMotion:clip];
+                if (clip && stillCurrent()) show(clip);
                 else if (!clip && stillCurrent()) tryIdentifiers();
             });
             return YES;

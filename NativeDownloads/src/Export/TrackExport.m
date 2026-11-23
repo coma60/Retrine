@@ -48,7 +48,10 @@ static dispatch_queue_t exportWorkQueue(void){static dispatch_queue_t queue;stat
 static NSURL *exportLibraryRoot(void){return [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Pixie Exports"] isDirectory:YES];}
 NSString *SAPAudioExportFormat(void){return [[NSUserDefaults.standardUserDefaults stringForKey:@"PixieExportFormat"] isEqual:@"ogg"]?@"ogg":@"m4a";}
 
-static NSArray *fileIDs(NSArray *fields){NSMutableArray *ids=[NSMutableArray array];for(NSDictionary *f in fields)if([f[@"number"]unsignedIntValue]==12&&[f[@"wire"]unsignedIntValue]==2){NSData *d=SAPProtoData(SAPProtoFields(f[@"value"]),1);if(d.length==20&&![ids containsObject:d])[ids addObject:d];}return ids;}
+static NSArray *fileIDs(NSArray *fields){NSMutableArray *ids=[NSMutableArray array];for(NSDictionary *f in fields)if([f[@"number"]unsignedIntValue]==12&&[f[@"wire"]unsignedIntValue]==2){NSData *d=SAPProtoData(SAPProtoFields(f[@"value"]),1);if(d.length==20&&![ids containsObject:d])[ids addObject:d];}
+    // A relinked track (seen on Spotify 9.2.0) has no files of its own; they sit on its alternatives (field 13).
+    if(!ids.count)for(NSDictionary *f in fields)if([f[@"number"]unsignedIntValue]==13&&[f[@"wire"]unsignedIntValue]==2)for(NSData *d in fileIDs(SAPProtoFields(f[@"value"])))if(![ids containsObject:d])[ids addObject:d];
+    return ids;}
 static NSDictionary *trackMetadata(NSData *data,NSString *uri) {
     NSArray *envelope=SAPProtoFields(data),*item=SAPProtoFields(SAPProtoData(envelope,1));
     if(SAPProtoNumber(item,1,0))return nil;NSArray *track=SAPProtoFields(SAPProtoData(item,4));NSString *name=SAPProtoString(track,2);int64_t duration=SAPProtoSInt(track,7,0);NSArray *ids=fileIDs(track);

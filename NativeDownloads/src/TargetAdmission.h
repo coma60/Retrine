@@ -30,5 +30,5 @@ static inline BOOL SAPProfileMetadataMatches(void) {
 }
 
 static inline BOOL SAPProfileMatchesImage(uintptr_t image) {
-    return image==(uintptr_t)_dyld_get_image_header(0)&&SAPRuntimeProfileAdmitted();
+    return SAPIsAdmittedMainImage((const struct mach_header *)image)&&SAPRuntimeProfileAdmitted();
 }

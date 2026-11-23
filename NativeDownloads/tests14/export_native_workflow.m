@@ -70,7 +70,23 @@ static void drain(void) {
         [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.003]];
     assert(completions==1);
 }
+static NSData *fileField(uint8_t seed){uint8_t bytes[20];memset(bytes,seed,20);return SAPProtoBytes(12,SAPProtoBytes(1,[NSData dataWithBytes:bytes length:20]));}
+static NSData *entityResponse(NSData *ownFiles,NSData *alternative){
+    NSMutableData *track=[SAPProtoBytes(2,[@"Bubble" dataUsingEncoding:NSUTF8StringEncoding])mutableCopy];
+    [track appendData:SAPProtoInteger(7,150259*2)];[track appendData:ownFiles]; // duration is a zigzag sint
+    if(alternative)[track appendData:SAPProtoBytes(13,alternative)];
+    return SAPProtoBytes(1,SAPProtoBytes(4,track));
+}
 int main(void){@autoreleasepool {
+    // A relinked track carries its playable files only on the alternative (field 13).
+    NSMutableData *alternative=[SAPProtoBytes(1,[NSMutableData dataWithLength:16])mutableCopy];
+    [alternative appendData:fileField(0xa1)];[alternative appendData:fileField(0xa2)];
+    NSDictionary *relinked=trackMetadata(entityResponse(NSData.data,alternative),trackURI);
+    assert(relinked && [relinked[@"files"]count]==2 && ((const uint8_t *)((NSData *)relinked[@"files"][0]).bytes)[0]==0xa1);
+    NSDictionary *own=trackMetadata(entityResponse(fileField(0x01),alternative),trackURI);
+    assert(own && [own[@"files"]count]==1 && ((const uint8_t *)((NSData *)own[@"files"][0]).bytes)[0]==0x01);
+    assert(!trackMetadata(entityResponse(NSData.data,nil),trackURI));
+
     SAPExportJob *old=job(NO);[old finish:nil error:@"cancelled"];drain();
     SAPExportJob *next=job(NO);[old completeTemporaryFinish];
     assert(atomic_load(&exporting) && activeJob==next);

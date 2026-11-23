@@ -202,6 +202,8 @@ Shared:
                   Labs also offers AI badges and its dependent Likely AI badges, both off by default
                   (unlike Chroma). They enable Spotify's own classification badges on artists, search and rows;
                   off leaves the server's values alone. They use the forced-flag registry and require a restart.
+                  Mod › Storage uses that registry for ios-settings-connectivitypageplugin-impl.show_cache_limit_item
+                  (on by default, off after a reset). It exposes Spotify's control without setting a limit.
                   the provider pins 9.1.88's ios-reprise-liquid-glass-override.mode to default in both looks (after an All flags
                   override) and logs the server's own value once, as a force_disabled would take the glass off the redesign.
                   It also pins 9.1.90's ios-navigationui-tabbar-impl.is_liquid_glass_tab_bar_enabled off in both looks.
@@ -692,14 +694,19 @@ Shared:
                   system's now playing through this hook and Player/NowPlayingExtras.x is checked by harness/now-playing/
     AnimatedArtwork/ moving artwork (AnimatedArtwork.h): the track's Canvas, else Apple Music's animated album cover
                   (SGMotionCatalog.m: the full release title including the edition and the album artist suffice, even
-                  when a song's title differs; Apple Music's " - EP" suffix is not part of the title. Otherwise a single release must contain the song with its artist credit;
+                  when a song's title differs; Apple Music's " - EP" and " - Single" suffixes are not part of the title. A single
+                  named "X - Single" stands for Spotify's "X" only with video, as a last resort once neither the album nor the
+                  song found a release in a final (not full first-page) result; Spotify's own "X - Single" is compared whole.
+                  Otherwise a single release must contain the song with its artist credit;
                   trailing features and version tags are simplified on the song, never on the album. A soundtrack's songs
                   share the title search; only a full page with no identified release can be narrowed by artist.
                   If the title search cannot identify the release and the Spotify album URI is known, Spotify's album metadata
-                  supplies its UPC. Apple Music gets the barcode as supplied; only albums whose own UPC matches (ignoring
+                  supplies its UPC (on the album page, while same-name candidates are matched by track rows, these identifiers are
+                  asked alongside, since a row may never match, and the first clip either finds stays). Apple Music gets the barcode as supplied; only albums whose own UPC matches (ignoring
                   leading zeros) qualify. If Apple returns no UPC match, the player's track (on the album page, the first
                   track on the album) supplies a recording code from Spotify. Of the Apple albums containing that ISRC,
-                  exactly one distinct non-single must share the edition-stripped album name, whether it has video or not.
+                  exactly one distinct non-single must share the edition-stripped album name, whether it has video or not;
+                  with none, exactly one "X - Single" whose whole name (less the suffix) is the album's.
                   The answer is cached by Spotify album URI in the same week-long album cache.
                   An identified album without video stays still rather than borrowing another artist's cover. Header and track share the
                   master and media playlist lookup for the same stream size. The catalog is
@@ -711,7 +718,8 @@ Shared:
                   failed write is not retried; every request hands back a ticket, SGMotionTicket.h, and the tickets asking
                   for one file share its transfer: cancelling the last stops it, unless the size is known and more than half
                   of it is in, when it finishes into the store anyway; a cancelled ticket's completion never runs, a dropped
-                  one's still does), on iOS 26 the lock screen's full-screen
+                  one's still does). The store trims its own clips to 40 files and 300 MB (decimal), oldest modification
+                  first, skipping clips still in use and trimming again on release. On iOS 26 the lock screen's full-screen
                   artwork (LockScreenMotion.x). With Every song, a song with neither gets the selected background
                   as a gentle 4 s 3:4 loop, using the shared lyric encoder without text (SGFluidClip.m).
                   Cache keys include cover content, background settings and output size. Pending presentations
@@ -1054,7 +1062,9 @@ Shared:
                   metadata gives nothing, never Crossfade; another device playing gives nothing. The facts are cached and
                   remade on a track, queue, settings or metadata change, with SGAutoMixTransitionDidChangeNotification
                   (harness/automix/). The page opens on a preview of the transition drawn from the switch, style and
-                  Blend length (AutoMixPreview.m), and holds the redesigned player's three switches, all off:
+                  Blend length (AutoMixPreview.m); its notes say that Spotify's Automix covers only some playlists
+                  Spotify made, so the user's own need Spotify's Mix button in the queue, and that the bar and cover
+                  show crossfades only. It holds the redesigned player's three switches, all off:
                   spotifyglass.automix.show-progress (the blend's window on the progress bar; with Crossfade on, Spotify
                   shortens a song's clock by the crossfade so its bar ends where the blend begins, and the window shows
                   as the next song's first seconds; seen on a 9.1.90 phone),
@@ -2388,7 +2398,8 @@ Picture-aware photo and Monthly listeners in About (`spotifyglass.redesign.artis
 under the name goes once the page's own diffable data source has configured Spotify's About card for this artist,
 which carries the count itself; without About, or with About hidden, it stays; ArtistSections.x,
 harness/artist/listeners-check.py). The Player page leads with a pinned miniature of the whole player showing the
-current or last song (480 pt, shrinking to 236 pt as the page scrolls, opaque above the rows), whose Without a clip
+current or last song (480 pt, shrinking to 236 pt as the page scrolls, opaque above the rows; with Star add button on,
+the star before the ⋯ as the player draws it), whose Without a clip
 pill shows, for Animated and Auto, what a song without a clip would show, never sending a playback command
 (PlayerSettings.m; preview lookups are tied to the shown track and torn down with the page, SGRPlayerMotionPreviewStop,
 SGRPlayerVisualiserPreviewStop; harness/player/settings-check.sh). Its Buttons card has Shuffle, Repeat and Video chips.
@@ -2557,7 +2568,9 @@ six-hour cache once; an older cached release contributes neither its date nor it
 from the releases Release Please cuts, with Check now, the release to get, all the releases and Tell
 me when one is out, the sheet a newer release brings up a few seconds after Spotify opens), the
 build and Spotify's version, the site and the repo, What's New and the welcome tour again, Clear Keychain and Reset all
-settings. A flag switch on a page forces that one flag and off leaves Spotify's own value, so the All
+settings. Mod › Storage links to Spotify's own storage settings (`spotify:config:storage`). Choose a cache
+size there: Spotify saves the limit and trims its cache itself, not downloads. With a small cache Pixie
+may need to download a streamed track before export. A flag switch on a page forces that one flag and off leaves Spotify's own value, so the All
 flags page is where a flag goes back to Auto. Spotify ships its newer design behind several flags at
 once, and the redesign is built on it (the glass navigation bar, the new player slider, the sheet style
 player, the queue and Connect sheets, the redesigned player header, the sleep timer's options sheet):

@@ -72,6 +72,9 @@ void SGLosslessLowerQuality(BOOL lower) {}
 void SGAudioQualitySettingChanged(void) {}
 BOOL SGGeminiForgetKey(void) { return YES; }
 BOOL SGClaudeForgetKey(void) { return YES; }
+NSURL *SGHarnessStorageURI;
+BOOL SGOpenSpotifyURI(NSURL *uri) { SGHarnessStorageURI = uri; return YES; }
+SGModRow *SGNativeVideoSwitchRow(void) { return SGHideRow(@"Switch to video", nil, @"spotifyglass.hideVideoSwitch"); }
 BOOL SGOpenAIForgetKeys(void) { return YES; }
 BOOL SGDeepLForgetKey(void) { return YES; }
 BOOL SGSpicyLyricsForgetKey(void) { return YES; }

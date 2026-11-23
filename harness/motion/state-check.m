@@ -209,6 +209,13 @@ static NSDictionary *release(NSString *name, NSString *artist, BOOL single, NSAr
         @"relationships": @{@"tracks": @{@"data": songs}}};
 }
 
+static NSDictionary *clipRelease(NSString *name, NSString *artist, BOOL single, NSArray *songs, NSString *folder) {
+    NSString *video = [NSString stringWithFormat:@"https://fixture.invalid/%@/master.m3u8", folder];
+    return @{@"attributes": @{@"name": name, @"artistName": artist, @"isSingle": @(single),
+        @"editorialVideo": @{@"motionTallVideo3x4": @{@"video": video}}},
+        @"relationships": @{@"tracks": @{@"data": songs}}};
+}
+
 static NSURL *songCover(NSString *artist, NSString *album, NSString *song) {
     __block BOOL finished = NO;
     __block NSURL *result;
@@ -343,6 +350,24 @@ static void checkBarcode(void) {
     fprintf(stderr, "motion: legacy still %s; absent UPC %s; unanswered retry %s; punctuation %s\n",
             legacyStill ? "PASS" : "FAIL", withoutUPC ? "PASS" : "FAIL", retried ? "PASS" : "FAIL", different && identical ? "PASS" : "FAIL");
     CHECK(legacyStill && withoutUPC && retried && different && identical);
+
+    // The recording's only release is Apple's "X - Single" for Spotify's single "X" (MEOVV's HANDS UP, issue #48);
+    // "Rich Man - Single" is not "Rich Man - The 6th Mini Album" although their edition-stripped names agree.
+    NSDictionary *(^named)(NSString *, BOOL) = ^NSDictionary *(NSString *title, BOOL isSingle) {
+        NSMutableDictionary *copy = [record mutableCopy], *attrs = [record[@"attributes"] mutableCopy];
+        attrs[@"name"] = title;
+        attrs[@"isSingle"] = @(isSingle);
+        copy[@"attributes"] = attrs;
+        copy[@"id"] = title;
+        return copy;
+    };
+    spotifyUPC = nil;
+    songsReply = replyWithAlbums(@[named(@"HANDS UP - Single", YES)]);
+    BOOL recordingSingle = [coverWithURI(@"HANDS UP", song, @"spotify:album:0000000000000000000013").path isEqual:@"/1665303755/clip.mp4"];
+    songsReply = replyWithAlbums(@[named(@"Rich Man - Single", YES)]);
+    BOOL leadSingleKept = !coverWithURI(@"Rich Man - The 6th Mini Album", song, @"spotify:album:0000000000000000000014");
+    fprintf(stderr, "motion: recording single %s, lead single not the album %s\n", recordingSingle ? "PASS" : "FAIL", leadSingleKept ? "PASS" : "FAIL");
+    CHECK(recordingSingle && leadSingleKept);
     songsReply = nil;
     expectedTrack = nil;
     coverResults = nil;
@@ -408,6 +433,36 @@ static void checkSoundtrack(void) {
     waitFor(^BOOL { return epRow; });
     fprintf(stderr, "motion: EP suffix cover %s, rows %s\n", epCover ? "PASS" : "FAIL", epRowClip ? "PASS" : "FAIL");
     CHECK(epCover && epRowClip);
+    // Apple Music names a single "X - Single" where Spotify names it "X" (MEOVV's HANDS UP, issue #48). Beside an
+    // album of the same name it is the album's lead single, and a still one proves nothing.
+    NSArray *handsUp = @[@{@"attributes": @{@"name": @"HANDS UP", @"artistName": @"MEOVV"}}];
+    coverResults = @[clipRelease(@"HANDS UP - Single", @"MEOVV", YES, handsUp, @"single")];
+    BOOL singleCover = [songCover(@"MEOVV", @"HANDS UP", nil).path isEqual:@"/single/clip.mp4"];
+    BOOL singleSong = [songCover(@"MEOVV", @"HANDS UP", @"HANDS UP").path isEqual:@"/single/clip.mp4"];
+    __block BOOL singleRow = NO, singleRowClip = NO;
+    SGMotionAlbumRowMatcher(@"MEOVV", @"HANDS UP", 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+        ^(NSURL *clip) { singleRowClip = [clip.path isEqual:@"/single/clip.mp4"]; singleRow = YES; });
+    waitFor(^BOOL { return singleRow; });
+    coverResults = @[clipRelease(@"Whiplash - Single", @"aespa", YES, tracks, @"lead"), clipRelease(@"Whiplash", @"aespa", NO, tracks, @"album")];
+    BOOL albumOverLead = [songCover(@"aespa", @"Whiplash", nil).path isEqual:@"/album/clip.mp4"];
+    __block BOOL leadRow = NO, leadRowClip = NO;
+    SGMotionAlbumRowMatcher(@"aespa", @"Whiplash", 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+        ^(NSURL *clip) { leadRowClip = [clip.path isEqual:@"/album/clip.mp4"]; leadRow = YES; });
+    waitFor(^BOOL { return leadRow; });
+    coverResults = @[@{@"attributes": @{@"name": @"Still Single - Single", @"artistName": @"Artist", @"isSingle": @YES}}];
+    BOOL stillSingle = !songCover(@"Artist", @"Still Single", nil);
+    // The singer's same-named single must not stand in for the soundtrack that holds the song.
+    NSArray *theme = @[@{@"attributes": @{@"name": @"Theme Park", @"artistName": @"Singer"}}];
+    coverResults = @[clipRelease(@"Theme Park - Single", @"Singer", YES, theme, @"lead-single"), clipRelease(@"Theme Park", @"Various Artists", NO, theme, @"ost")];
+    stillSingle = stillSingle && [songCover(@"Singer", @"Theme Park", @"Theme Park").path isEqual:@"/ost/clip.mp4"];
+    // Spotify's own "X - Single" keeps Apple's single apart from its album "X".
+    coverResults = @[clipRelease(@"Spring - Single", @"Band", YES, @[], @"spring-single"), clipRelease(@"Spring", @"Band", NO, @[], @"spring-album")];
+    stillSingle = stillSingle && [songCover(@"Band", @"Spring - Single", nil).path isEqual:@"/spring-single/clip.mp4"]
+        && [songCover(@"Band", @"Spring", nil).path isEqual:@"/spring-album/clip.mp4"];
+    fprintf(stderr, "motion: single suffix cover %s, song %s, rows %s; album over its lead single %s, rows %s; still single %s\n",
+            singleCover ? "PASS" : "FAIL", singleSong ? "PASS" : "FAIL", singleRowClip ? "PASS" : "FAIL",
+            albumOverLead ? "PASS" : "FAIL", leadRowClip ? "PASS" : "FAIL", stillSingle ? "PASS" : "FAIL");
+    CHECK(singleCover && singleSong && singleRowClip && albumOverLead && leadRowClip && stillSingle);
 
     coverResults = @[release(@"Original (Deluxe)", @"Artist", NO, tracks)];
     CHECK(!album(@"Original"));
@@ -519,12 +574,12 @@ int main(int argc, char **argv) {
             URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
         CHECK([NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil]);
         store = argc == 3 ? [NSURL fileURLWithPath:@(argv[2])] : [root URLByAppendingPathComponent:@"answers.plist"];
-        if (argc != 3) CHECK(([@{@"album\n3\nartist\nexpired": @{@"url": @"https://fixture.invalid/expired.mp4",
+        if (argc != 3) CHECK(([@{@"album\n4\nartist\nexpired": @{@"url": @"https://fixture.invalid/expired.mp4",
             @"at": [NSDate dateWithTimeIntervalSinceNow:-8 * 24 * 3600]},
             @"album\n1\nartist\noriginal": @{@"url": @"https://fixture.invalid/wrong-edition.mp4", @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy still\none": @{@"url": @"", @"identified": @NO, @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy clip\none": @{@"url": @"https://fixture.invalid/legacy-clip.mp4", @"at": NSDate.date},
-            @"album\n3\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved.mp4", @"at": NSDate.date}}
+            @"album\n4\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved.mp4", @"at": NSDate.date}}
             writeToURL:store atomically:YES]));
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         NSString *tokenKey = @"spotifyglass.motion.token";
@@ -569,10 +624,10 @@ int main(int argc, char **argv) {
             CHECK(album(name) != nil);
         }
         waitFor(^BOOL {
-            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n3\nartist\nalbum 200"] != nil;
+            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n4\nartist\nalbum 200"] != nil;
         });
         NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:store];
-        CHECK(saved.count == 200 && !saved[@"album\n3\nartist\nexpired"] && !saved[@"album\n3\nartist\nalbum 0"]);
+        CHECK(saved.count == 200 && !saved[@"album\n4\nartist\nexpired"] && !saved[@"album\n4\nartist\nalbum 0"]);
         edition = @"second";
         CHECK([album(@"Album 200").absoluteString isEqual:@"https://fixture.invalid/first/Album-200/clip.mp4"]);
         CHECK([album(@"Album 0").absoluteString isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"]);
@@ -610,7 +665,7 @@ int main(int argc, char **argv) {
         [NSURLProtocol unregisterClass:CatalogProtocol.class];
         if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
         waitFor(^BOOL {
-            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n3\nartist\nalbum 0"][@"url"]
+            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n4\nartist\nalbum 0"][@"url"]
                 isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"];
         });
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:nil]);

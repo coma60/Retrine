@@ -24,6 +24,7 @@
 #import "Settings/SGPageStyle.h"
 #import <CoreText/SFNTLayoutTypes.h>
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
+#import "Shared/Flags/Flags.h"
 #import "App/About/About.h"
 #import "../harness-fail.h"
 
@@ -226,6 +227,26 @@ static void refactorChecks(void) {
         }
     }
     HARNESS_CHECK([reset.symbol isEqualToString:@"trash"]);
+
+    extern NSURL *SGHarnessStorageURI;
+    NSUInteger storage = [about.sections indexOfObjectPassingTest:^BOOL(SGModSection *section, NSUInteger idx, BOOL *stop) {
+        return [section.rows.firstObject.key isEqualToString:SGKeyShowCacheLimit];
+    }];
+    HARNESS_CHECK(storage != NSNotFound);
+    SGModSection *group = about.sections[storage];
+    HARNESS_CHECK(group.rows.count == 2 && group.rows.firstObject.defaultOn && group.footer.length);
+    UITableView *table = about.tableView;
+    table.frame = CGRectMake(0, 0, 375, 667);
+    NSIndexPath *firstRow = [NSIndexPath indexPathForRow:0 inSection:storage];
+    NSIndexPath *action = [NSIndexPath indexPathForRow:1 inSection:storage];
+    [table reloadData];
+    [table scrollToRowAtIndexPath:firstRow atScrollPosition:UITableViewScrollPositionTop animated:NO];
+    [table layoutIfNeeded];
+    UITableViewCell *toggleCell = [table cellForRowAtIndexPath:firstRow], *actionCell = [table cellForRowAtIndexPath:action];
+    HARNESS_CHECK(toggleCell && actionCell && CGRectGetMaxY(toggleCell.frame) <= CGRectGetMinY(actionCell.frame));
+    HARNESS_CHECK(CGRectGetMaxY(actionCell.frame) <= CGRectGetMinY([table rectForFooterInSection:storage]));
+    [table.delegate tableView:table didSelectRowAtIndexPath:action];
+    HARNESS_CHECK([SGHarnessStorageURI.absoluteString isEqualToString:@"spotify:config:storage"]);
 
     // A navigation controller reached through the source's parents includes itself in the search.
     UIViewController *home = [UIViewController new];

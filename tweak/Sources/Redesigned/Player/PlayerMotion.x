@@ -157,7 +157,11 @@ static const CGFloat kLiftFrom = 0.27, kLiftEase = 1.5, kLiftFoot = 0.066, kLift
 // 0.65 before): the edge's colors keep their own columns (kVeilNear) and are taken over from the cover's bottom
 // edge (kVeilCrossFrom 0) down to kVeilCrossTo. The mean the far color is pulled to weighs each column by its
 // brightness plus kVeilMeanFloor, so a dark middle does not pull a bright cover's sides down to it.
-static const CGFloat kVeilNear = 0.03, kVeilWide = 0.177, kVeilMean = 0.67, kVeilMeanFloor = 0.5;
+// The Music app keeps each column's own color down to the foot: over a black cover with a blue lightning bolt down its
+// left side (3x, 874 pt) the left columns stayed blue (106 of 255) to the bottom while the right ones stayed black, where
+// a far color pulled 0.67 of the way to the foot's mean cut the bolt off under the title (47). Fitted on that frame: a
+// wide smoothing of 0.25 of the width, and 0.2 of the way to the mean (rms 0.020, against 0.030 before).
+static const CGFloat kVeilNear = 0.03, kVeilWide = 0.25, kVeilMean = 0.2, kVeilMeanFloor = 0.5;
 // Against the Music app's player over a pink animated cover, its colors had come to the mean 76 pt below the cover's
 // bottom, where the cover's own dark and light columns still ran on down here: taken over by kVeilCrossTo 70, not 120.
 static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
@@ -174,7 +178,10 @@ static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
 // of 255 where the Music app's is 72. A light foot ends lighter than a dark one: kVeilFootShare of what shows at the
 // cover's edge (the Music app's 72 under a beige wall at 184, 47 under a collage at 125), never under kVeilFootLuma
 // (a dark pink and a dark blue cover end at 50 and 46), joined by a soft maximum of power kVeilFootSoft.
+// A foot darker than that floor is not lifted to it: under the black and blue cover the Music app's foot ends about
+// kVeilDarkLift of what shows at the cover's edge, so the floor is never more than that.
 static const CGFloat kVeilFootLuma = 0.184, kVeilFootShare = 0.38, kVeilFootSoft = 4, kVeilGainLeast = 0.35, kVeilGainMost = 1.8;
+static const CGFloat kVeilDarkLift = 1.3;
 enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
 // The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
 // last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
@@ -475,7 +482,8 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     CGFloat edgeLuma = 0;
     for (int k = 0; k < kVeilColumns; k++) edgeLuma += 0.299 * narrowAt[k][0] + 0.587 * narrowAt[k][1] + 0.114 * narrowAt[k][2];
     edgeLuma = edgeLuma / kVeilColumns * edgeShade;
-    CGFloat footLuma = pow(pow(kVeilFootShare * edgeLuma, kVeilFootSoft) + pow(kVeilFootLuma, kVeilFootSoft), 1 / kVeilFootSoft);
+    CGFloat floorLuma = MIN(kVeilFootLuma, kVeilDarkLift * edgeLuma);
+    CGFloat footLuma = pow(pow(kVeilFootShare * edgeLuma, kVeilFootSoft) + pow(floorLuma, kVeilFootSoft), 1 / kVeilFootSoft);
     for (int r = 0; r < kVeilRows; r++) {
         CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
         CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);

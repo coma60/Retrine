@@ -242,8 +242,6 @@ static UIImage *glyphOf(UIView *item, BOOL active) {
 static UIImage *symbolGlyph(NSString *symbol, BOOL active) {
     static NSCache<NSString *, UIImage *> *cache;
     if (!cache) cache = [NSCache new];
-    // The Music app's Home is the filled house whether selected or not; a tab of the mod's own given "house" too.
-    if ([symbol isEqualToString:@"house"]) symbol = @"house.fill";
     NSString *filled = [symbol stringByAppendingString:@".fill"];
     NSString *name = active && [UIImage systemImageNamed:filled] ? filled : symbol;
     UIImage *image = [cache objectForKey:name];
@@ -278,8 +276,7 @@ static NSString *const kFindURI = @"spotify:find", *const kSearchURI = @"spotify
 // creation container; spotify:create-menu is the same page by the name the router also takes.
 static NSDictionary<NSString *, NSString *> *pageSymbols(void) {
     return @{
-        // Filled at rest too, as the Music app's Home is.
-        @"spotify:home": @"house.fill",
+        @"spotify:home": @"house",
         kFindURI: @"magnifyingglass",
         kSearchURI: @"magnifyingglass",
         @"spotify:collection": @"books.vertical",

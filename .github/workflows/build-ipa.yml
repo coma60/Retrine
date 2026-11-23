@@ -65,6 +65,9 @@ jobs:
     permissions:
       actions: write
     steps:
+      # GitHub prints a step's env before the step runs, so mask the inputs first (run 36 showed the IPA URL).
+      - uses: levibostian/action-hide-sensitive-inputs@39cfbde19b3251728d2357dd0648172d1202c1ee # v1
+
       - name: Move a build that got no runner to the next macOS version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -288,12 +291,28 @@ jobs:
 
       - run: ccache --show-stats
 
+      # The artifact service is sometimes out of reach for a moment (run 35: "Failed to CreateArtifact: Unable to
+      # make request: ENOTFOUND" after a good build), so a failed upload is tried once more instead of losing the IPA.
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        id: upload
         if: inputs.upload_method != 'filebin'
+        continue-on-error: true
         with:
           name: retrine.ipa
           path: out/*.ipa
           if-no-files-found: error
+
+      - name: Wait before uploading again
+        if: steps.upload.outcome == 'failure'
+        run: sleep 30
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: steps.upload.outcome == 'failure'
+        with:
+          name: retrine.ipa
+          path: out/*.ipa
+          if-no-files-found: error
+          overwrite: true
 
       - name: Upload to filebin.net
         if: inputs.upload_method != 'artifacts'

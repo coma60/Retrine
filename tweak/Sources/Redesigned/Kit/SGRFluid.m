@@ -55,6 +55,12 @@ static const CGFloat kFloor = 0.0127, kFloorSoft = 4;
 // 0.45), its hue and lightness kept; a gray pixel stays gray. kSatTarget is the Saturation slider's standard: the slider
 // scales the target with it (0% gray, 250% about 0.9), so it still makes the field grayer or more vivid.
 static const CGFloat kSatTarget = 0.4, kSatPull = 0.25;
+static const CGFloat kSatSpreadFrom = 0.015, kSatSpreadTo = 0.05;
+
+static CGFloat spreadWeight(CGFloat spread) {
+    CGFloat u = MIN(1, MAX(0, (spread - kSatSpreadFrom) / (kSatSpreadTo - kSatSpreadFrom)));
+    return u * u * (3 - 2 * u);
+}
 
 // HLS saturation of the encoded color `e` (0 to 1) drawn toward `target`, lightness and hue kept.
 static void pullSaturation(CGFloat e[3], CGFloat target) {
@@ -63,6 +69,10 @@ static void pullSaturation(CGFloat e[3], CGFloat target) {
     if (spread < 1e-4 || light <= 0 || light >= 1) return;
     CGFloat sat = light <= 0.5 ? spread / (most + least) : spread / (2 - most - least);
     CGFloat want = target <= 0 ? 0 : MIN(1, target * pow(sat / target, kSatPull));
+    // A near-gray is not colored up: a black cover's faint tint (21,23,22 of 255, a spread of 2) was pulled to a dark
+    // green, where the Music app's background stays the gray 31,33,33. Raising saturation fades in with the color's
+    // spread from kSatSpreadFrom to kSatSpreadTo (the gray painting's field, 54,64,70, a spread of 16, is raised whole).
+    if (want > sat) want = sat + (want - sat) * spreadWeight(spread);
     // The same hue at the new saturation: each channel keeps its place between the least and the most.
     CGFloat newSpread = want * (light <= 0.5 ? 2 * light : 2 - 2 * light);
     CGFloat newLeast = light - newSpread / 2;

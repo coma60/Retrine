@@ -907,47 +907,59 @@ static char kScrollContext;
         if ([r isKindOfClass:UIViewController.class]) albumURI = [NSClassFromString(@"SGAlbumQueuePage") albumURI:r];
     // Tall, as the Music app's album page: the hero runs past the title, taller than wide, and a square clip
     // filled into it lost its sides. An album with only a square clip gets that one.
-    SGMotionPageAlbumCover(artist, album, pixels, ^(NSURL *file, BOOL identified) {
+    void (^byTitle)(void) = ^{
+        SGMotionPageAlbumCover(artist, album, pixels, ^(NSURL *file, BOOL identified) {
+            SGRAlbumHero *hero = weakSelf;
+            UIView *owner = weakPage;
+            if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != owner) return;
+            if (file) { [hero showMotion:file]; return; }
+            if (identified || !SGMotionAppleMusicOn()) return;
+            // The rows and the identifiers may both answer; the first clip stays, so a second does not restart it.
+            __block BOOL shown = NO;
+            void (^show)(NSURL *) = ^(NSURL *clip) {
+                SGRAlbumHero *target = weakSelf;
+                if (shown || !clip || !target || target->_motionGeneration != generation || SGRAlbumPageOf(target) != weakPage) return;
+                shown = YES;
+                [target showMotion:clip];
+            };
+            void (^tryIdentifiers)(void) = ^{
+                if (!albumURI) return;
+                SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *clip, BOOL identified) { show(clip); });
+            };
+            if (!SGRAlbumMotionRowsAllowed(owner)) { tryIdentifiers(); return; }
+            BOOL (^stillCurrent)(void) = ^BOOL {
+                SGRAlbumHero *current = weakSelf;
+                return current && current->_motionGeneration == generation && SGRAlbumPageOf(current) == weakPage &&
+                       SGRAlbumMotionRowsAllowed(weakPage);
+            };
+            BOOL (^startRows)(NSString *, NSString *) = ^BOOL(NSString *credit, NSString *song) {
+                if (!stillCurrent()) return YES;
+                SGMotionAlbumRowMatcher(artist, album, pixels, ^(SGMotionRowMatch match) {
+                    if (!stillCurrent()) return;
+                    // Read rows again from the settled list, not strings captured before the search.
+                    SGRAlbumWaitForMotionRow(weakPage, YES, match);
+                    // A row may never match (a credit Spotify shows in another script than Apple Music, say "아이유" for
+                    // "IU"), and when the rows are done is never known: the identifiers are asked alongside them.
+                    if (match) tryIdentifiers();
+                }, ^(NSURL *clip) {
+                    if (clip && stillCurrent()) show(clip);
+                    else if (!clip && stillCurrent()) tryIdentifiers();
+                });
+                return YES;
+            };
+            if (albumURI) startRows(nil, nil);
+            else SGRAlbumWaitForMotionRow(owner, NO, startRows);
+        });
+    };
+    // The album's identifiers first: they name the very release, where its title can name another of the same name
+    // (the 2016 "Moana (Original Motion Picture Soundtrack)" took the 2026 film's clip). A release they name, moving
+    // or still, is the answer; only an album they cannot name is looked for by title and rows.
+    if (!albumURI) { byTitle(); return; }
+    SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *file, BOOL identified) {
         SGRAlbumHero *hero = weakSelf;
-        UIView *owner = weakPage;
-        if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != owner) return;
-        if (file) { [hero showMotion:file]; return; }
-        if (identified || !SGMotionAppleMusicOn()) return;
-        // The rows and the identifiers may both answer; the first clip stays, so a second does not restart it.
-        __block BOOL shown = NO;
-        void (^show)(NSURL *) = ^(NSURL *clip) {
-            SGRAlbumHero *target = weakSelf;
-            if (shown || !clip || !target || target->_motionGeneration != generation || SGRAlbumPageOf(target) != weakPage) return;
-            shown = YES;
-            [target showMotion:clip];
-        };
-        void (^tryIdentifiers)(void) = ^{
-            if (!albumURI) return;
-            SGMotionPageIdentifierCover(albumURI, album, pixels, show);
-        };
-        if (!SGRAlbumMotionRowsAllowed(owner)) { tryIdentifiers(); return; }
-        BOOL (^stillCurrent)(void) = ^BOOL {
-            SGRAlbumHero *current = weakSelf;
-            return current && current->_motionGeneration == generation && SGRAlbumPageOf(current) == weakPage &&
-                   SGRAlbumMotionRowsAllowed(weakPage);
-        };
-        BOOL (^startRows)(NSString *, NSString *) = ^BOOL(NSString *credit, NSString *song) {
-            if (!stillCurrent()) return YES;
-            SGMotionAlbumRowMatcher(artist, album, pixels, ^(SGMotionRowMatch match) {
-                if (!stillCurrent()) return;
-                // Read rows again from the settled list, not strings captured before the search.
-                SGRAlbumWaitForMotionRow(weakPage, YES, match);
-                // A row may never match (a credit Spotify shows in another script than Apple Music, say "아이유" for
-                // "IU"), and when the rows are done is never known: the identifiers are asked alongside them.
-                if (match) tryIdentifiers();
-            }, ^(NSURL *clip) {
-                if (clip && stillCurrent()) show(clip);
-                else if (!clip && stillCurrent()) tryIdentifiers();
-            });
-            return YES;
-        };
-        if (albumURI) startRows(nil, nil);
-        else SGRAlbumWaitForMotionRow(owner, NO, startRows);
+        if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != weakPage) return;
+        if (file) [hero showMotion:file];
+        else if (!identified) byTitle();
     });
 }
 

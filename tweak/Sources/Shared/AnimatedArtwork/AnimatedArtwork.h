@@ -96,7 +96,9 @@ typedef BOOL (^SGMotionRowMatch)(NSString *artist, NSString *song);
 void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(SGMotionRowMatch match), void (^found)(NSURL *file));
 // Main queue. A page may use rows only when the header did not identify a release.
 void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
-void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *file));
+// The album by its identifiers (barcode, then a recording): `identified` YES when they named a release, with a clip or
+// still, so a title search cannot take a same-named release of another year in its place.
+void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
 SGMotionTicket *SGMotionRequestSongClip(NSString *uri, NSURL *canvas, NSString *artist, NSString *album, NSString *song,
                                       CGFloat pixels, void (^done)(NSURL *file, NSString *source));
 SGMotionTicket *SGMotionRequestAlbumSongClip(NSString *uri, NSURL *canvas, NSString *artist, NSString *album, NSString *song,

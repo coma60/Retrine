@@ -1073,45 +1073,57 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         deliver(sg_kept[albumClip]);
         return ticket;
     }
-    lookUp(key, ^(id remote) {
-        if (!remote && albumURI && sg_kept[key] == NSNull.null && generation == sg_generation && !ticket.cancelled)
-            identifierCover(albumURI, album, trackURI, pixels, deliver);
-        else deliver(remote);
-    }, ^(void (^answer)(id, BOOL)) {
-        void (^resolveVideo)(NSString *, BOOL, BOOL, BOOL) = ^(NSString *video, BOOL answered, BOOL albumMatch, BOOL songMatch) {
-            void (^finish)(NSURL *) = ^(NSURL *file) {
-                id result = file ?: (albumMatch || songMatch ? (id)@NO : nil);
-                BOOL keep = answered && (!video || file);
-                if (needsSong && albumMatch && keep && generation == sg_generation) {
-                    keepValue(base, result);
-                    keepAlbumAnswer(base, result);
-                    answer(result, NO); // this proof belongs to the release, not today's song
-                } else answer(result, keep);
+    void (^byTitle)(void) = ^{
+        lookUp(key, ^(id remote) {
+            if (!remote && albumURI && sg_kept[key] == NSNull.null && generation == sg_generation && !ticket.cancelled)
+                identifierCover(albumURI, album, trackURI, pixels, deliver);
+            else deliver(remote);
+        }, ^(void (^answer)(id, BOOL)) {
+            void (^resolveVideo)(NSString *, BOOL, BOOL, BOOL) = ^(NSString *video, BOOL answered, BOOL albumMatch, BOOL songMatch) {
+                void (^finish)(NSURL *) = ^(NSURL *file) {
+                    id result = file ?: (albumMatch || songMatch ? (id)@NO : nil);
+                    BOOL keep = answered && (!video || file);
+                    if (needsSong && albumMatch && keep && generation == sg_generation) {
+                        keepValue(base, result);
+                        keepAlbumAnswer(base, result);
+                        answer(result, NO); // this proof belongs to the release, not today's song
+                    } else answer(result, keep);
+                };
+                if (video && generation == sg_generation) masterFile(video, pixels, finish);
+                else finish(nil);
             };
-            if (video && generation == sg_generation) masterFile(video, pixels, finish);
-            else finish(nil);
-        };
-        BOOL (^select)(NSArray *, BOOL) = ^BOOL(NSArray *records, BOOL final) {
-            NSUInteger albums, songs = 0;
-            NSString *video = coverVideo(records, albumKey, artistKey, nil, NO, &albums);
-            if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, NO, &songs);
-            if (!albums && !songs && final) {
-                video = coverVideo(records, albumKey, artistKey, nil, YES, &albums);
-                if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, YES, &songs);
-            }
-            if (!albums && !songs && !final) return NO;
-            resolveVideo(video, records != nil, albums != 0, songs == 1);
-            return YES;
-        };
-        if (needsSong) songCoverRecords(album, ^(NSArray *found) {
-            if (!select(found, found.count != kCoverSearchLimit || generation != sg_generation)) {
-                // Title-only ranking can omit an ordinary album that the qualified search finds.
-                NSString *term = [NSString stringWithFormat:@"%@ %@", artist, SGMotionSearchName(album)];
-                songCoverRecords(term, ^(NSArray *narrow) { select(narrow, YES); });
-            }
+            BOOL (^select)(NSArray *, BOOL) = ^BOOL(NSArray *records, BOOL final) {
+                NSUInteger albums, songs = 0;
+                NSString *video = coverVideo(records, albumKey, artistKey, nil, NO, &albums);
+                if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, NO, &songs);
+                if (!albums && !songs && final) {
+                    video = coverVideo(records, albumKey, artistKey, nil, YES, &albums);
+                    if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, YES, &songs);
+                }
+                if (!albums && !songs && !final) return NO;
+                resolveVideo(video, records != nil, albums != 0, songs == 1);
+                return YES;
+            };
+            if (needsSong) songCoverRecords(album, ^(NSArray *found) {
+                if (!select(found, found.count != kCoverSearchLimit || generation != sg_generation)) {
+                    // Title-only ranking can omit an ordinary album that the qualified search finds.
+                    NSString *term = [NSString stringWithFormat:@"%@ %@", artist, SGMotionSearchName(album)];
+                    songCoverRecords(term, ^(NSArray *narrow) { select(narrow, YES); });
+                }
+            });
+            else albumRecords(artist, album, ^(NSArray *found) { select(found, YES); });
         });
-        else albumRecords(artist, album, ^(NSArray *found) { select(found, YES); });
-    });
+    };
+    // The album's identifiers first: they name the very release, where a title can name another of the same name (the
+    // 2016 "Moana (Original Motion Picture Soundtrack)" and the 2026 film's). A release they name, moving or still, is
+    // the answer; only an album they cannot name is looked for by title.
+    if (SGSpotifyValidURI(albumURI, @"album") && SGMotionAppleMusicOn()) {
+        identifierCover(albumURI, album, trackURI, pixels, ^(id remote) {
+            if (ticket.cancelled) return;
+            if (remote || generation != sg_generation) deliver(remote);
+            else byTitle();
+        });
+    } else byTitle();
     return ticket;
 }
 
@@ -1123,11 +1135,12 @@ void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, v
     requestCover(artist, album, nil, nil, nil, pixels, done);
 }
 
-void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
+void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     NSUInteger generation = sg_generation;
     identifierCover(albumURI, album, nil, pixels, ^(id remote) {
-        if ([remote isKindOfClass:NSURL.class] && generation == sg_generation) SGMotionRequestFile(remote, done);
-        else done(nil);
+        if ([remote isKindOfClass:NSURL.class] && generation == sg_generation)
+            SGMotionRequestFile(remote, ^(NSURL *file) { done(file, YES); });
+        else done(nil, remote != nil && generation == sg_generation);
     });
 }
 

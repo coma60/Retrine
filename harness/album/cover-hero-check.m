@@ -217,7 +217,7 @@ static SGRCoverReading *redReading;
 static NSMutableArray *headerRequests, *rowRequests;
 static void (^headerResult)(NSURL *);
 static void (^rowResult)(NSURL *);
-static void (^identifierResult)(NSURL *);
+static void (^identifierResult)(NSURL *, BOOL);
 static NSString *const fixtureURI = @"spotify:album:FixtureAlbum";
 static NSMutableArray<NSURL *> *shownClips;
 
@@ -226,7 +226,7 @@ static NSMutableArray<NSURL *> *shownClips;
 + (NSString *)albumURI:(UIViewController *)controller { return controller.restorationIdentifier; }
 @end
 
-void SGRAlbumTestIdentifierCover(NSString *uri, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
+void SGRAlbumTestIdentifierCover(NSString *uri, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     HARNESS_CHECK([uri isEqual:fixtureURI] && [album isEqual:@"Fixture Album"]);
     identifierResult = [done copy];
 }
@@ -307,7 +307,7 @@ static UICollectionViewCell *mountTrack(Page p, MotionRows *rows) {
 static void checkMotionIdentifiers(BOOL rowMatches, BOOL rowFirst) {
     headerRequests = [NSMutableArray array]; rowRequests = [NSMutableArray array];
     shownClips = [NSMutableArray array];
-    identifierResult = nil; rowResult = nil;
+    identifierResult = nil; rowResult = nil; headerResult = nil;
     Page p = makePage(solidDarkCover());
     __attribute__((objc_precise_lifetime)) UIViewController *owner = [UIViewController new];
     owner.restorationIdentifier = fixtureURI;
@@ -318,6 +318,12 @@ static void checkMotionIdentifiers(BOOL rowMatches, BOOL rowFirst) {
     UIView *row = cell.contentView.subviews.firstObject.subviews.firstObject;
     ((UILabel *)row.subviews.lastObject.subviews.firstObject).text = credit;
     [p.hero playMotionForArtist:@"Artist" album:@"Fixture Album"];
+    // The identifiers are asked first; naming no release, they leave the album to the title and the rows.
+    if (!identifierResult) HARNESS_FAIL(@"No identifier lookup before the title search");
+    void (^firstIdentifiers)(NSURL *, BOOL) = identifierResult;
+    identifierResult = nil;
+    HARNESS_CHECK(!headerResult);
+    firstIdentifiers(nil, NO);
     HARNESS_CHECK(headerResult);
     headerResult(nil);
     [cell layoutSubviews]; [cell layoutIfNeeded];
@@ -326,7 +332,7 @@ static void checkMotionIdentifiers(BOOL rowMatches, BOOL rowFirst) {
     NSURL *idClip = [NSURL fileURLWithPath:@"/fixture-identifiers.mov"];
     NSURL *rowClip = [NSURL fileURLWithPath:@"/fixture-row.mov"];
     if (rowFirst) rowResult(rowClip);
-    identifierResult(idClip);
+    identifierResult(idClip, YES);
     if (rowMatches && !rowFirst) rowResult(rowClip);
     HARNESS_CHECK([p.hero valueForKey:@"player"]);
     HARNESS_CHECK([shownClips isEqual:@[rowFirst ? rowClip : idClip]]);

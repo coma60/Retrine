@@ -48,6 +48,25 @@ static const CGFloat kBaseGain = 0.35;
 // 255) by a soft maximum, (shown^kFloorSoft + kFloor^kFloorSoft)^(1/kFloorSoft), which leaves the lighter covers
 // within a few levels (the red and gold emblem's 37 comes to 38), in the cover's own hue, a black pixel taking gray.
 static const CGFloat kFloor = 0.0127, kFloorSoft = 4;
+// The Music app holds its background near one saturation whatever the cover: measured in its lower half (HLS, encoded
+// values) over a painting of blue, teal, beige and green it stood at 0.31 to 0.41, where the blur averaged the colors to a
+// gray of 0.13 to 0.18, and over an almost wholly red cover at 0.39 to 0.43, where the field stood at 0.60 to 0.73. Each
+// pixel's saturation is drawn toward kSatTarget along s' = kSatTarget * (s / kSatTarget)^kSatPull (0.13 to 0.30, 0.65 to
+// 0.45), its hue and lightness kept; a gray pixel stays gray.
+static const CGFloat kSatTarget = 0.4, kSatPull = 0.25;
+
+// HLS saturation of the encoded color `e` (0 to 1) drawn toward kSatTarget, lightness and hue kept.
+static void pullSaturation(CGFloat e[3]) {
+    CGFloat most = MAX(e[0], MAX(e[1], e[2])), least = MIN(e[0], MIN(e[1], e[2]));
+    CGFloat light = (most + least) / 2, spread = most - least;
+    if (spread < 1e-4 || light <= 0 || light >= 1) return;
+    CGFloat sat = light <= 0.5 ? spread / (most + least) : spread / (2 - most - least);
+    CGFloat want = MIN(1, kSatTarget * pow(sat / kSatTarget, kSatPull));
+    // The same hue at the new saturation: each channel keeps its place between the least and the most.
+    CGFloat newSpread = want * (light <= 0.5 ? 2 * light : 2 - 2 * light);
+    CGFloat newLeast = light - newSpread / 2;
+    for (int c = 0; c < 3; c++) e[c] = MIN(1, MAX(0, newLeast + (e[c] - least) / spread * newSpread));
+}
 
 NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.redesign.fluidSettingsDidChange";
 
@@ -141,10 +160,13 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         BOOL gray = light < 1e-5;
         if (!gray) cap = floored / light;
         if (i / width >= lowerRow) { lowerSum += floored; lowerCount++; }
+        CGFloat encoded[3];
         for (int c = 0; c < 3; c++) {
             CGFloat v = MIN(1, gray ? floored : rgb[c] * cap);
-            p[c] = floor(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055));
+            encoded[c] = v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055;
         }
+        pullSaturation(encoded);
+        for (int c = 0; c < 3; c++) p[c] = floor(255 * encoded[c]);
         p[3] = 255;
     }
     // 0 for a black lower part, 1 for one at the ceiling.

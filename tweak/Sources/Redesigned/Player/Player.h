@@ -248,6 +248,10 @@ BOOL SGRPlayerVolumeOn(void);
 // under Increase Contrast.
 UIColor *SGRPlayerBarFill(BOOL lit);
 UIColor *SGRPlayerBarTrack(void);
+// The same over `view`'s backdrop: the alpha that lands where the Music app's white, added to it, does (PlayerControls.x);
+// `volume` for the volume row's fill, which the Music app draws brighter than the progress bar's.
+UIColor *SGRPlayerBarFillOver(UIView *view, BOOL lit, BOOL volume);
+UIColor *SGRPlayerBarTrackOver(UIView *view);
 // Both bars are drawn the one way, the Music app's: default-style sliders with an empty thumb, as Spotify's progress bar
 // is, whose tracks are capsule images (SGRPlayerBarImage) `height` tall in the bar's colors. Such a slider draws its fill
 // up to the thumb's middle and cuts it there, so the fill ends square inside the round track. Spotify's track images are

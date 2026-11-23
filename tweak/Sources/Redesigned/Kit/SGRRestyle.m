@@ -942,6 +942,13 @@ UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL)
     return [UIColor colorWithWhite:1 alpha:shown];
 }
 
+CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {
+    CGFloat light = SGRBackdropLightnessBehind(view);
+    if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) return floorAlpha;
+    CGFloat plain = MIN(1, add / MAX(1 - light, kInkLeastHeadroom));
+    return MIN(1, MAX(floorAlpha, round(plain / 0.05) * 0.05));
+}
+
 void SGRBackdropInkObserve(UIView *view, void (^changed)(void)) {
     if (!view) return;
     if (!sg_inkObservers) sg_inkObservers = [NSHashTable weakObjectsHashTable];

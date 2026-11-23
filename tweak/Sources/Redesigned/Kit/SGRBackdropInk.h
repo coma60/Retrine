@@ -27,5 +27,11 @@ BOOL SGRInkIsolated(UIView *view);
 // The ink for `view`: white at `alpha` over a dark backdrop, more over a light one up to `lightAlpha`. `plusL` says
 // whether the view's layer is to carry the plusL filter (YES) or the color is already the plain one (NO).
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL);
+// For things drawn as plain translucent white that the Music app draws as white ADDED to the backdrop (its bars, its
+// glyphs): the plain alpha that lands on the same value as `add` of white added over the measured backdrop,
+// add / (1 - light), never under `floorAlpha` (the alpha that is the same thing over a dark backdrop), in steps of
+// 0.05 so a drifting field does not redraw an image at every reading. `floorAlpha` where there is no reading or
+// under Increase Contrast.
+CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add);
 // Calls `changed` after each change of reading for as long as `view` lives; a second call replaces the block.
 void SGRBackdropInkObserve(UIView *view, void (^changed)(void));

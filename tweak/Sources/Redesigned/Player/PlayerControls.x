@@ -718,6 +718,25 @@ UIColor *SGRPlayerBarTrack(void) {
     return [UIColor colorWithWhite:1 alpha:SGRIncreaseContrast() ? kBarTrackContrastAlpha : kBarTrackAlpha];
 }
 
+// The Music app's bars are white ADDED to what is behind them: measured on its player over a dark blue, a dark pink
+// and a white cover, the progress fill stands 112 of 255 above the backdrop (0.44), the volume fill 140 (0.55) and
+// either track 45 (0.175), saturating at white over a light one. The bars here are plain translucent white, which is
+// the same thing over a dark backdrop (kBarFillAlpha, kBarTrackAlpha) and over a lighter one only at the alpha
+// SGRInkPlainAlpha works out: a white cover's fill was 228 of 255 and its track 201 against the Music app's 255 and
+// 237, which left the bar pale on it.
+static const CGFloat kBarFillAdd = 0.44, kVolumeFillAdd = 0.55, kBarTrackAdd = 0.175;
+
+UIColor *SGRPlayerBarFillOver(UIView *view, BOOL lit, BOOL volume) {
+    if (lit) return SGRPlayerBarFill(YES);
+    CGFloat floorAlpha = CGColorGetAlpha(SGRPlayerBarFill(NO).CGColor);
+    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, volume ? kVolumeFillAdd : kBarFillAdd)];
+}
+
+UIColor *SGRPlayerBarTrackOver(UIView *view) {
+    CGFloat floorAlpha = CGColorGetAlpha(SGRPlayerBarTrack().CGColor);
+    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kBarTrackAdd)];
+}
+
 // How much a finger dragging a bar thickens its track; the stretched middle the caps leave a track image.
 static const CGFloat kBarDragGrow = 1.75, kBarStretch = 1;
 
@@ -735,7 +754,7 @@ CGFloat SGRPlayerBarDragHeight(CGFloat height) {
     return round(height * kBarDragGrow);
 }
 
-static char kBarKey, kBarMinKey, kBarMaxKey, kHeldKey;
+static char kBarKey, kBarMinKey, kBarMaxKey, kHeldKey, kBarInkKey;
 static char kLayoutKey;
 static BOOL sg_mixProgress;
 static NSUInteger sg_mixRevision = 1;
@@ -825,7 +844,7 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         bar.fill = [CALayer layer];
         bar.fill.backgroundColor = SGRPlayerBarFill(YES).CGColor;
         bar.remaining = [CALayer layer];
-        bar.remaining.backgroundColor = SGRPlayerBarTrack().CGColor;
+        bar.remaining.backgroundColor = SGRPlayerBarTrackOver(slider).CGColor;
         [bar.rail.layer addSublayer:bar.fill];
         [bar.rail.layer addSublayer:bar.remaining];
         [slider.superview insertSubview:bar aboveSubview:slider];
@@ -833,7 +852,7 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         updateHeldBar(slider);
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-bar.restHeight)/2);
         bar.rail.layer.cornerRadius = bar.restHeight/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFill(NO).CGColor);
+        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, NO, NO).CGColor);
         hideTrackImages(slider, bar);
     }
     NSUInteger generation = ++bar.generation;
@@ -841,7 +860,7 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         CGFloat height = on ? bar.heldHeight : bar.restHeight;
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-height)/2);
         bar.rail.layer.cornerRadius = height/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFill(on).CGColor);
+        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, on, NO).CGColor);
     };
     SGRAnimateLayout(bar, ^{
         // The transition snapshots the rail. Don't also interpolate its bounds during the dissolve.
@@ -890,8 +909,20 @@ static void colorTrack(UISlider *slider, BOOL minimum, UIColor *color) {
 
 static void colorBar(UISlider *slider) {
     if (slider == sg_scrubSlider || !objc_getAssociatedObject(slider, &kBarKey)) return;
-    colorTrack(slider, YES, SGRPlayerBarFill(NO));
-    colorTrack(slider, NO, SGRPlayerBarTrack());
+    // Over a light backdrop the bar is drawn at the alpha the Music app's added white comes to there; a new reading of
+    // the backdrop colors it again.
+    if (!objc_getAssociatedObject(slider, &kBarInkKey)) {
+        objc_setAssociatedObject(slider, &kBarInkKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        __weak UISlider *weak = slider;
+        SGRBackdropInkObserve(slider, ^{
+            UISlider *shown = weak;
+            if (!shown) return;
+            invalidateColor(shown);
+            [shown setNeedsLayout];
+        });
+    }
+    colorTrack(slider, YES, SGRPlayerBarFillOver(slider, NO, NO));
+    colorTrack(slider, NO, SGRPlayerBarTrackOver(slider));
 }
 
 static void brightenTimes(UIView *unit, BOOL on, BOOL animated) {

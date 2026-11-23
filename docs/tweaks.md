@@ -1583,7 +1583,11 @@ Redesigned:
                   bar uses Spotify's requested range; a label-only tracker keeps its range. Settled
                   callbacks forward without rediscovering the outputs or observing animated digit labels.
                   Both track colors are more opaque under Increase Contrast (SGRPlayerBarFill,
-                  SGRPlayerBarTrack). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
+                  SGRPlayerBarTrack). Over a light backdrop they are drawn at the plain alpha that equals the Music app's white
+                  ADDED to it (fill 0.44, volume fill 0.55, track 0.175; SGRPlayerBarFillOver, SGRPlayerBarTrackOver over
+                  SGRInkPlainAlpha), so a white cover's bar is white and not gray; over a dark one that is the usual 0.6 and
+                  0.2. The volume row's speaker glyphs and the footer's glyphs at rest follow the backdrop the same way
+                  (0.46 added; PlayerVolume.m, PlayerFooter.x refreshFooterInk). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
                   (SGRPlayerBarDragHeight) and lights the fill whole white: the progress bar's as a rail of the mod's own
                   drawn over the slider while it is held — one capsule clipping a rectangular fill to the value, Spotify's
                   track image views hidden under it and given back on release, so the held shape does not depend on how
@@ -1753,14 +1757,17 @@ Redesigned:
                   to 23% of the screen, then both the dim and a second black over it (0.40 at the foot) grow along x^1.75
                   to the bottom of the screen, measured on the Music app's player (0.63 in all over a white cover), so the
                   lower part darkens as the Music app's does, with no knee at the title. A clip that is black or nearly so
-                  (the 75th percentile of its linear luminance up to 0.30, fading out by 0.60) ends in the Music app's gray
+                  (the 75th percentile of its linear luminance up to 0.04, fading out by 0.12; a dark blue or pink cover, 0.15 to 0.25, ends in its own color) ends in the Music app's gray
                   rather than in black: a white layer over the clip (kLiftFoot 0.066 at the foot, 17 of 255 over black)
                   rises from 27% of the screen along x^1.5, as measured on the Music app's player over a black cover, and
                   is gone behind the lyrics. Under a cover shorter than the screen (the tall 3:4 one) the area below it is
                   not the poster's last rows stretched down, which stood as a vertical streak, but a small picture the layer
                   stretches smoothly (PlayerMotion.x veilImage): the foot's colors smoothed along the width, more the further
-                  down (10 to 131 pt below the cover), and darkened by up to 0.49 of black, as fitted to the Music app's
-                  player; the clip dissolves into it over its last tenth. A Canvas, which fills the screen, has none.
+                  down (0 to 120 pt below the cover's bottom edge, the edge's own columns first, then the brightness-weighted
+                  mean), and darkened by up to 0.49 of black under a dark cover and by none under a light one (the dim and the
+                  deepening already darken a light cover to the Music app's 0.63; the veil's black on top of them took a white
+                  cover to 0.75), as fitted to the Music app's player; the clip dissolves into it over its last 3.5%, so a
+                  cover's own dark middle stays dark to its edge as the Music app's does. A Canvas, which fills the screen, has none.
                   The foot is not the poster's: while the clip plays, its current frame is read 15 times a second
                   (AVPlayerItemVideoOutput, on the item the player has) for the colors of its last rows, and the foot and
                   the veil close 0.35 of the way to them each time, so the lower part's color and brightness move with the

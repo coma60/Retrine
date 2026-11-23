@@ -30,10 +30,10 @@ on:
         required: false
         type: string
       runner:
-        description: "macOS runner. A run whose build is not given its runner within 5 s starts again on the next one (macos-latest -> macos-26 -> macos-15)"
+        description: "macOS runner. A build not given its runner within 3 min starts again on the next (macos-latest -> macos-26-intel -> macos-15 -> macos-15-intel)"
         default: macos-latest
         type: choice
-        options: [macos-latest, macos-26, macos-15]
+        options: [macos-latest, macos-26-intel, macos-15, macos-15-intel]
 
 permissions:
   contents: read
@@ -42,14 +42,23 @@ env:
   THEOS: ${{ github.workspace }}/theos
 
 jobs:
-  # GitHub has no fallback for a runner label that is not acquired: the job waits in the queue. This job watches
-  # the build; if it is still queued RUNNER_WAIT_SECONDS after it was created, it dispatches this workflow again
-  # with the same inputs on the next runner in FALLBACK and cancels this run. The last runner has no watchdog, so
-  # it never loops.
+  # GitHub has no fallback for a runner label that is not acquired: the job waits in the queue (runs 13 to 16 sat
+  # there 15 min and were cancelled without a runner). This job watches the build; if it is still queued
+  # RUNNER_WAIT_SECONDS after it was created, it dispatches this workflow again with the same inputs on the next
+  # runner in FALLBACK and cancels this run. The last runner has no watchdog, so it never loops.
+  #
+  # Every runner in FALLBACK has Xcode 26 (the iOS 26 SDK the redesign needs), each from its own pool, so a
+  # starved pool is left rather than queued on again (runner-images, November 2026):
+  #   macos-latest   = macos-26 arm64, Xcode 26.6 (the runner every build so far used)
+  #   macos-26-intel = macOS 26 x64,   Xcode 26.6 (the same toolchain on another pool)
+  #   macos-15       = macOS 15 arm64, Xcode 26.3 (latest-stable; its default is 16.4)
+  #   macos-15-intel = macOS 15 x64,   Xcode 26.3
+  # `macos-26` is not in the list: it is the same pool as macos-latest. macOS 14 has no Xcode 26 and is retired.
+  # 180 s: a healthy pool hands a macOS runner over in well under a minute, so three minutes means it is starved.
   runner-watchdog:
-    if: inputs.runner != 'macos-15'
+    if: inputs.runner != 'macos-15-intel'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: write
     steps:
@@ -59,8 +68,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           REF: ${{ github.ref_name }}
-          RUNNER_WAIT_SECONDS: "5"
-          FALLBACK: "macos-latest=macos-26 macos-26=macos-15"
+          RUNNER_WAIT_SECONDS: "180"
+          FALLBACK: "macos-latest=macos-26-intel macos-26-intel=macos-15 macos-15=macos-15-intel"
           CURRENT_RUNNER: ${{ inputs.runner || 'macos-latest' }}
           IN_IPA_URL: ${{ inputs.ipa_url }}
           IN_UPLOAD_METHOD: ${{ inputs.upload_method }}
@@ -112,7 +121,7 @@ jobs:
               elapsed = (datetime.now(timezone.utc) - created(job)).total_seconds()
               if elapsed >= wait:
                   break
-              time.sleep(max(0.5, min(1.0, wait - elapsed)))
+              time.sleep(max(1.0, min(10.0, wait - elapsed)))
               job = build_job()
 
           print(f"::warning::build waited {elapsed:.0f} s for {current} without a runner; starting again on {after}")
@@ -143,6 +152,17 @@ jobs:
       - uses: ./.github/actions/setup-theos
         with:
           brew: aria2
+
+      # Every fallback runner has an Xcode 26; this says so plainly if an image ever stops having one, instead of
+      # failing deep in the build on a missing iOS 26 API.
+      - name: Check the iOS SDK
+        run: |
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "runner ${{ inputs.runner || 'macos-latest' }} ($(uname -m)), $(xcodebuild -version | head -1), iOS SDK $sdk"
+          if [ "${sdk%%.*}" -lt 26 ]; then
+            echo "::error::this runner's newest Xcode has the iOS $sdk SDK; Retrine needs iOS 26. Pick another runner."
+            exit 1
+          fi
 
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         if: inputs.enable_wireguard

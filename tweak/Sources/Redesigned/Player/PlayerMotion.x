@@ -83,8 +83,13 @@ static const CGFloat kFootFrom = 0.9;
 // at the cover's bottom edge and only fades into its surroundings below it. Dissolving over the last tenth, into
 // the foot's colors, washed the cover out above its own edge (a fog) where the Music app's stays sharp.
 static const CGFloat kTallFootFrom = 0.965;
-// The share of the poster's height, at its bottom, whose colors the foot is.
-static const CGFloat kFootRows = 0.03;
+// The share of the poster's (and the playing clip's) height, at its bottom, whose colors the foot is, each column's
+// own. The Music app carries what runs down a column of the cover's lower part on to the screen's foot: a lightning
+// bolt down the left of a black cover ending a little above the cover's edge kept the left of its foot blue, where the
+// last 3% of rows read black there and the foot went a flat gray. The lower quarter holds such a bolt in any frame.
+static const CGFloat kFootRows = 0.25;
+// Rows read across that band of each clip frame (liveRow).
+static const size_t kFootRowSamples = 16;
 // The foot's colors from side to side: that many means of the last rows, each over its share of the width, laid
 // between by a gradient. A few, so the foot keeps the clip's left and right without columns: a row's own pixels
 // stretched on down read as vertical streaks (issue #40).
@@ -403,7 +408,7 @@ static BOOL liveRow(CVPixelBufferRef buffer, float out[kVeilSamples * 3]) {
     BOOL ok = base && width >= kVeilSamples && height > 0;
     if (ok) {
         size_t rows = MAX(1, (size_t)(height * kFootRows)), first = height - rows;
-        size_t stepY = MAX(1, rows / 6), stepX = MAX(1, width / (kVeilSamples * 8));
+        size_t stepY = MAX(1, rows / kFootRowSamples), stepX = MAX(1, width / (kVeilSamples * 8));
         for (size_t j = 0; j < kVeilSamples; j++) {
             size_t from = j * width / kVeilSamples, to = (j + 1) * width / kVeilSamples;
             double sum[3] = {0};

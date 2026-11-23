@@ -2,6 +2,7 @@
 #import "Settings/SGModPage.h"
 #import "AdBlock.h"
 #import "Shared/Privacy/Privacy.h"
+#import "Shared/SponsorBlock/SponsorBlock.h"
 #import "Shared/Flags/Flags.h"
 
 NSString *SGFakePremiumWarningText(void) {
@@ -89,6 +90,7 @@ UIViewController *SGAdsSettingsPage(void) {
         SGNotedSection(SGL(@"settings.privacy.premium.header", @"Premium"), @[
             SGWithSymbol(fakePremium, @"crown"),
         ], SGL(@"settings.privacy.premium.footer", @"Free accounts only.")),
+        SGSponsorBlockSettingsSection(),
         SGPrivacySection(),
         SGNotedSection(SGL(@"settings.privacy.blocked_stats.header", @"Ads blocked so far"), counts,
                        SGL(@"settings.privacy.blocked_stats.footer", @"\"3 of 214\" is 3 stopped of 214 checked. 0 of 0 means Spotify never asked, so that part does nothing on this version.")),

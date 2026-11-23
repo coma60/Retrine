@@ -75,7 +75,7 @@ Not yet ported, checked against upstream `f6a3403` (2026-11-17):
 | 80, 83 | Presets, and AutoEq headphone corrections from AutoEq's public data |
 | 27, 28, 29, 20, 103, 87, 55, 130, 53, 56 | Sing: model download, vocals slider, mic button, heat switch, iOS 18 floor |
 | 81, 92 | Local files: Edit Info and lyrics |
-| — | SponsorBlock podcast skipping in both looks, off by default, category switches and Spotify's Undo snackbar; adapted from EeveeSpotifyReincarnated (GPL-3, `0d9feaa` / `51cb2dc`). Reporting and voting excluded; real-Spotify playback validation outstanding. |
+| — | SponsorBlock for podcasts in both looks: opt-in tour switch, per-category Auto-skip / Ask / Show only / Off, native Skip and Undo snackbar, manual-seek and duration rules, local statistics, optional haptics, HTTPS server choice and progress-bar segment data. Report-driven; no polling, mute, submission or voting. Adapted from EeveeSpotifyReincarnated (GPL-3, `0d9feaa` / `51cb2dc`) and upstream Vitrine `d48c5f3b`. Real-Spotify playback validation outstanding. |
 
 ### System
 

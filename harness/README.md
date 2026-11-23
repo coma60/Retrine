@@ -201,7 +201,7 @@ by merely compiling them.
 | `menu/build.sh` | iOS simulator UI. |
 | `mod-settings/build.sh` | iOS simulator settings UI. |
 | `morph/build.sh` | iOS simulator visual rendering. `morph/check.sh` checks the opt-in Music-like close against 9.1.90's compact transition doubles: staged geometry, velocity release, cancellation with the reversed fraction, and the off path's old numbers. |
-| `native-player/build.sh` | iOS simulator UI. |
+| `native-player/build.sh` | iOS simulator UI; `sponsorblock` checks SponsorBlock's progress bar marks (`../sponsorblock/markers-check.m`, also run by `player/`'s `sponsorblock` scenario). |
 | `onboarding/build.sh` | iOS simulator UI; generates fixture release notes only inside its output directory. |
 | `page-previews/build.sh` | iOS simulator: the five page settings with their preview cards, in a simulator of the run's own; asserts what VoiceOver reads and writes PNGs. |
 | `player/build.sh` | iOS simulator player UI; `timerow` checks subpixel progress sets and the held scrub capsule; `seek` checks the exact value delivered by a same-pixel tap; `lyric-line-chip-live` checks the idle lyric clock, paused seeks, late chip movement and the first visible line after full lyrics close; `lyric-line-long` checks that crossing the final portion boundary during placement does not skip the last words. |

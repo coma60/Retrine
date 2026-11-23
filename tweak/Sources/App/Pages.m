@@ -14,7 +14,6 @@
 #import "Shared/LyricsMeanings/Meanings.h"
 #import "Shared/Player/PlayerSettings.h"
 #import "Shared/Player/AudioQuality.h"
-#import "Shared/SponsorBlock/SponsorBlock.h"
 #import "Shared/Sing/Sing.h"
 #import "Native/Appearance/Appearance.h"
 #import "Native/Navbar/Navbar.h"
@@ -246,7 +245,6 @@ UIViewController *SGPlayerSettingsPage(void) {
         SGWithTile(songs, @"hand.raised", UIColor.systemRedColor),
     ])];
     [sections addObject:SGSleepTimerSettingsSection()];
-    [sections addObject:SGSponsorBlockSettingsSection()];
     if (native) {
         [sections addObject:SGSection(nil, @[
             SGWithTile(named(SGPageRow(SGL(@"settings.player.now_playing_bar.title", @"Now playing bar"), ^UIViewController *{ return SGNowPlayingBarSettingsPage(); }), @"player.nowplayingbar"), @"rectangle.bottomthird.inset.filled", UIColor.systemPinkColor),

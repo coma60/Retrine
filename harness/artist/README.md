@@ -27,6 +27,14 @@ alone and "Play" as its VoiceOver name, 44pt buttons 20pt off and level with it;
 with `-spotifyglass.redesign.accentPlay YES` the accent. It logs a PASS line and a SHOT for a screenshot, or a FAIL and
 exits 1.
 
+`verify-title` checks the artist's name the way the Music app has it on iOS 26: Large Title bold capped at Extra Large,
+centered on the page with the listeners line centered under it and clear of the row, a long name wrapped centered in two
+lines at most, and a logo handed over for the name centered in its place. `rtl` with the right-to-left pseudolanguage
+arguments asserts the page took that direction; `HARNESS_ARTIST` names the artist. It logs a SHOT 1.5 s ahead of the
+checks, then a PASS line, or a FAIL and exits 1. `THEOS=$HOME/theos python3 harness/artist/title-check.py
+[--screenshots <dir>]` runs it for a short and a long name, left to right and right to left, round and capsule Play, on
+a simulator of its own that it deletes afterwards, keeping each case's screenshot as `artist-title-<case>.png`.
+
 `cutout-check.sh` (`python3 scripts/harness-plan.py run --names "Artist cut-out Play"`) checks the cut-out Play itself,
 in a Mac Catalyst app of its own: the capsule over slanted stripes, read back pixel by pixel against the stripes alone
 and the capsule painted -- Play and Pause, the capsule with its word and a new font, another size, another fill, on and

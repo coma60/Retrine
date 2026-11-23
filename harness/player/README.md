@@ -133,7 +133,8 @@ come late, out of order, or not at all.
 
 - `lyrics` (default) opens the lyrics at 2 s, closes them at 6 and opens them again at 10.
 - `cancel-dismissal` drives both outcomes of an interactive transition with the lyrics scrolled.
-  `late-wide` on a regular-width iPad with `HARNESS_NO_ARTWORK=1` delivers the first artwork after layout.
+  `late-wide` on a regular-width iPad with `HARNESS_NO_ARTWORK=1` delivers the first artwork after layout,
+  then checks that the two-column queue glyph stays level with Lyrics with and without space for the Agent prompt.
 - `look` plays one track, then a track from another album at 8 s, whose picture reaches the screens
   0.4 s later. It shows the field, the moving background and its crossfade, and the footer row, with Spotify
   9.2.0's plain view over the strip under the bottom stack. At 3 s it checks that touches at the middle and 8 pt
@@ -141,7 +142,8 @@ come late, out of order, or not at all.
   switches to a podcast episode's player (a footer unit of its own in its own bottom stack, its row not hanging
   out) and back as Spotify does, its views taken out and put back on top, twice and then once with no layout of
   the episode's row between: the episode leaves no band in the player and its Lyrics takes its touch, and each
-  track after it takes those touches again with one band. The log ends with `look checks: n of 23 right -- PASS`
+  track after it takes those touches again with one band. Lyrics stays on the row both when the footer grows
+  to fit the Agent prompt and when it shrinks back. The log ends with `look checks: n of 25 right -- PASS`
   or `FAIL`, and the app exits with it; on the sources before the fix it read 6 of 23.
 - `artwork` is issue #58. Tracks change while the covers on screen lag behind (3.5 s late, past the
   Kit's last look), two skips come in a row with the older picture answering last, and one track plays
@@ -318,6 +320,16 @@ come late, out of order, or not at all.
   (the badge staying put) and back after, the details (glyph, tier, About 160 kbps, a sentence, the footnote naming
   Spotify's High), and the native look's badge as it was (Spotify's word, centered on the times). The log ends with
   `timerow checks: n of 13 right -- PASS` or `FAIL`; on the sources before the time row's change it read 3 of 10.
+
+- `sponsorblock` is SponsorBlock's marks on the `timerow` mock of Spotify's bar as the redesign draws it
+  (`PlayerControls.x`, `Shared/SponsorBlock/SponsorBlockMarkers.m`), run by `../sponsorblock/markers-check.m`: the
+  engine's real session plays a song and two fixture episodes, and the drawn window is compared with the same bar
+  unmarked. It checks each mark's color and extent on Spotify's episode bar and on the slider's own track, the Off
+  and too-short segments left out, a next episode and a longer duration on the notification alone, a narrower bar,
+  right to left, the scrubbed track's height, touches and accessibility unchanged, and nothing left by a song.
+  `sponsorblock-off` checks that nothing is drawn with the switch off. `HARNESS_SHOTS=<dir>` (as
+  `SIMCTL_CHILD_HARNESS_SHOTS`) receives `redesign-ltr.png` and `redesign-rtl.png`. The log ends with
+  `sponsorblock redesign checks: n of 17 right -- PASS` or `FAIL`.
 
 - `volumebar` is the volume row (`PlayerVolume.m`) beside the progress bar as the redesign draws it (the `timerow`
   mock), the Music app's two bars alike. On the row's Connect slider at half (the simulator does not draw

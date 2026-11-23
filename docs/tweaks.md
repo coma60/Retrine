@@ -43,30 +43,77 @@ recorded trees: both are read out of Spotify's own binary and belong to whoever 
 ## SponsorBlock
 
 `Shared/SponsorBlock/` skips community-marked podcast segments under either look. Mod Settings ›
-Player › SponsorBlock has an off-by-default switch and nine category switches; Sponsors,
-Self-promotion and Interaction reminders are initially selected. Changes require a restart.
+Premium, ads & privacy › SponsorBlock has an off-by-default switch, also offered separately
+from No ads in the welcome tour. Under Categories & behavior, choose Auto-skip, Ask, Show only
+or Off for each category. `spotifyglass.sponsorblock.behavior.<category>` stores that choice
+(0–3). If absent, read `spotifyglass.sponsorblock.category.<category>` without modifying
+either key: on means Auto-skip, off means Off. With neither key, Sponsors, Self-promotion
+and Interaction reminders auto-skip and the rest are off. The master, behaviors, manual seek,
+minimum duration, skip haptics and progress bar switch are read at launch.
 The API's Spotify episode-ID mapping, hash-prefix request, category set and skip/Undo boundaries
 are adapted from EeveeSpotifyReincarnated (GPL-3, `0d9feaa`, also touched in `51cb2dc`).
-Reports, voting, local submissions, overlays and manual-skip prompts are not included.
+The expanded rules follow upstream Vitrine (`d48c5f3b`); no custom toast, polling,
+submissions, voting or mute actions are used.
 
 `SGPlayerStateObserver.playerStateDidReport:` supplies the clock on main; the existing
 `SGPlayer()` / `seekTo:` API performs the seek in seconds. There is no player-service hook,
-audio-thread work, polling timer or display link. Only `spotify:episode:` or an exact
+audio-thread work, polling timer or display link. Between sparse reports there is at most
+one main-queue wake. The playback rate and the next Auto/Ask start determine its deadline;
+a seek into an actionable range gets one immediate landing check. Neither deadline nor
+requested target authorizes playback: the wake, fetch completion and snackbar taps read
+Spotify’s timestamped running position. Data older than our seek cannot confirm it. If
+the wake cannot confirm a landing it looks again every 0.25 seconds for up to two seconds
+after the seek, then waits for another report; a stale report keeps the deadline; a fresh contradictory
+report establishes a manual seek and replaces the deadline. Pause, loading, music, disabling or having
+no actionable boundary ahead leaves no timer running. Only `spotify:episode:` or an exact
 `https://open.spotify.com/episode/` URI qualifies, including video podcasts; music is untouched.
-Overlapping or adjacent selected segments form one continuous range. The first report within
+Overlapping or adjacent Auto-skip segments form one continuous range; Ask, Show only and
+Off never bridge automatic ranges. The first qualifying report or boundary wake within
 it seeks to its furthest end plus 0.05 seconds (bounded by the episode duration), marking all
-members handled and showing one notice. Until a report reaches that seek target, positions
-behind it cannot trigger another skip. Segments shorter than one second or outside the episode
+members handled and showing one notice. A stale pre-seek sample cannot trigger another
+skip even if its extrapolated position has crossed the target. Segments shorter than the selected minimum (one second
+by default) or outside the episode
 duration cannot join a range; the final 0.25 seconds of a range are left alone.
-Each UUID is skipped at most once per episode per session, including stale reports and revisits.
-Spotify's existing timed action snackbar
-(`SPTSnackbarInternalPresenterImplementation`) supplies Undo, seeking to 0.25 seconds before
-the whole range without re-skipping any member. Undo supersedes a pending forward seek;
+Each UUID is skipped at most once while that episode remains in the recent-episode cache.
+Spotify's existing timed action snackbar (`SPTSnackbarInternalPresenterImplementation`)
+offers Skip for Ask. Respect manual seeks (on by default) also asks if the first report
+after resuming is inside an automatic range or playback jumps there (more than two seconds
+from the expected position at the reported speed). The model distinguishes its own seek
+landings. An expired Skip cannot seek back into a range the listener has left.
+After a skip the same snackbar supplies Undo, seeking to 0.25 seconds before
+the whole range without re-skipping any member. Undo requires live evidence of the skip;
 non-overlapping later ranges remain eligible. An Undo from another episode/playback visit does nothing.
 The snackbar signatures are checked before installing its capture hook; if unavailable,
-the feature logs once and stays disabled rather than skipping without Undo.
+the feature logs once and stays disabled rather than skipping without Undo. Statistics count
+one skip per seek and the remaining seconds skipped (not the seek padding). Undo subtracts
+both, unless the counters have since been reset. Vibrate on skip defaults on and uses the
+existing light Skip feedback when Vibrations › Controls is enabled.
 
-Privacy: an ephemeral HTTPS GET to `sponsor.ajay.app/api/skipSegments/<prefix>` sends only
+`SGSponsorBlockVisibleSegments()` and `SGSponsorBlockEpisodeDuration()` are main-thread
+readers for the progress bar. Subscribe to `SGSponsorBlockSegmentsDidChangeNotification`
+on main (object: session), then read again; position reports alone don't change the
+snapshot. It includes eligible individual Auto-skip, Ask and Show only segments in seconds,
+not the merged skip ranges. Music has an empty list and zero duration. Gate rendering with
+`SGSponsorBlockMarkersEnabled()` (launch-read `spotifyglass.sponsorblock.overlay`, default
+on with SponsorBlock). These readers do not install any slider hooks.
+
+`SponsorBlockMarkers.m` draws them on Spotify's progress slider
+(`_TtCO17NowPlaying_ECMKit11ProgressBar6Slider`), after upstream's `SGSponsorBlockOverlay`: one view per
+slider of SponsorBlock's standard category colors (upstream's defaults, not editable), placed by start/end
+over the track, mirrored right to left. It sits behind the slider's own drawing, under the thumb: just above
+Spotify's episode bar (`ProgressBar.AudioView`, chapters included, its frame and rounding) when the slider
+holds one, else at the back on the slider's track rect; it takes no touches and VoiceOver skips it. It is
+placed again only on the change notification (segments or duration) or when a layout pass finds the
+slider's bounds, track, direction or episode bar changed; no timer or display link. A song, or no segments,
+leaves nothing in the slider. Each look hooks the slider's layout and window entry in its own file, only
+with the switch on: Native/Player/PlayerScrub.x at 0.7 opacity on Spotify's track, where the opaque played
+fill covers the marks it passes when there is no episode bar; Redesigned/Player/PlayerControls.x at 0.8
+under the translucent rail, as AutoMix's bands, taking the scrubbed track's height. `harness/native-player`
+(`sponsorblock`, `sponsorblock-off` launch arguments) and `harness/player` (`HARNESS_SCENARIO` of the same
+names) run `harness/sponsorblock/markers-check.m` against the real session and compare the drawn window.
+
+Privacy: an ephemeral HTTPS GET to `/api/skipSegments/<prefix>` on the configured server
+(default `https://sponsor.ajay.app`) sends only
 the first **five hexadecimal characters of SHA-256 of the bare Spotify episode ID**,
 `service=Spotify`, selected category identifiers as JSON, and the `X-CLIENT-NAME:
 Retrine-SponsorBlock/1` header, plus normal HTTP/TLS metadata (including the network IP).
@@ -74,10 +121,18 @@ Neither the full episode ID nor account tokens, title, playback position, cookie
 headers are sent. The response's full `videoID` is matched locally, so hash-prefix collisions
 cannot select another episode's segments. Requests and parsing run off main with a six-second
 request/resource limit and a 2 MiB response cap; redirects, credential storage and cookies are
-disabled. Successes, empty responses and failures are kept in memory per episode for this
-session only. Failures produce one generic log per episode, no UI and no retry.
+disabled. A custom HTTPS base needs a host and cannot include credentials, a query or a
+fragment. Invalid stored addresses use the default; clear the server field to restore it.
+The server address is install-local: settings export omits it, import cannot change it, and
+diagnostic export redacts it. Changing the server affects new requests. The session keeps
+only the four most recently visited episodes, including handled UUIDs and empty/failure
+results; an evicted episode is looked up on return. Replies from a previous visit are
+discarded. At most 200 segments per episode are accepted, with UUIDs of at most 128 UTF-16
+code units. A failed lookup logs once while cached, without UI or automatic retries.
 `harness/sponsorblock/build.sh` exercises fixture decoding, selection, skip/Undo, stale replies,
-music/off isolation, failure caching and request privacy without a network or Spotify account.
+music/off isolation, failure caching, migration, Ask, markers, stats and request privacy
+without a network or Spotify account. `harness/onboarding/sponsorblock-check.sh` renders
+the settings and tour opt-in in English and Korean.
 
 ## Layers
 
@@ -1362,7 +1417,7 @@ Redesigned:
                   animated cover still filling the hero, and a playlist Full screen; a stored choice wins; SGRPageFullCover in
                   SGRHeaderInfo.m). Under the cover the title is Title 2 bold, the creator Title 3 regular and the kind and
                   date or length Caption 1 semibold in the secondary color (the Music app's sizes, capped at Extra Large;
-                  SGRHeaderInfo.m infoFont); the artist page's name is Large Title bold at the leading edge (largeTitle).
+                  SGRHeaderInfo.m infoFont); the artist page's name is Large Title bold, centred like the album's (largeTitle).
                   The first read of either carries the global switch of before (spotifyglass.redesign.fullBleedCovers) into both
                   where they have no value of their own and sets spotifyglass.redesign.fullBleedCovers.migrated; the old key is
                   left alone for a downgrade and never read again. In Card an album's animated cover still fills the hero.

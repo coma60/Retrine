@@ -208,6 +208,8 @@ HARNESSES = [
      "run": "sh harness/spicy-lyrics/build.sh"},
     {"name": "SponsorBlock", "dir": "sponsorblock",
      "run": "sh harness/sponsorblock/build.sh"},
+    {"name": "SponsorBlock screens", "dir": "onboarding",
+     "run": "sh harness/onboarding/sponsorblock-check.sh"},
     {"name": "UI refinements album menu", "dir": "ui-refinements", "theos": True,
      "run": "sh harness/ui-refinements/menu-check.sh"},
     {"name": "Update offline", "dir": "update",
@@ -636,14 +638,24 @@ def script_calls(script_rel):
     text = re.sub(r'\$\(\s*dirname\s+"?\$0"?\s*\)', script_dir, text)
     text = substitute(text, shell_vars(text, script_dir)).replace("\\\n", " ")
     delimiter = None
-    for line in text.splitlines():
+    lines = iter(text.splitlines())
+    for line in lines:
         if delimiter is not None:
             if line.strip() == delimiter:
                 delimiter = None
             continue
-        lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|()<>")
-        lexer.whitespace_split = True
-        tokens = list(lexer)
+        # A quoted argument (e.g. whats-new.sh's awk program) can span physical lines.
+        while True:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|()<>")
+            lexer.whitespace_split = True
+            try:
+                tokens = list(lexer)
+                break
+            except ValueError as error:
+                continuation = next(lines, None)
+                if str(error) != "No closing quotation" or continuation is None:
+                    raise
+                line += "\n" + continuation
         for index, token in enumerate(tokens):
             if token in {"<<", "<<-"} and index + 1 < len(tokens):
                 delimiter = tokens[index + 1]

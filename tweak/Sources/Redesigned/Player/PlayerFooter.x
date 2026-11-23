@@ -54,21 +54,25 @@ static NSString *const kLyricsEncore = @"microphone";
 // Spotify's glyphs in the footer are drawn this size: the queue's SPTEncoreIconView is 18x18 (out/rep/ptree.txt:1228-1279).
 static const CGFloat kEncoreGlyphSide = 18;
 // Where the three glyphs sit, as parts of the footer's width.
-static const CGFloat kLeading = 0.2, kMiddle = 0.5, kTrailing = 0.8;
+// (The Music app's lyrics and queue glyphs stand 114 pt either side of the middle on a 402 pt screen.)
+static const CGFloat kLeading = 0.216, kMiddle = 0.5, kTrailing = 0.784;
 static const CGFloat kGlyphMaxWidth = 30;
 
 // Issue #54: Spotify ends its bottom stack 61pt above the screen's bottom (01.txt:127, 576.67 + 236 of
 // 874), so the row's middle sat 83pt up, well clear of the home indicator, and the controls crowded it.
 // The Music app keeps that row just over the home indicator: its middle this far above the safe area's
 // bottom, and never less than kRowMinBottom above the screen's on a phone without a home indicator.
-static const CGFloat kRowAboveSafeArea = 20, kRowMinBottom = 34;
+// (32: measured on the Music app's player at 3x, the glyphs' middle 66 pt over the screen's bottom with a 34 pt
+// home indicator, where Spotify's 20 stood 12 pt lower.)
+static const CGFloat kRowAboveSafeArea = 32, kRowMinBottom = 34;
 // The controls follow a share of the row's move when nothing stands between them, so the gaps above
 // and below them even out instead of all the room opening under them. Not while the rhythm below holds them.
 static const CGFloat kControlsShare = 0.3;
 // The Music app's gaps down its player (iOS 26, design/applemusic-gap item 4), each from the middle of what is above
 // unless named: from the artist's last line to the progress bar, from the bar to the play button, and from the play
 // button to the volume row (SGRPlayerVolumeToRow goes on to the footer row). Spotify's own were 27, 71 and 55.
-static const CGFloat kArtistToBar = 38, kBarToPlay = 91, kPlayToVolume = 91;
+// Re-measured against the Music app's player at 3x: 35, 90 and 92 (with SGRPlayerVolumeToRow 50 on to the footer row).
+static const CGFloat kArtistToBar = 35, kBarToPlay = 90, kPlayToVolume = 92;
 
 // "airplayaudio" is the name iOS 16 knows; iOS 18 calls it airplay.audio and keeps this one as its alias.
 static NSString *const kConnectSymbol = @"airplayaudio", *const kQueueSymbol = @"list.bullet";

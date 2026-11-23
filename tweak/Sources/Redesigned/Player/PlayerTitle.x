@@ -170,9 +170,19 @@ static void setShownFont(UILabel *self, SEL _cmd, UIFont *font) {
     ((void (*)(id, SEL, UIFont *))spotifys(self, _cmd))(self, _cmd, shownFont(isTitle(self), font));
 }
 
-// The artist in the secondary color; the title as Spotify paints it.
+// The artist in the Music app's ink: white ADDED to what is behind it (plusL), 0.44 of it, so it brightens and darkens
+// with the cover behind it (measured on its player: 112 of 255 above the backdrop over a light, a mid and a dark
+// cover, saturating at white on a light one); under Increase Contrast the secondary color as it was. The title as
+// Spotify paints it.
+static const CGFloat kArtistInk = 0.44;
 static void setShownColor(UILabel *self, SEL _cmd, UIColor *color) {
-    ((void (*)(id, SEL, UIColor *))spotifys(self, _cmd))(self, _cmd, isTitle(self) ? color : SGRSecondary());
+    BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled();
+    UIColor *ink = title ? color : (contrast ? SGRSecondary() : [UIColor colorWithWhite:1 alpha:kArtistInk]);
+    ((void (*)(id, SEL, UIColor *))spotifys(self, _cmd))(self, _cmd, ink);
+    if (!title) {
+        NSString *filter = contrast ? nil : @"plusL";
+        if (![self.layer.compositingFilter isEqual:filter]) self.layer.compositingFilter = filter;
+    }
 }
 
 // Whether Spotify asked for the mark holder to be hidden; its own flag until it is held.

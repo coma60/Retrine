@@ -952,7 +952,7 @@ Shared:
                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
                   4.6 pt corners (a quarter of its height) in medium caption type, lit by adding light to what is behind it
                   (plusL: 17 of 255 for the fill, 165 more for the text and glyph, the Music app's measured 107 lifted so
-                  the words read as clearly over the player's light lower half), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
+                  the words read as clearly over the player's light lower half), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 6 pt further from the bar and, with the artist, added to what is behind them (plusL, 0.265 and 0.44 white, as measured on the Music app's player over a light, a mid and a dark cover) so they brighten and darken with the cover, plainly composited under Increase Contrast
                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
@@ -1659,7 +1659,7 @@ Redesigned:
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
                   in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
-                  the system font, semibold, 13 pt at the default text size, a minus sign before the time left) and, with Rolling time digits on (the
+                  the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.265 alpha (0.7 with Increase Contrast) as the Music app's times are dim and translucent, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
                   Player page) keeps the player's add button on the title row, which the ⋯ otherwise stands in for, and
@@ -1742,7 +1742,20 @@ Redesigned:
                   AI DJ's buttons) and fades out from there over 108 points (issue #39). The lower half is untouched down
                   to 23% of the screen, then both the dim and a second black over it (0.40 at the foot) grow along x^1.75
                   to the bottom of the screen, measured on the Music app's player (0.63 in all over a white cover), so the
-                  lower part darkens as the Music app's does, with no knee at the title. A track that changes
+                  lower part darkens as the Music app's does, with no knee at the title. A clip that is black or nearly so
+                  (the 75th percentile of its linear luminance up to 0.30, fading out by 0.60) ends in the Music app's gray
+                  rather than in black: a white layer over the clip (kLiftFoot 0.066 at the foot, 17 of 255 over black)
+                  rises from 27% of the screen along x^1.5, as measured on the Music app's player over a black cover, and
+                  is gone behind the lyrics. Under a cover shorter than the screen (the tall 3:4 one) the area below it is
+                  not the poster's last rows stretched down, which stood as a vertical streak, but a small picture the layer
+                  stretches smoothly (PlayerMotion.x veilImage): the foot's colors smoothed along the width, more the further
+                  down (10 to 131 pt below the cover), and darkened by up to 0.49 of black, as fitted to the Music app's
+                  player; the clip dissolves into it over its last tenth. A Canvas, which fills the screen, has none.
+                  The foot is not the poster's: while the clip plays, its current frame is read 15 times a second
+                  (AVPlayerItemVideoOutput, on the item the player has) for the colors of its last rows, and the foot and
+                  the veil close 0.35 of the way to them each time, so the lower part's color and brightness move with the
+                  clip as the Music app's do; a paused or stood-down clip leaves them where they were.
+                  A track that changes
                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer
                   (PlayerVisualiser.m) draws two soft hills of the song's spectrum across the foot of the player, the kick
@@ -2638,3 +2651,9 @@ a page using `SGL` compiles `Core/SGLocalize.m` too; harness/mod-settings/ copie
 
 A class Spotify has renamed shows up in the log as `class X not found, its hooks are inactive`;
 declare the classes a feature needs in `Headers/` only when a hook calls into them by type.
+
+Layout against the Music app's player (3x measurements, 402 x 874 pt): the footer row's middle 32 pt over the safe
+area's bottom (kRowAboveSafeArea), the gaps from the artist to the bar, the bar to play and play to the volume row 35,
+90 and 92 pt with the volume row 50 pt over the footer row (SGRPlayerVolumeToRow), previous and next 107 pt from play
+(kSpreadShare 0.31) at 29.5 pt glyph size and play at 50 pt, the footer's lyrics and queue glyphs at 0.216 and 0.784 of
+the width, and the volume row 5 pt past the side margins with a 4 pt glyph gap.

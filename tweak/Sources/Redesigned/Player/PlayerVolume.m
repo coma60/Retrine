@@ -14,7 +14,10 @@
 #import "Shared/Haptics/Haptics.h"
 
 // The row's height, the glyphs' point size and the gap between a glyph and the track.
-static const CGFloat kRowHeight = 34, kGlyphSize = 13, kGlyphGap = 10;
+static const CGFloat kRowHeight = 34, kGlyphSize = 13, kGlyphGap = 4;
+// The Music app's volume row reaches this far past the player's side margins: its speaker glyphs stand at 34 pt and
+// its track runs from 57 to 336 pt on a 402 pt screen.
+static const CGFloat kRowOut = 5;
 // Half the footer glyphs' height: the row stops this far above their middle.
 static const CGFloat kGlyphsHalf = 14;
 
@@ -327,7 +330,7 @@ BOOL SGRPlayerPlaceVolume(UIView *stack, UIView *controls, UIView *row, CGFloat 
     // halfway between the play button and the footer's glyphs where it is shorter, and without the rhythm.
     CGFloat halfway = (above + below) / 2;
     CGFloat middle = rhythm ? MAX(halfway, rowMiddle - SGRPlayerVolumeToRow) : halfway;
-    CGRect frame = CGRectMake(margin, round(middle - height / 2), MAX(0, stack.bounds.size.width - 2 * margin), height);
+    CGRect frame = CGRectMake(margin - kRowOut, round(middle - height / 2), MAX(0, stack.bounds.size.width - 2 * (margin - kRowOut)), height);
     BOOL moved = !CGRectEqualToRect(volume.frame, frame);
     if (moved) volume.frame = frame;
     settle(stack, row, moved, frame);

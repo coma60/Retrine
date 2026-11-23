@@ -127,6 +127,31 @@ static const CGFloat kDeepenBottom = 0.40;
 // (SGRPlayerClipDim) asks for, and it grows down the whole lower half (kBottomStart), not over kBlurRamp. Increase
 // Contrast and the lyrics keep the full dim, so their contrast is not given up.
 static const CGFloat kDimSoften = 0.7;
+// A clip that is black or nearly so ends in a gray, not in black: the Music app's player, over a black cover, rises
+// from the cover's own black at 27% of the screen to a gray of 17 of 255 at its foot, along x^1.5 (x the share of the
+// way from there to the bottom; measured at 3x, 874 pt). It is white over the clip, kLiftFoot of it at the foot, and
+// only as far as the clip is not light: whole up to kLiftDark of linear luminance (the clip's bright end, as the dim
+// reads it, so a black cover with a white sleeve's lettering is still one) and gone from kLiftNone up, so a white
+// cover keeps the dimming that darkens it. Not behind the lyrics.
+static const CGFloat kLiftFrom = 0.27, kLiftEase = 1.5, kLiftFoot = 0.066, kLiftDark = 0.30, kLiftNone = 0.60;
+// What the Music app's player draws below a cover that is shorter than the screen (its tall 3:4 cover): not the
+// poster's last rows stretched down, which stand as a vertical streak, but the cover's foot blurred more the further
+// down it goes, and darker. Measured on the Music app's player over an animated cover (3x, 874 pt) and fitted: the
+// foot's colors smoothed along the width by a Gaussian of kVeilNear of the width, and from kVeilCrossFrom to
+// kVeilCrossTo points below the cover's bottom taken over by the same smoothed by kVeilWide and pulled kVeilMean of
+// the way to the foot's mean color, then darkened by kVeilFadeMost of black, which comes in along
+// 1 - exp(-(d / kVeilFadeLength)^kVeilFadePower), d the points below the cover's bottom.
+// It is a small picture (kVeilColumns by kVeilRows) the layer stretches smoothly, drawn once for a cover and a
+// layout. It comes in over the clip's last tenth, as the clip dissolves into it.
+static const CGFloat kVeilNear = 0.106, kVeilWide = 0.177, kVeilMean = 0.67;
+static const CGFloat kVeilCrossFrom = 10, kVeilCrossTo = 131;
+static const CGFloat kVeilFadeMost = 0.49, kVeilFadeLength = 223, kVeilFadePower = 2.43;
+enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
+// The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
+// last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
+// glide with the clip, as the Music app's lower part moves with its cover.
+static const NSTimeInterval kLiveEvery = 1.0 / 15;
+static const float kLiveFollow = 0.35f;
 // The material blur under the controls tints the bottom of the player gray, which the Music app's player does not
 // have: its colors run on to the bottom untouched. NO leaves the blur's view in place with no effect on it.
 static const BOOL kSeamBlur = NO;
@@ -255,18 +280,24 @@ CGFloat SGRPlayerImageBrightEnd(CGImageRef image) {
 
 // The foot's colors from left to right (kFootSamples), each the mean of its share of the poster's last rows
 // (kFootRows), drawn 16 pixels wide.
-static NSArray *footColors(CGImageRef poster) {
-    enum { kWide = 16 };
+enum { kStripWide = 16 };
+// The poster's last rows (kFootRows), drawn kStripWide pixels wide and one tall: RGBX bytes.
+static void lastRows(CGImageRef poster, uint8_t pixels[kStripWide * 4]) {
     size_t height = CGImageGetHeight(poster), rows = MAX(1, (size_t)(height * kFootRows));
     CGImageRef strip = CGImageCreateWithImageInRect(poster, CGRectMake(0, height - rows, CGImageGetWidth(poster), rows));
-    uint8_t pixels[kWide * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    CGContextRef context = CGBitmapContextCreate(pixels, kWide, 1, 8, kWide * 4, space, (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
+    CGContextRef context = CGBitmapContextCreate(pixels, kStripWide, 1, 8, kStripWide * 4, space, (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
     CGColorSpaceRelease(space);
     CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
-    CGContextDrawImage(context, CGRectMake(0, 0, kWide, 1), strip);
+    CGContextDrawImage(context, CGRectMake(0, 0, kStripWide, 1), strip);
     CGContextRelease(context);
     CGImageRelease(strip);
+}
+
+static NSArray *footColors(CGImageRef poster) {
+    enum { kWide = kStripWide };
+    uint8_t pixels[kWide * 4] = {0};
+    lastRows(poster, pixels);
     const size_t per = kWide / kFootSamples;
     NSMutableArray *colors = [NSMutableArray arrayWithCapacity:kFootSamples];
     for (size_t s = 0; s < kFootSamples; s++) {
@@ -278,6 +309,123 @@ static NSArray *footColors(CGImageRef poster) {
                                                        blue:sum[2] / (per * 255.0) alpha:1].CGColor];
     }
     return colors;
+}
+
+// The foot's colors as kVeilSamples floats per channel, left to right (0 to 1).
+static NSData *veilRow(CGImageRef poster) {
+    uint8_t pixels[kStripWide * 4] = {0};
+    lastRows(poster, pixels);
+    float colors[kVeilSamples * 3];
+    for (int i = 0; i < kVeilSamples; i++) {
+        for (int c = 0; c < 3; c++) colors[i * 3 + c] = pixels[i * 4 + c] / 255.0f;
+    }
+    return [NSData dataWithBytes:colors length:sizeof colors];
+}
+
+// The foot gradient's colors from the row of kVeilSamples: the mean of each group, as footColors takes them.
+static NSArray *footColorsOf(NSData *rowData) {
+    const float *row = rowData.bytes;
+    const size_t per = kVeilSamples / kFootSamples;
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:kFootSamples];
+    for (size_t s = 0; s < kFootSamples; s++) {
+        CGFloat sum[3] = {0};
+        for (size_t i = s * per; i < (s + 1) * per; i++) {
+            for (int c = 0; c < 3; c++) sum[c] += row[i * 3 + c];
+        }
+        [colors addObject:(__bridge id)[UIColor colorWithRed:sum[0] / per green:sum[1] / per blue:sum[2] / per alpha:1].CGColor];
+    }
+    return colors;
+}
+
+// The colors of a clip frame's last rows (kFootRows of its height), kVeilSamples across, as floats; NO for a frame that
+// is not BGRA or cannot be read.
+static BOOL liveRow(CVPixelBufferRef buffer, float out[kVeilSamples * 3]) {
+    if (CVPixelBufferGetPixelFormatType(buffer) != kCVPixelFormatType_32BGRA) return NO;
+    if (CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return NO;
+    const uint8_t *base = CVPixelBufferGetBaseAddress(buffer);
+    size_t width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer);
+    BOOL ok = base && width >= kVeilSamples && height > 0;
+    if (ok) {
+        size_t rows = MAX(1, (size_t)(height * kFootRows)), first = height - rows;
+        size_t stepY = MAX(1, rows / 6), stepX = MAX(1, width / (kVeilSamples * 8));
+        for (size_t j = 0; j < kVeilSamples; j++) {
+            size_t from = j * width / kVeilSamples, to = (j + 1) * width / kVeilSamples;
+            double sum[3] = {0};
+            size_t count = 0;
+            for (size_t y = first; y < height; y += stepY) {
+                const uint8_t *line = base + y * stride;
+                for (size_t x = from; x < to; x += stepX) {
+                    const uint8_t *pixel = line + x * 4;
+                    sum[0] += pixel[2];
+                    sum[1] += pixel[1];
+                    sum[2] += pixel[0];
+                    count++;
+                }
+            }
+            for (int c = 0; c < 3; c++) out[j * 3 + c] = count ? (float)(sum[c] / (count * 255.0)) : 0;
+        }
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+    return ok;
+}
+
+static CGFloat smoothStep(CGFloat from, CGFloat to, CGFloat at) {
+    CGFloat u = MIN(1, MAX(0, (at - from) / (to - from)));
+    return u * u * (3 - 2 * u);
+}
+
+// `row` smoothed along its width by a Gaussian of `sigma` (a share of the width), at column `u` (0 to 1), each end
+// averaging only what is there.
+static void smoothedAt(const float *row, CGFloat sigma, CGFloat u, CGFloat out[3]) {
+    CGFloat sum[3] = {0}, weights = 0;
+    for (int j = 0; j < kVeilSamples; j++) {
+        CGFloat x = (j + 0.5) / kVeilSamples, w = exp(-0.5 * pow((u - x) / sigma, 2));
+        weights += w;
+        for (int c = 0; c < 3; c++) sum[c] += w * row[j * 3 + c];
+    }
+    for (int c = 0; c < 3; c++) out[c] = sum[c] / weights;
+}
+
+// The veil's picture for a view `width` wide and `total` tall whose cover ends at `bottom`, drawn from `seam` down: its
+// rows run from the seam to the foot of the view. Premultiplied, so the top rows, where it comes in over the clip's
+// dissolve, are clear. The caller releases it.
+static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFloat total) {
+    const float *row = rowData.bytes;
+    CGFloat mean[3] = {0};
+    for (int j = 0; j < kVeilSamples; j++) {
+        for (int c = 0; c < 3; c++) mean[c] += row[j * 3 + c] / kVeilSamples;
+    }
+    uint8_t *pixels = calloc(kVeilColumns * kVeilRows * 4, 1);
+    // Each column's two colors, the near and the far, once for every row.
+    CGFloat narrowAt[kVeilColumns][3], farAt[kVeilColumns][3];
+    for (int k = 0; k < kVeilColumns; k++) {
+        CGFloat u = (k + 0.5) / kVeilColumns, wide[3];
+        smoothedAt(row, kVeilNear, u, narrowAt[k]);
+        smoothedAt(row, kVeilWide, u, wide);
+        for (int c = 0; c < 3; c++) farAt[k][c] = wide[c] * (1 - kVeilMean) + mean[c] * kVeilMean;
+    }
+    for (int r = 0; r < kVeilRows; r++) {
+        CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
+        CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);
+        CGFloat dark = kVeilFadeMost * (1 - exp(-pow(d / kVeilFadeLength, kVeilFadePower)));
+        CGFloat enter = bottom > seam ? smoothStep(seam, bottom, y) : 1;
+        for (int k = 0; k < kVeilColumns; k++) {
+            uint8_t *pixel = pixels + (r * kVeilColumns + k) * 4;
+            for (int c = 0; c < 3; c++) {
+                CGFloat color = (narrowAt[k][c] * (1 - across) + farAt[k][c] * across) * (1 - dark);
+                pixel[c] = (uint8_t)lrint(MIN(1, MAX(0, color * enter)) * 255);
+            }
+            pixel[3] = (uint8_t)lrint(enter * 255);
+        }
+    }
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef context = CGBitmapContextCreate(pixels, kVeilColumns, kVeilRows, 8, kVeilColumns * 4, space,
+                                                 kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    free(pixels);
+    return image;
 }
 
 @interface SGRPlayerMotionView : UIView <SGPlayerStateObserver>
@@ -312,8 +460,15 @@ static NSArray *footColors(CGImageRef poster) {
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
     CAGradientLayer *_foot;   // the colors of the poster's last rows, from side to side, from the seam down
+    CALayer *_veil;   // under a cover shorter than the screen: the foot blurred, more the further down, over _foot
+    NSData *_veilRow;   // the foot's colors now (the poster's last rows at first, then the clip's), kVeilSamples (floats) left to right
+    AVPlayerItemVideoOutput *_liveOutput;   // reads the playing clip's frames, on the item it is on
+    AVPlayerItem *_liveItem;
+    NSTimer *_liveTimer;
+    CGRect _veilFor;   // the layout _veil's picture was drawn for (seam, cover's bottom, width, height of the view)
     CAGradientLayer *_dim;   // black over the clip's top and from above the title down, as dark as the clip is bright
     CAGradientLayer *_deepen;   // more black over the dim, from where it is whole down to the bottom of the screen
+    CAGradientLayer *_lift;   // white over a dark clip's lower part, so a black one ends in the Music app's gray
     CAGradientLayer *_scrim;   // a still's only: black from the top fading out under the header's controls
     NSMutableData *_luminances;   // of the frames measured so far
     BOOL _lyricsUp;
@@ -353,6 +508,14 @@ static NSArray *deepenColors(void) {
     return colors;
 }
 
+// The white that lifts a dark clip's foot: nothing where it starts, then the curve to whole (its opacity is kLiftFoot).
+static NSArray *liftColors(void) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
+    [colors addObject:(__bridge id)UIColor.clearColor.CGColor];
+    for (int j = 1; j <= kRampSteps; j++) [colors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:pow((CGFloat)j / kRampSteps, kLiftEase)].CGColor];
+    return colors;
+}
+
 static UIBlurEffect *blurEffect(void) {
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
 }
@@ -370,6 +533,10 @@ static UIBlurEffect *blurEffect(void) {
     for (size_t s = 0; s < kFootSamples; s++) [footAt addObject:@((s + 0.5) / kFootSamples)];
     _foot.locations = footAt;
     [_picture.layer addSublayer:_foot];
+    _veil = [CALayer layer];
+    _veil.magnificationFilter = kCAFilterLinear;
+    _veil.hidden = YES;
+    [_picture.layer addSublayer:_veil];
     // An AVPlayerLayer draws nothing until its first frame is decoded, so the poster, the clip's first
     // frame and where the looper starts, is the contents of the layer the video draws in: there is a
     // picture from the first frame, and the video covers it exactly.
@@ -392,6 +559,10 @@ static UIBlurEffect *blurEffect(void) {
     _deepen.colors = deepenColors();
     _deepen.opacity = kDeepenBottom;
     [_picture.layer addSublayer:_deepen];
+    _lift = [CAGradientLayer layer];
+    _lift.colors = liftColors();
+    _lift.opacity = 0;
+    [_picture.layer addSublayer:_lift];
     _scrim = [CAGradientLayer layer];
     _scrim.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
     _scrim.hidden = YES;
@@ -427,6 +598,7 @@ static UIBlurEffect *blurEffect(void) {
     // A looper let go while it plays is what AVFoundation minds: the player stops, the looper stops watching it,
     // and the layer lets the player go before any of them can be freed playing.
     [self unwatch];
+    [self dropLive];
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
@@ -475,8 +647,20 @@ static UIBlurEffect *blurEffect(void) {
     _clip.frame = _still.bounds;
     _clipMask.frame = _still.bounds;
     _foot.frame = CGRectMake(0, seam, width, MAX(0, total - seam));
+    // A cover shorter than the screen gets the blurred foot below it, a Canvas (which fills the screen) none.
+    BOOL shorter = _veilRow && height < screen - 0.5 && total > seam;
+    _veil.hidden = !shorter;
+    if (shorter) {
+        _veil.frame = _foot.frame;
+        CGRect geometry = CGRectMake(seam, height, width, total);
+        if (!CGRectEqualToRect(geometry, _veilFor)) {
+            _veilFor = geometry;
+            [self redrawVeil];
+        }
+    }
     _dim.frame = bounds;
     _deepen.frame = bounds;
+    _lift.frame = bounds;
     // The window's safe area: this view's own, on the field in the player's list, reads none.
     CGFloat safeTop = self.window.safeAreaInsets.top;
     _scrim.frame = CGRectMake(0, 0, width, safeTop + kStillScrimBelowSafeTop);
@@ -497,8 +681,71 @@ static UIBlurEffect *blurEffect(void) {
     NSMutableArray *deepen = [NSMutableArray arrayWithObject:at(rampFrom)];
     for (int j = 1; j <= kRampSteps; j++) [deepen addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
     _deepen.locations = deepen;
+    CGFloat liftFrom = screen * kLiftFrom;
+    NSMutableArray *lift = [NSMutableArray arrayWithObject:at(liftFrom)];
+    for (int j = 1; j <= kRampSteps; j++) [lift addObject:at(liftFrom + (screen - liftFrom) * j / kRampSteps)];
+    _lift.locations = lift;
     _seamMask.frame = bounds;
     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
+    [CATransaction commit];
+}
+
+// The veil's picture again from the foot's colors now, for the layout it was last placed in.
+- (void)redrawVeil {
+    if (_veil.hidden || !_veilRow || CGRectIsEmpty(_veilFor)) return;
+    CGImageRef image = veilImage(_veilRow, _veilFor.origin.x, _veilFor.origin.y, _veilFor.size.height);
+    _veil.contents = (__bridge id)image;
+    CGImageRelease(image);
+}
+
+// While the clip plays, the foot takes its colors from the clip's frames. The output is on the item the player has
+// now (the looper swaps items, and an output belongs to one at a time).
+- (void)startLive {
+    if (_liveTimer) return;
+    __weak SGRPlayerMotionView *weakSelf = self;
+    _liveTimer = [NSTimer timerWithTimeInterval:kLiveEvery repeats:YES block:^(NSTimer *timer) { [weakSelf liveTick]; }];
+    [NSRunLoop.mainRunLoop addTimer:_liveTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopLive {
+    [_liveTimer invalidate];
+    _liveTimer = nil;
+}
+
+// Also lets the item go of the output, for a player that is being replaced or a view that is going.
+- (void)dropLive {
+    [self stopLive];
+    [_liveItem removeOutput:_liveOutput];
+    _liveItem = nil;
+}
+
+- (void)liveTick {
+    AVPlayerItem *item = _player.currentItem;
+    if (_inCover || !item || !_veilRow || !self.window) return;
+    if (!_liveOutput) {
+        _liveOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:@{(id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)}];
+    }
+    if (item != _liveItem) {
+        [_liveItem removeOutput:_liveOutput];
+        _liveItem = nil;
+        if (![item.outputs containsObject:_liveOutput]) [item addOutput:_liveOutput];
+        _liveItem = item;
+    }
+    CMTime time = [_liveOutput itemTimeForHostTime:CACurrentMediaTime()];
+    if (![_liveOutput hasNewPixelBufferForItemTime:time]) return;
+    CVPixelBufferRef buffer = [_liveOutput copyPixelBufferForItemTime:time itemTimeForDisplay:NULL];
+    if (!buffer) return;
+    float now[kVeilSamples * 3], shown[kVeilSamples * 3];
+    BOOL read = liveRow(buffer, now);
+    CVPixelBufferRelease(buffer);
+    if (!read || _veilRow.length != sizeof shown) return;
+    memcpy(shown, _veilRow.bytes, sizeof shown);
+    for (int i = 0; i < kVeilSamples * 3; i++) shown[i] += (now[i] - shown[i]) * kLiveFollow;
+    _veilRow = [NSData dataWithBytes:shown length:sizeof shown];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _foot.colors = footColorsOf(_veilRow);
+    [self redrawVeil];
     [CATransaction commit];
 }
 
@@ -506,6 +753,8 @@ static UIBlurEffect *blurEffect(void) {
 - (void)takePicture:(UIImage *)picture aspect:(CGFloat)aspect {
     _aspect = aspect;
     _foot.colors = footColors(picture.CGImage);
+    _veilRow = veilRow(picture.CGImage);
+    _veilFor = CGRectZero;
     _still.contents = (__bridge id)picture.CGImage;
     [self setNeedsLayout];
 }
@@ -536,6 +785,7 @@ static UIBlurEffect *blurEffect(void) {
 // go on. What they watch goes before another is made, so an observer never outlives the object it was put on.
 - (void)build {
     [self unwatch];
+    [self dropLive];
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
@@ -691,6 +941,9 @@ static UIBlurEffect *blurEffect(void) {
     // lyrics' own.
     if (!_lyricsUp && !contrast) dim *= kDimSoften;
     _dim.opacity = (float)dim;
+    // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
+    CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
+    _lift.opacity = _lyricsUp ? 0 : (float)(kLiftFoot * share);
     _scrim.opacity = (float)(contrast ? kStillScrimTop * SGRPlayerClipDim(1, YES, NO) / SGRPlayerClipDim(1, NO, NO) : kStillScrimTop);
 }
 
@@ -789,6 +1042,8 @@ static UIBlurEffect *blurEffect(void) {
     BOOL may = [self mayPlay];
     if (may) [_player play];
     else [_player pause];
+    if (may) [self startLive];
+    else [self stopLive];
     // A clip that plays again is asked whether its item or looper failed while it could not: the failure is
     // answered here, on the pass that puts it back on screen, and never behind a paused song or off screen.
     // This reads a state, it does not poll a clock.

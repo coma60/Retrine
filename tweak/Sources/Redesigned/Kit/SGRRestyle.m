@@ -333,15 +333,24 @@ static BOOL hasMonospacedDigits(UIFont *font) {
     return NO;
 }
 
-// The Music app's times (SGRTimeLabelStyle): 13 pt like the footnote style, semibold, at most this large at the
-// biggest text sizes.
-static const CGFloat kTimeFontSize = 13, kTimeFontMost = 19;
-static char kTimeStyleKey;
+// The Music app's times (SGRTimeLabelStyle): 12 pt like the caption 1 style, semibold, at most this large at the
+// biggest text sizes. Measured on the Music app's player at 3x: the digits stand 27 px tall (a 13 pt font's 29).
+static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
+// Their ink: white at this alpha, ADDED to what is behind them (plusL) as the Music app's are, so they rise and fall
+// with the backdrop: measured on its player over a light, a mid and a dark cover, its digits stand 67 of 255 above
+// the backdrop each time (0.265), where Spotify's own #B3B3B3 peaked at 179 whatever stood behind. More opaque and
+// plainly composited under Increase Contrast.
+static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7;
+static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
     UIFont *base = [UIFont systemFontOfSize:kTimeFontSize weight:UIFontWeightSemibold];
-    base = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleFootnote] scaledFontForFont:base maximumPointSize:kTimeFontMost];
+    base = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1] scaledFontForFont:base maximumPointSize:kTimeFontMost];
     return SGMonospacedDigitsFont(base);
+}
+
+static UIColor *timeInk(void) {
+    return [UIColor colorWithWhite:1 alpha:UIAccessibilityDarkerSystemColorsEnabled() ? kTimeInkContrastAlpha : kTimeInkAlpha];
 }
 
 static BOOL sameFont(UIFont *a, UIFont *b) {
@@ -380,6 +389,18 @@ static void applyMonospaced(UILabel *label, Class original) {
         [mapped replaceCharactersInRange:NSMakeRange(0, 1) withString:@"\u2212"];
     }
     if (mapped) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setAttributedText:), mapped);
+    // The times' ink, except while a finger scrubs and they are lit (SGRTimeLabelLit). It goes through the label's own
+    // textColor, which colors the whole text, so the label's color is the ink too and is what a scrub gives back.
+    if (styled && !objc_getAssociatedObject(label, &kTimeLitKey)) {
+        UIColor *ink = timeInk();
+        NSAttributedString *now = label.attributedText;
+        UIColor *shown = now.length ? [now attribute:NSForegroundColorAttributeName atIndex:0 effectiveRange:NULL] : label.textColor;
+        if (!shown || ![shown isEqual:ink]) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setTextColor:), ink);
+    }
+    if (styled) {
+        NSString *filter = UIAccessibilityDarkerSystemColorsEnabled() ? nil : @"plusL";
+        if (![label.layer.compositingFilter isEqual:filter]) label.layer.compositingFilter = filter;
+    }
 }
 
 // Spotify's setters run first; what they left is then given the feature through the original class's
@@ -458,6 +479,11 @@ void SGRTimeLabelStyle(UILabel *label) {
     objc_setAssociatedObject(label, &kTimeStyleKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // The override is in place or goes in now, and the label is given the style once at once.
     SGRMonospacedDigits(label);
+}
+
+void SGRTimeLabelLit(UILabel *label, BOOL lit) {
+    if (![label isKindOfClass:UILabel.class]) return;
+    objc_setAssociatedObject(label, &kTimeLitKey, lit ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 // Only the views that asked: everything else of the class carrying the override goes straight back out.

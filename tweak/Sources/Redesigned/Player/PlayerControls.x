@@ -31,9 +31,11 @@
 #import "PlayerMix.h"
 #import "Shared/AutoMix/AutoMixPreview.h"
 
-static const CGFloat kSkipGlyphSize = 32, kPlayGlyphSize = 44;
+// The Music app's transport glyphs measured at 3x: previous and next 39 pt wide, pause 29 pt wide and 40 tall, where
+// 32 and 44 drew 42 and 26 by 35.
+static const CGFloat kSkipGlyphSize = 29.5, kPlayGlyphSize = 50;
 // The platter the Music app fades in behind a pressed transport glyph (SGRPress.h), about twice the glyph.
-static const CGFloat kSkipPlatter = 64, kPlayPlatter = 76;
+static const CGFloat kSkipPlatter = 59, kPlayPlatter = 86;
 // A spinner that is still up this long after a state change is buffering, not a track starting.
 static const NSTimeInterval kSpinnerCheck = 0.6;
 
@@ -190,6 +192,8 @@ static BOOL shuffleAndRepeatGone(UIView *host, UIStackView *row) {
 // The emptied ends stay where the stack put them, and next's moves under repeat's (the last of the row is on top):
 // an empty view that takes touches swallows them, so the ends take none while the two are spread (quietEnds).
 static const CGFloat kSpreadReachMax = 140;
+// The Music app's previous and next stand 107 pt either side of play's middle on a 402 pt screen: this share of the room.
+static const CGFloat kSpreadShare = 0.31;
 static char kSpreadSlotsKey, kSpreadShiftKey, kQuietEndsKey;
 
 // The row's own slot that holds `view`, or nil.
@@ -256,7 +260,7 @@ static void spreadSkips(UIView *host, UIStackView *row, BOOL endsEmpty) {
             return (slot.center.x < playX ? playX : width - playX) - slot.bounds.size.width / 2;
         };
         CGFloat inside = MIN(width, host.bounds.size.width - 2 * SGRPlayerSideMargin);
-        CGFloat reach = MIN(MIN(inside / 3, kSpreadReachMax), MIN(room(previous), room(next)));
+        CGFloat reach = MIN(MIN(inside * kSpreadShare, kSpreadReachMax), MIN(room(previous), room(next)));
         CGFloat (^outward)(UIView *) = ^CGFloat(UIView *slot) {
             CGFloat offset = slot.center.x - playX;
             CGFloat more = MAX(0, reach - fabs(offset));
@@ -659,7 +663,8 @@ static void watchSlider(UIView *host) {
 static const CGFloat kScrubTimeDrop = 3;
 // The Music app keeps its time row clear of the bar: the times, and the audio quality badge between them, stand this
 // much lower than Spotify lays them out, by a translation of theirs, so Spotify's layout stays underneath.
-static const CGFloat kTimesDrop = 8;
+// 6, measured against the Music app's player at 3x: the digits stood 2 pt lower than its own at 8.
+static const CGFloat kTimesDrop = 6;
 static const NSUInteger kScrubUnitReach = 6;
 static char kScrubTakeKey, kScrubTakeLabelKey, kScrubRemainingKey, kScrubRemainingLabelKey, kScrubColorKey;
 static __weak UISlider *sg_scrubSlider;
@@ -678,6 +683,8 @@ static UIView *timesAround(UISlider *slider) {
 static void brighten(UIView *view, BOOL on, BOOL animated) {
     if (![view isKindOfClass:UILabel.class]) return;
     UILabel *label = (UILabel *)view;
+    // The times' dim ink (SGRTimeLabelStyle) is left alone while they are white.
+    SGRTimeLabelLit(label, on);
     UIColor *kept = objc_getAssociatedObject(label, &kScrubColorKey);
     UIColor *to = on ? SGRPrimary() : kept;
     if (on && !kept && label.textColor) objc_setAssociatedObject(label, &kScrubColorKey, label.textColor, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

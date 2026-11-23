@@ -112,7 +112,7 @@ static const CGFloat SGRPlayerSideMargin = 32;
 void SGRPlayerHoldMargin(UIView *view, CGFloat contentX);
 // The Music app's gap from the volume row's middle to the footer row's middle: the footer's rhythm makes the room for it
 // (PlayerFooter.x) and the volume row stands this far over the footer where the room allows (PlayerVolume.m).
-static const CGFloat SGRPlayerVolumeToRow = 48;
+static const CGFloat SGRPlayerVolumeToRow = 50;
 
 #pragma mark - the cover (PlayerArtwork.x)
 

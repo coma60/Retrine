@@ -952,14 +952,15 @@ static char kScrollContext;
         });
     };
     // The album's identifiers first: they name the very release, where its title can name another of the same name
-    // (the 2016 "Moana (Original Motion Picture Soundtrack)" took the 2026 film's clip). A release they name, moving
-    // or still, is the answer; only an album they cannot name is looked for by title and rows.
+    // (the 2016 "Moana (Original Motion Picture Soundtrack)" took the 2026 film's clip). A clip they find is the
+    // answer; a still edition they name may not be the one of Apple's that moves (a reissue's barcode), so the title
+    // and the rows are asked then too, with the artist and the songs' credits they always need.
     if (!albumURI) { byTitle(); return; }
     SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *file, BOOL identified) {
         SGRAlbumHero *hero = weakSelf;
         if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != weakPage) return;
         if (file) [hero showMotion:file];
-        else if (!identified) byTitle();
+        else byTitle();
     });
 }
 

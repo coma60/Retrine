@@ -1040,7 +1040,8 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     }
     // A legacy URL (or miss) was decided with editions collapsed and no track evidence; a "2" miss could
     // be an EP that Apple Music names with " - EP", a "3" miss a single it names with " - Single".
-    NSString *base = [NSString stringWithFormat:@"album\n4\n%@\n%@", artistKey, albumKey];
+    // "4" and "song7" misses were decided before a name matched by its words alone (sameRelease): asked again.
+    NSString *base = [NSString stringWithFormat:@"album\n5\n%@\n%@", artistKey, albumKey];
     setUp();
     BOOL needsSong = songKey.length && (!sg_kept[base] || sg_kept[base] == NSNull.null);
     // Older song-level misses could also mean the track identified a release without video, so only the clips
@@ -1049,7 +1050,7 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     if (needsSong) {
         NSString *song = [NSString stringWithFormat:@"%@\n%@\n%@", artistKey, albumKey, songKey];
         NSString *older = [@"album\nsong4\n" stringByAppendingString:song];
-        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong7\n" stringByAppendingString:song];
+        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong8\n" stringByAppendingString:song];
     }
     NSUInteger generation = sg_generation;
     // The album's clip, once any of its songs found one: every song of the album plays the same clip, rather than each
@@ -1115,12 +1116,15 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         });
     };
     // The album's identifiers first: they name the very release, where a title can name another of the same name (the
-    // 2016 "Moana (Original Motion Picture Soundtrack)" and the 2026 film's). A release they name, moving or still, is
-    // the answer; only an album they cannot name is looked for by title.
+    // 2016 "Moana (Original Motion Picture Soundtrack)" and the 2026 film's). A clip they find is the answer. A still
+    // edition they name is not the last word: a reissue's barcode and remastered recordings can point at an edition of
+    // Apple's that does not move while the one that does carries other codes (Lynyrd Skynyrd's "Pronounced' Leh-'Nerd
+    // 'Skin-'Nerd"), so the title is asked then too, with the same artist (or the song's credit) as it always needs; a
+    // title that finds nothing leaves the identifiers' still.
     if (SGSpotifyValidURI(albumURI, @"album") && SGMotionAppleMusicOn()) {
         identifierCover(albumURI, album, trackURI, pixels, ^(id remote) {
             if (ticket.cancelled) return;
-            if (remote || generation != sg_generation) deliver(remote);
+            if ([remote isKindOfClass:NSURL.class] || generation != sg_generation) deliver(remote);
             else byTitle();
         });
     } else byTitle();

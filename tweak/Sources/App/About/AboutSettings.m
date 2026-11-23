@@ -3,8 +3,6 @@
 #import "About.h"
 #import "App/Onboarding/Onboarding.h"
 #import "Shared/AutoMix/AutoMix.h"
-#import "Shared/Flags/Flags.h"
-#import "Shared/Navigation/Links.h"
 #import "Shared/Lossless/LosslessQuality.h"
 #import "Shared/Lyrics/Lyrics.h"
 #import "Shared/LyricsSources/LyricsSources.h"
@@ -82,11 +80,6 @@ UIViewController *SGAboutPage(void) {
           SGL(@"settings.mod.language.english", @"English"),
           SGL(@"settings.mod.language.korean", @"한국어")], 0);
     language.choiceFooter = SGL(@"settings.mod.language.footer", @"Applies after you restart Spotify.");
-    SGModRow *cacheLimit = SGSwitchRow(SGL(@"settings.mod.storage.limit", @"Show cache size limit"), SGRestartNote, SGKeyShowCacheLimit);
-    SGModRow *storage = SGActionRow(SGL(@"settings.mod.storage.open", @"Open Spotify storage settings"), nil, ^{
-        SGOpenSpotifyURI([NSURL URLWithString:@"spotify:config:storage"]);
-    });
-    storage.searchIdentifier = @"action.spotifyStorage";
     SGModRow *reset = SGWithSymbol(SGActionRow(SGL(@"settings.mod.reset.title", @"Reset all settings"), nil, ^{ confirmReset(); }), @"trash");
     reset.color = SGRed();
     // Reset all removes the settings; the keys live in the Keychain, which it leaves alone, so this takes them.
@@ -119,8 +112,6 @@ UIViewController *SGAboutPage(void) {
         SGSection(nil, build),
         SGSection(nil, links),
         SGNotedSection(nil, @[language], language.choiceFooter),
-        SGNotedSection(SGL(@"settings.mod.storage.title", @"Storage"), @[cacheLimit, storage],
-            SGL(@"settings.mod.storage.footer", @"Spotify trims its cache to the size you choose and keeps your downloads. With a small cache, Pixie may need to download a streamed track before exporting it.")),
         SGSection(nil, @[
             SGWithSymbol(SGActionRow(SGL(@"settings.mod.export_settings.title", @"Export settings"), nil, ^{ SGExportSettings(); }), @"square.and.arrow.up"),
             SGWithSymbol(SGActionRow(SGL(@"settings.mod.import_settings.title", @"Import settings"), nil, ^{ SGImportSettings(owner); }), @"square.and.arrow.down"),

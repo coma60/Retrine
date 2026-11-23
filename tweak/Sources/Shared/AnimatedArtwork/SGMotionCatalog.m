@@ -665,25 +665,10 @@ static NSString *coverKey(id name) {
         range:NSMakeRange(0, text.length)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
 }
 
-// A release's name as both catalogs agree on it: Apple Music names an EP "X - EP" and a single "X - Single"
-// where Spotify names either "X". These are the only release-type words Apple adds to a name.
+// A release's name as both catalogs agree on it: Apple Music names an EP "X - EP" where Spotify names it "X".
 static NSString *releaseKey(id name) {
     NSString *key = coverKey(name);
-    for (NSString *suffix in @[@" - ep", @" - single"])
-        if ([key hasSuffix:suffix]) return [key substringToIndex:key.length - suffix.length];
-    return key;
-}
-
-// `album` is Spotify's whole name: one that already reads "X - Single" stays apart from Apple's album "X".
-static BOOL sameRelease(id record, NSString *album) {
-    NSString *name = coverKey(dig(record, @"attributes/name"));
-    return [name isEqual:album] || [releaseKey(name) isEqual:album];
-}
-
-// An Apple single that Spotify names without " - Single". It is taken only when no album or EP of that name
-// qualifies: a same-named single beside an album is that album's lead single, not the album.
-static BOOL namedSingle(id record) {
-    return [dig(record, @"attributes/isSingle") isEqual:@YES] && [coverKey(dig(record, @"attributes/name")) hasSuffix:@" - single"];
+    return [key hasSuffix:@" - ep"] ? [key substringToIndex:key.length - 5] : key;
 }
 
 static NSString *joinedCredit(NSString *key) {
@@ -715,28 +700,20 @@ static BOOL containsSong(id record, NSString *song, NSString *artist) {
     return NO;
 }
 
-// `withSingles` is the last resort, once neither the album nor the song found a release in a final result.
-static NSString *coverVideo(NSArray *records, NSString *album, NSString *artist, NSString *song, BOOL withSingles, NSUInteger *matches) {
-    NSString *video = nil, *singleVideo = nil;
-    NSUInteger singles = 0;
+static NSString *coverVideo(NSArray *records, NSString *album, NSString *artist, NSString *song, NSUInteger *matches) {
+    NSString *video = nil;
     *matches = 0;
     for (id record in records) {
-        if (!sameRelease(record, album)) continue;
+        if (![releaseKey(dig(record, @"attributes/name")) isEqual:album]) continue;
         id single = dig(record, @"attributes/isSingle");
-        BOOL same = song.length ? containsSong(record, song, artist)
-                                : [coverKey(dig(record, @"attributes/artistName")) isEqual:artist];
-        if (![album hasSuffix:@" - single"] && ([single isEqual:@YES] || (song.length && ![single isEqual:@NO]))) {
-            if (withSingles && same && namedSingle(record)) { singles++; singleVideo = videoOf(dig(record, @"attributes/editorialVideo")); }
-            continue;
-        }
-        if (!same) continue;
+        if (![album hasSuffix:@" - single"] && ([single isEqual:@YES] || (song.length && ![single isEqual:@NO]))) continue;
+        if (song.length ? !containsSong(record, song, artist)
+                        : ![coverKey(dig(record, @"attributes/artistName")) isEqual:artist]) continue;
         // Two releases containing this recording: motion availability cannot disambiguate them.
         ++*matches;
         if (song.length && *matches > 1) return nil;
         video = video ?: videoOf(dig(record, @"attributes/editorialVideo"));
     }
-    // Only a moving single counts: a still one could be a lead single that hides the album's identifier lookup.
-    if (!*matches && singles == 1 && singleVideo) { *matches = 1; return singleVideo; }
     return video;
 }
 
@@ -812,7 +789,7 @@ static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSU
         askCatalogJSON(url, YES, ^(NSDictionary *json, NSInteger status) {
             if (generation != sg_generation || !SGMotionAppleMusicOn()) { answer(nil, NO); return; }
             NSString *wanted = SGMotionNameKey(album);
-            NSMutableDictionary *albums = [NSMutableDictionary dictionary], *singles = [NSMutableDictionary dictionary];
+            NSMutableDictionary *albums = [NSMutableDictionary dictionary];
             NSArray *songs = json[@"data"];
             BOOL complete = status == 200 && [songs isKindOfClass:NSArray.class] && !json[@"next"];
             if (complete) for (id song in songs) {
@@ -820,19 +797,14 @@ static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSU
                 id related = dig(song, @"relationships/albums/data");
                 if (![related isKindOfClass:NSArray.class] || dig(song, @"relationships/albums/next")) { complete = NO; break; }
                 for (id record in related) {
-                    NSString *name = dig(record, @"attributes/name");
-                    // The edition-stripped key would join "Rich Man - Single" to "Rich Man - The 6th Mini Album":
-                    // a single needs the whole name.
-                    BOOL single = namedSingle(record) && [releaseKey(name) isEqual:releaseKey(album)];
-                    if (!single && ![dig(record, @"attributes/isSingle") isEqual:@NO]) continue;
-                    NSString *key = SGMotionNameKey(name);
-                    if (!single && (wanted.length && key.length ? ![key isEqual:wanted] : ![coverKey(name) isEqual:coverKey(album)])) continue;
+                    if (![dig(record, @"attributes/isSingle") isEqual:@NO]) continue;
+                    NSString *name = dig(record, @"attributes/name"), *key = SGMotionNameKey(name);
+                    if (wanted.length && key.length ? ![key isEqual:wanted] : ![coverKey(name) isEqual:coverKey(album)]) continue;
                     NSString *identifier = dig(record, @"id");
                     if (![identifier isKindOfClass:NSString.class] || !identifier.length) { complete = NO; break; }
-                    (single ? singles : albums)[identifier] = record;
+                    albums[identifier] = record;
                 }
             }
-            if (!albums.count) albums = singles;
             NSString *chosen = complete && albums.count == 1 ? albums.allKeys.firstObject : nil;
             SGLog(@"motion: %@ ISRC %@: %lu matching albums, %@", track, isrc, (unsigned long)albums.count,
                   chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"ambiguous" : @"no matching non-single album"));
@@ -850,8 +822,7 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
     setUp();
     id previous = sg_kept[[@"album\nbarcode\n" stringByAppendingString:uri]];
     if (previous && previous != NSNull.null) { done(previous); return; }
-    // "identifiers" misses were decided without the recording's single, so they are not read.
-    NSString *key = [@"album\nidentifiers2\n" stringByAppendingString:uri];
+    NSString *key = [@"album\nidentifiers\n" stringByAppendingString:uri];
     NSUInteger generation = sg_generation;
     lookUp(key, done, ^(void (^answer)(id, BOOL)) {
         SGSpotifyMetadataRequestAllowConstrained(path, nil, SGFlag(SGKeyMotionLowData, NO), ^(NSData *data, NSInteger status, NSError *error) {
@@ -892,23 +863,14 @@ static id mergeRecord(id a, id b) {
     return NSNull.null;
 }
 
-// A full page may have left out the album beside its single, so only a complete result may fall back to one.
 static SGRowVideo rowVideoIndex(NSArray *records, NSString *artist, NSString *album, NSString **exactVideo, BOOL *identified) {
     *identified = NO;
     NSMutableArray *candidates = [NSMutableArray array], *videos = [NSMutableArray array];
-    BOOL single = [album hasSuffix:@" - single"], complete = records.count < kCoverSearchLimit;
-    NSString *singleVideo = nil;
-    NSUInteger singles = 0;
+    BOOL single = [album hasSuffix:@" - single"];
     for (id record in records) {
-        if (!sameRelease(record, album)) continue;
+        if (![releaseKey(dig(record, @"attributes/name")) isEqual:album]) continue;
         id isSingle = dig(record, @"attributes/isSingle");
-        if (!single && [isSingle isEqual:@YES]) {
-            if (complete && namedSingle(record) && [coverKey(dig(record, @"attributes/artistName")) isEqual:artist]) {
-                singles++;
-                singleVideo = videoOf(dig(record, @"attributes/editorialVideo"));
-            }
-            continue;
-        }
+        if (!single && [isSingle isEqual:@YES]) continue;
         NSString *video = videoOf(dig(record, @"attributes/editorialVideo"));
         if ([coverKey(dig(record, @"attributes/artistName")) isEqual:artist]) {
             *identified = YES;
@@ -917,10 +879,6 @@ static SGRowVideo rowVideoIndex(NSArray *records, NSString *artist, NSString *al
         if (!single && ![isSingle isEqual:@NO]) continue;
         [candidates addObject:record];
         [videos addObject:video ?: (id)NSNull.null];
-    }
-    if (!*identified && !candidates.count && singles == 1 && singleVideo) {
-        *identified = YES;
-        *exactVideo = singleVideo;
     }
     if (*identified || !candidates.count) return nil;
     NSMutableDictionary *exact = [NSMutableDictionary dictionary], *featured = [NSMutableDictionary dictionary];
@@ -955,7 +913,7 @@ static SGRowVideo rowVideoIndex(NSArray *records, NSString *artist, NSString *al
 
 void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(SGMotionRowMatch), void (^found)(NSURL *)) {
     NSUInteger generation = sg_generation;
-    NSString *albumKey = coverKey(album);
+    NSString *albumKey = releaseKey(album);
     songCoverRecords(album, ^(NSArray *records) {
         if (!records || generation != sg_generation) { ready(nil); return; }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -989,14 +947,14 @@ void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pix
 // Cache values: URL for a clip, @NO for an identified release without video, nil for no match.
 static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString *song, NSString *albumURI, NSString *trackURI, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     SGMotionTicket *ticket = [SGMotionTicket new];
-    NSString *artistKey = coverKey(artist), *albumKey = coverKey(album), *songKey = coverKey(song);
+    NSString *artistKey = coverKey(artist), *albumKey = releaseKey(album), *songKey = coverKey(song);
     if (!artistKey.length || !albumKey.length) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (!ticket.cancelled) done(nil, NO); });
         return ticket;
     }
     // A legacy URL (or miss) was decided with editions collapsed and no track evidence; a "2" miss could
-    // be an EP that Apple Music names with " - EP", a "3" miss a single it names with " - Single".
-    NSString *base = [NSString stringWithFormat:@"album\n4\n%@\n%@", artistKey, albumKey];
+    // be an EP that Apple Music names with " - EP".
+    NSString *base = [NSString stringWithFormat:@"album\n3\n%@\n%@", artistKey, albumKey];
     setUp();
     BOOL needsSong = songKey.length && (!sg_kept[base] || sg_kept[base] == NSNull.null);
     // Older song-level misses could also mean the track identified a release without video, so only the clips
@@ -1005,7 +963,7 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     if (needsSong) {
         NSString *song = [NSString stringWithFormat:@"%@\n%@\n%@", artistKey, albumKey, songKey];
         NSString *older = [@"album\nsong4\n" stringByAppendingString:song];
-        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong7\n" stringByAppendingString:song];
+        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong6\n" stringByAppendingString:song];
     }
     NSUInteger generation = sg_generation;
     // The remote file is what is kept: the store may drop its local copy later in the launch.
@@ -1038,12 +996,8 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         };
         BOOL (^select)(NSArray *, BOOL) = ^BOOL(NSArray *records, BOOL final) {
             NSUInteger albums, songs = 0;
-            NSString *video = coverVideo(records, albumKey, artistKey, nil, NO, &albums);
-            if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, NO, &songs);
-            if (!albums && !songs && final) {
-                video = coverVideo(records, albumKey, artistKey, nil, YES, &albums);
-                if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, YES, &songs);
-            }
+            NSString *video = coverVideo(records, albumKey, artistKey, nil, &albums);
+            if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, &songs);
             if (!albums && !songs && !final) return NO;
             resolveVideo(video, records != nil, albums != 0, songs == 1);
             return YES;

@@ -63,8 +63,7 @@ static void scrolled(UIScrollView *scrollView) {
 - (void)setContentOffset:(CGPoint)offset {
     %orig;
     NSNumber *inside = objc_getAssociatedObject(self, &kInContainer);
-    // A wrapper can join the tab page mid-fling, without another pan to clear its cached NO.
-    if (!inside || (!inside.boolValue && self.isDecelerating)) {
+    if (!inside) {
         inside = inContainer(self) ? @YES : @NO;
         objc_setAssociatedObject(self, &kInContainer, inside, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }

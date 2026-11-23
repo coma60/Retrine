@@ -113,10 +113,6 @@ com.apple.Accessibility ReduceMotionEnabled` in the simulator) the bar and the c
 
     cc -I../../tweak/Sources/Redesigned/Navbar minimize-check.c -o build/minimize-check && build/minimize-check
 
-`reparent-drag` moves a scroll view's wrapper onto and off the tab page before separate drags; only the
-on-page drag should minimize the bar. `reparent-fling` starts outside the page and moves the wrapper
-onto it during deceleration; further travel on the page should minimize the bar without a new touch.
-
 `jam` plays a Jam: a strip under the class name of Spotify's (a SwiftUI hosting view of
 `Jam_AttachmentsImpl.JamHatElement`, 44 pt) over the card, both in a view painted the album color too,
 the bar 44 pt taller, and the strip gone again at 3.5 s. The log then lists the bar's glass panes. The

@@ -217,19 +217,6 @@ static SGRCoverReading *redReading;
 static NSMutableArray *headerRequests, *rowRequests;
 static void (^headerResult)(NSURL *);
 static void (^rowResult)(NSURL *);
-static void (^identifierResult)(NSURL *);
-static NSString *const fixtureURI = @"spotify:album:FixtureAlbum";
-static NSMutableArray<NSURL *> *shownClips;
-
-@interface SGAlbumQueuePage : NSObject @end
-@implementation SGAlbumQueuePage
-+ (NSString *)albumURI:(UIViewController *)controller { return controller.restorationIdentifier; }
-@end
-
-void SGRAlbumTestIdentifierCover(NSString *uri, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
-    HARNESS_CHECK([uri isEqual:fixtureURI] && [album isEqual:@"Fixture Album"]);
-    identifierResult = [done copy];
-}
 
 @interface CoverReadyPlayerLayer : AVPlayerLayer @end
 @implementation CoverReadyPlayerLayer
@@ -302,36 +289,6 @@ static UICollectionViewCell *mountTrack(Page p, MotionRows *rows) {
     UICollectionViewCell *cell = list.visibleCells.firstObject;
     HARNESS_CHECK(cell);
     return cell;
-}
-
-static void checkMotionIdentifiers(BOOL rowMatches, BOOL rowFirst) {
-    headerRequests = [NSMutableArray array]; rowRequests = [NSMutableArray array];
-    shownClips = [NSMutableArray array];
-    identifierResult = nil; rowResult = nil;
-    Page p = makePage(solidDarkCover());
-    __attribute__((objc_precise_lifetime)) UIViewController *owner = [UIViewController new];
-    owner.restorationIdentifier = fixtureURI;
-    owner.view = p.page;
-    __attribute__((objc_precise_lifetime)) MotionRows *rows = [MotionRows new];
-    UICollectionViewCell *cell = mountTrack(p, rows);
-    NSString *credit = rowMatches ? @"IU" : @"현지화된 이름";
-    UIView *row = cell.contentView.subviews.firstObject.subviews.firstObject;
-    ((UILabel *)row.subviews.lastObject.subviews.firstObject).text = credit;
-    [p.hero playMotionForArtist:@"Artist" album:@"Fixture Album"];
-    HARNESS_CHECK(headerResult);
-    headerResult(nil);
-    [cell layoutSubviews]; [cell layoutIfNeeded];
-    HARNESS_CHECK([rowRequests.lastObject[0] isEqual:credit] && (rowResult != nil) == rowMatches);
-    if (!identifierResult) HARNESS_FAIL(@"No identifier lookup alongside the candidate row matcher");
-    NSURL *idClip = [NSURL fileURLWithPath:@"/fixture-identifiers.mov"];
-    NSURL *rowClip = [NSURL fileURLWithPath:@"/fixture-row.mov"];
-    if (rowFirst) rowResult(rowClip);
-    identifierResult(idClip);
-    if (rowMatches && !rowFirst) rowResult(rowClip);
-    HARNESS_CHECK([p.hero valueForKey:@"player"]);
-    HARNESS_CHECK([shownClips isEqual:@[rowFirst ? rowClip : idClip]]);
-    NSLog(@"[harness] PASS motion: %@ shown once (%@)", shownClips.firstObject.lastPathComponent,
-          rowMatches ? @"both sources replied" : @"no row matched");
 }
 
 static void checkMotionRow(void) {
@@ -424,8 +381,6 @@ static void checkMotionRow(void) {
 }
 
 void SGRAlbumTestPoster(NSURL *file, void (^done)(UIImage *)) {
-    // Each real showMotion: asks for its clip's poster when adaptive cover is on.
-    if (shownClips) { [shownClips addObject:file]; return; }
     if (!stillTest()) { SGMotionPoster(file, done); return; }
     [posters addObject:[done copy]];
 }
@@ -780,12 +735,6 @@ int main(int argc, char *argv[]) {
 #if __has_include("Redesigned/Kit/SGRCoverRead.h")
         if ([mode isEqualToString:@"still-swap"]) { checkStillOwnership(); return 0; }
         if ([mode isEqualToString:@"motion-row"]) { checkMotionRow(); return 0; }
-        if ([mode isEqual:@"motion-identifiers"]) {
-            checkMotionIdentifiers(NO, NO);
-            checkMotionIdentifiers(YES, YES);
-            checkMotionIdentifiers(YES, NO);
-            return 0;
-        }
         if ([mode isEqualToString:@"cache-reuse"]) { checkRenderCacheReuse(); return 0; }
         if ([mode isEqualToString:@"on"]) {
             // Sharp from and to, as shares of the cover's side: any picture that is not solid between 60% and 90%; a

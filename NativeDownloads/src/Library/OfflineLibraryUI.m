@@ -860,11 +860,10 @@ static NSString *SAPOfflineReleaseKey(NSDictionary *row) {
         for (NSDictionary *row in rows) { NSString *uri = row[@"uri"]; if (all) [self.state.selectedURIs removeObject:uri]; else if (uri) [self.state.selectedURIs addObject:uri]; }
         [self.state refreshSelection];return;
     }
-    // A release page opens nothing. A page made and dropped here would deallocate at level 0 and end the manager.
-    if (self.level > 1) return;
     SAPOfflineLibraryController *next = SAPOfflineLibraryController.new; next.state = self.state;next.artistKey=self.artistKey;
     if (self.level == 0) { NSDictionary *artist = [self artists][indexPath.row]; next.level = 1; next.pageTitle = artist[@"name"]; next.artistKey = artist[@"key"]; next.scope = artist[@"tracks"]; next.releaseSections = [next buildReleaseSections]; }
-    else { NSDictionary *release = self.releaseSections[indexPath.section][@"releases"][indexPath.row]; next.level = 2; next.pageTitle = release[@"name"]; next.releaseKey = release[@"key"]; next.scope = release[@"tracks"]; }
+    else if (self.level == 1) { NSDictionary *release = self.releaseSections[indexPath.section][@"releases"][indexPath.row]; next.level = 2; next.pageTitle = release[@"name"]; next.releaseKey = release[@"key"]; next.scope = release[@"tracks"]; }
+    else return;
     next.title = next.pageTitle; [self.navigationController pushViewController:next animated:YES];
 }
 @end

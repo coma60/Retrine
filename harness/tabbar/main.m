@@ -1162,31 +1162,12 @@ static void after(double seconds, dispatch_block_t block) {
     // `away` one there from the start sliding away at 1.5 s, `cycle` in at 1.5 s and out at 4.5 s.
     NSArray<NSString *> *args = NSProcessInfo.processInfo.arguments;
     NSString *mode = args.count > 1 ? args[1] : @"none";
-    BOOL reparentFling = [mode isEqualToString:@"reparent-fling"];
-    if (reparentFling || [mode isEqualToString:@"reparent-drag"]) {
+    if ([mode isEqualToString:@"reparent-drag"]) {
         UIView *wrapper = [[UIView alloc] initWithFrame:CGRectMake(0, 100, 380, 560)];
         UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:wrapper.bounds];
         scroll.contentSize = CGSizeMake(380, 3000);
         [wrapper addSubview:scroll];
         [chrome.view addSubview:wrapper];
-        if (reparentFling) {
-            after(.7, ^{
-                fling(chrome, 250);
-                after(.22, ^{
-                    HARNESS_CHECK(scroll.isDecelerating && !SGRTabBarMinimized());
-                    [chrome.tabs.view addSubview:wrapper];
-                    CGFloat start = scroll.contentOffset.y;
-                    after(.6, ^{
-                        CGFloat travel = scroll.contentOffset.y - start;
-                        HARNESS_CHECK(travel > 24);
-                        if (!SGRTabBarMinimized()) HARNESS_FAIL(@"bar still expanded after %.1f pt on tab", travel);
-                        NSLog(@"[harness] PASS bar minimized after %.1f pt on tab during fling", travel);
-                        exit(0);
-                    });
-                });
-            });
-            return;
-        }
         after(.7, ^{
             scroll.contentOffset = CGPointMake(0, 1);
             [chrome.tabs.view addSubview:wrapper];

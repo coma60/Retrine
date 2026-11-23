@@ -2837,7 +2837,7 @@ static NSString *cardClipping(UIView *card) {
     CGRect bounds = CGRectInset(card.bounds, -0.5, -0.5);
     NSMutableArray<NSString *> *wrong = [NSMutableArray array];
     NSMutableDictionary<NSString *, NSValue *> *frames = [NSMutableDictionary dictionary];
-    for (NSString *name in @[@"_cover", @"_chip", @"_title", @"_artist", @"_more", @"_star", @"_progress", @"_elapsed", @"_remaining",
+    for (NSString *name in @[@"_cover", @"_chip", @"_title", @"_artist", @"_more", @"_progress", @"_elapsed", @"_remaining",
                              @"_shuffle", @"_previous", @"_play", @"_next", @"_repeat", @"_demoButton"]) {
         UIView *view = [card valueForKey:name];
         if (view.hidden || view.alpha < 0.01) continue;
@@ -2857,9 +2857,6 @@ static NSString *cardClipping(UIView *card) {
     if (CGRectGetMaxY(upper) > CGRectGetMinY(at(@"_progress")) + 0.5) [wrong addObject:@"the cover or the words over the progress"];
     if (CGRectGetMaxY(CGRectUnion(at(@"_elapsed"), at(@"_remaining"))) > CGRectGetMinY(transport) + 0.5) [wrong addObject:@"the times over the transport row"];
     if (CGRectGetMaxX(words) > CGRectGetMinX(at(@"_more")) + 0.5) [wrong addObject:@"the words under the ⋯"];
-    // Star add button on: the player's star stands before the ⋯, and the words end before it.
-    if (frames[@"_star"] && CGRectGetMaxX(words) > CGRectGetMinX(at(@"_star")) + 0.5) [wrong addObject:@"the words under the star"];
-    if (frames[@"_star"] && CGRectGetMaxX(at(@"_star")) > CGRectGetMinX(at(@"_more")) + 0.5) [wrong addObject:@"the star under the ⋯"];
     if (CGRectIntersectsRect(CGRectInset(at(@"_cover"), 0.5, 0.5), words)) [wrong addObject:@"the cover over the words"];
     NSArray<NSString *> *row = @[@"_shuffle", @"_previous", @"_play", @"_next", @"_repeat"];
     for (NSUInteger i = 0; i + 1 < row.count; i++) {
@@ -3415,15 +3412,10 @@ static void installSettingsWorkProbes(void) {
         NSMutableArray<NSString *> *wrong = [NSMutableArray array];
         for (NSNumber *width in @[@288, @370]) {
             for (UIContentSizeCategory category in @[UIContentSizeCategoryLarge, UIContentSizeCategoryAccessibilityExtraExtraExtraLarge]) {
-                // With Star add button off and on: the card draws the star the player shows (issue #44).
-                for (NSNumber *star in @[@NO, @YES]) {
-                [NSUserDefaults.standardUserDefaults setBool:star.boolValue forKey:@"spotifyglass.redesign.player.starAdd"];
                 UIView *probe = [[NSClassFromString(@"SGRPlayerPreview") alloc] initWithFrame:CGRectMake(-2000, 0, width.doubleValue, 236)];
                 [self.window addSubview:probe];
                 probe.traitOverrides.preferredContentSizeCategory = category;
                 [probe updateTraitsIfNeeded];
-                UIView *starGlyph = [probe valueForKey:@"_star"];
-                if (starGlyph.hidden == star.boolValue) [wrong addObject:[NSString stringWithFormat:@"card %@ %@ star %@ while the setting is %@", width, category, starGlyph.hidden ? @"hidden" : @"shown", star.boolValue ? @"on" : @"off"]];
                 CGFloat least = [[probe valueForKey:@"minimumHeight"] doubleValue], compact = MAX(least, 236);
                 // Include shorter screens' expanded heights as well as the full 480 pt preview.
                 NSMutableArray<NSNumber *> *sizes = [NSMutableArray arrayWithObject:@(least)];
@@ -3433,12 +3425,10 @@ static void installSettingsWorkProbes(void) {
                 for (NSNumber *height in sizes) {
                     probe.frame = CGRectMake(-2000, 0, width.doubleValue, height.doubleValue);
                     NSString *clipping = cardClipping(probe);
-                    if (clipping) [wrong addObject:[NSString stringWithFormat:@"card %@x%@ at %@ star %@: %@", width, height, category, star, clipping]];
+                    if (clipping) [wrong addObject:[NSString stringWithFormat:@"card %@x%@ at %@: %@", width, height, category, clipping]];
                 }
                 if (least > 236) [wrong addObject:[NSString stringWithFormat:@"card %@ %@ needs %.0f compact", width, category, least]];
                 [probe removeFromSuperview];
-                }
-                [NSUserDefaults.standardUserDefaults removeObjectForKey:@"spotifyglass.redesign.player.starAdd"];
 
                 UITableViewCell *cell = [[NSClassFromString(@"SGRPlayerButtonsCell") alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
                 cell.frame = CGRectMake(-2000, 0, width.doubleValue, 44);

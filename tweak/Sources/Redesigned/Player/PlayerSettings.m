@@ -208,8 +208,7 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     UIImageView *_chipGlyph;
     UILabel *_chipLabel;
     SGMarqueeLabel *_title, *_artist;
-    UIImageView *_more, *_star;   // the star add button, before the ⋯, while Star add button is on
-    BOOL _starAdd;
+    UIImageView *_more;
     UIView *_progress, *_progressFill;
     UILabel *_elapsed, *_remaining;
     UIImageView *_shuffle, *_previous, *_play, *_next, *_repeat;
@@ -287,11 +286,9 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     _artist = [SGMarqueeLabel new];
     _artist.textColor = SGRSecondary();
     _more = glyphView(@"ellipsis", kMoreGlyph, UIImageSymbolWeightSemibold);
-    _star = glyphView(@"star", kMoreGlyph, UIImageSymbolWeightSemibold);
     [_canvas addSubview:_title];
     [_canvas addSubview:_artist];
     [_canvas addSubview:_more];
-    [_canvas addSubview:_star];
 
     // The player's slider as it is drawn at rest: a track, and in it a fill up to where the song is.
     _progress = [UIView new];
@@ -440,8 +437,6 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     _shuffle.alpha = _hideShuffle ? 0 : 1;
     _repeat.alpha = _hideRepeat ? 0 : 1;
     _chip.hidden = _hideVideo;
-    _starAdd = SGHidden(SGRKeyPlayerStarAdd);
-    _star.hidden = !_starAdd;
     [self setNeedsLayout];
 }
 
@@ -660,9 +655,7 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     CGFloat chipWidth = _chipWidth;
 
     // Expanded: the words across under the cover, which is as large a square as fits between them and the header.
-    // The words end before the ⋯, and before the star too while it stands in front of the ⋯.
-    CGFloat trailing = kMoreSlot * (_starAdd ? 2 : 1) + 8;
-    CGFloat textWidth = inner - trailing;
+    CGFloat textWidth = inner - kMoreSlot - 8;
     CGRect bigArtist = CGRectMake(p, textBottom - artistHeight, textWidth, artistHeight);
     CGRect bigTitle = CGRectMake(p, CGRectGetMinY(bigArtist) - titleHeight, textWidth, titleHeight);
     CGRect bigChip = CGRectMake(p, CGRectGetMinY(bigTitle) - chipGap - chipHeight, MIN(chipWidth, textWidth), chipHeight);
@@ -673,7 +666,7 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     // Compact: the cover beside the words, the two centered on each other.
     CGFloat rowHeight = MAX(kCompactCover, textHeight), rowTop = textBottom - rowHeight;
     CGRect smallCover = CGRectMake(p, rowTop + round((rowHeight - kCompactCover) / 2), kCompactCover, kCompactCover);
-    CGFloat textX = CGRectGetMaxX(smallCover) + 12, smallWidth = MAX(0, w - p - trailing - textX);
+    CGFloat textX = CGRectGetMaxX(smallCover) + 12, smallWidth = MAX(0, w - p - kMoreSlot - 8 - textX);
     CGFloat textTop = rowTop + round((rowHeight - textHeight) / 2);
     CGRect smallChip = CGRectMake(textX, textTop, MIN(chipWidth, smallWidth), chipHeight);
     CGRect smallTitle = CGRectMake(textX, textTop + chipHeight + chipGap, smallWidth, titleHeight);
@@ -703,7 +696,6 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     _title.frame = mixRect(smallTitle, bigTitle, words);
     _artist.frame = mixRect(smallArtist, bigArtist, words);
     _more.center = CGPointMake(w - p - kMoreSlot / 2, round((CGRectGetMinY(_title.frame) + CGRectGetMaxY(_artist.frame)) / 2));
-    _star.center = CGPointMake(_more.center.x - kMoreSlot, _more.center.y);
 }
 
 - (CGFloat)minimumHeight {

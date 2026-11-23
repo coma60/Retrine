@@ -52,16 +52,17 @@ static const CGFloat kFloor = 0.0127, kFloorSoft = 4;
 // values) over a painting of blue, teal, beige and green it stood at 0.31 to 0.41, where the blur averaged the colors to a
 // gray of 0.13 to 0.18, and over an almost wholly red cover at 0.39 to 0.43, where the field stood at 0.60 to 0.73. Each
 // pixel's saturation is drawn toward kSatTarget along s' = kSatTarget * (s / kSatTarget)^kSatPull (0.13 to 0.30, 0.65 to
-// 0.45), its hue and lightness kept; a gray pixel stays gray.
+// 0.45), its hue and lightness kept; a gray pixel stays gray. kSatTarget is the Saturation slider's standard: the slider
+// scales the target with it (0% gray, 250% about 0.9), so it still makes the field grayer or more vivid.
 static const CGFloat kSatTarget = 0.4, kSatPull = 0.25;
 
-// HLS saturation of the encoded color `e` (0 to 1) drawn toward kSatTarget, lightness and hue kept.
-static void pullSaturation(CGFloat e[3]) {
+// HLS saturation of the encoded color `e` (0 to 1) drawn toward `target`, lightness and hue kept.
+static void pullSaturation(CGFloat e[3], CGFloat target) {
     CGFloat most = MAX(e[0], MAX(e[1], e[2])), least = MIN(e[0], MIN(e[1], e[2]));
     CGFloat light = (most + least) / 2, spread = most - least;
     if (spread < 1e-4 || light <= 0 || light >= 1) return;
     CGFloat sat = light <= 0.5 ? spread / (most + least) : spread / (2 - most - least);
-    CGFloat want = MIN(1, kSatTarget * pow(sat / kSatTarget, kSatPull));
+    CGFloat want = target <= 0 ? 0 : MIN(1, target * pow(sat / target, kSatPull));
     // The same hue at the new saturation: each channel keeps its place between the least and the most.
     CGFloat newSpread = want * (light <= 0.5 ? 2 * light : 2 - 2 * light);
     CGFloat newLeast = light - newSpread / 2;
@@ -145,6 +146,8 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGImageRelease(cg);
     unsigned char *pixels = CGBitmapContextGetData(bitmap);
     CGFloat ceiling = contrast ? kCeilingContrast : kCeiling, lowerSum = 0;
+    // The Saturation slider against its standard moves the saturation the field is held near (kSatTarget).
+    CGFloat satTarget = kSatTarget * saturation / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
     size_t lowerCount = 0, lowerRow = (size_t)floor(height * kLowerFrom);
     for (size_t i = 0; i < width * height; i++) {
         unsigned char *p = pixels + i * 4;
@@ -165,7 +168,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
             CGFloat v = MIN(1, gray ? floored : rgb[c] * cap);
             encoded[c] = v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055;
         }
-        pullSaturation(encoded);
+        pullSaturation(encoded, satTarget);
         for (int c = 0; c < 3; c++) p[c] = floor(255 * encoded[c]);
         p[3] = 255;
     }

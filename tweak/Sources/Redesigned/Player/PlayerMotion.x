@@ -179,9 +179,14 @@ static const BOOL kSeamBlur = NO;
 // kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, from
 // kSofterFrom to kSofterWhole, held kSofterReach points below the edge and gone into the veil kSofterFade points
 // further down. Radii in points; each copy is rendered at its scale, as it is blurred anyway.
-static const CGFloat kSoftFrom = 0.78, kSoftWhole = 0.88, kSoftRadius = 8, kSoftScale = 0.5;
-static const CGFloat kSofterFrom = 0.85, kSofterWhole = 0.98, kSofterRadius = 26, kSofterScale = 0.25;
-static const CGFloat kSofterReach = 90, kSofterFade = 150;
+// Against the Music app's player over two animated covers (402 by 874 pt, the same frames), the cover lost its detail
+// about 24 pt (0.045 of its height) higher than the Music app's, which stays sharp to 0.84 and is soft by 0.92: both
+// masks start that much lower. The mirror held 90 pt and fading over 150 more stood as the cover's own shapes, light
+// and dark patches, behind the times and the controls, where the Music app's colors run on smooth and dim steadily to
+// the foot: it is held 30 pt, gone into the veil 110 pt further down, and blurred more (32 against 26).
+static const CGFloat kSoftFrom = 0.825, kSoftWhole = 0.925, kSoftRadius = 8, kSoftScale = 0.5;
+static const CGFloat kSofterFrom = 0.895, kSofterWhole = 1.025, kSofterRadius = 32, kSofterScale = 0.25;
+static const CGFloat kSofterReach = 30, kSofterFade = 110;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it

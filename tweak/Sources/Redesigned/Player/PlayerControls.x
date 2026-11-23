@@ -664,8 +664,9 @@ static void watchSlider(UIView *host) {
 static const CGFloat kScrubTimeDrop = 3;
 // The Music app keeps its time row clear of the bar: the times, and the audio quality badge between them, stand this
 // much lower than Spotify lays them out, by a translation of theirs, so Spotify's layout stays underneath.
-// 6, measured against the Music app's player at 3x: the digits stood 2 pt lower than its own at 8.
-static const CGFloat kTimesDrop = 6;
+// 6, measured against the Music app's player at 3x: the digits stood 2 pt lower than its own at 8. Against it again over
+// two animated covers (402 by 874 pt), the digits and the badge stood 1.3 pt higher than its own at 6: 7.3.
+static const CGFloat kTimesDrop = 7.3;
 static const NSUInteger kScrubUnitReach = 6;
 static char kScrubTakeKey, kScrubTakeLabelKey, kScrubRemainingKey, kScrubRemainingLabelKey, kScrubColorKey;
 static __weak UISlider *sg_scrubSlider;

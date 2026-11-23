@@ -75,7 +75,9 @@ static const CGFloat kControlsShare = 0.3;
 // unless named: from the artist's last line to the progress bar, from the bar to the play button, and from the play
 // button to the volume row (SGRPlayerVolumeToRow goes on to the footer row). Spotify's own were 27, 71 and 55.
 // Re-measured against the Music app's player at 3x: 35, 90 and 92 (with SGRPlayerVolumeToRow 50 on to the footer row).
-static const CGFloat kArtistToBar = 35, kBarToPlay = 90, kPlayToVolume = 92;
+// Against the Music app's player over two animated covers (402 by 874 pt, both titles and artists the same text), the
+// artist's line ended 2 pt lower over the bar than its own, with the bar, the controls and the rows below in place: 37.
+static const CGFloat kArtistToBar = 37, kBarToPlay = 90, kPlayToVolume = 92;
 
 // "airplayaudio" is the name iOS 16 knows; iOS 18 calls it airplay.audio and keeps this one as its alias.
 static NSString *const kConnectSymbol = @"airplayaudio", *const kQueueSymbol = @"list.bullet";

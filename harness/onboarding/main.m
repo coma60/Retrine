@@ -13,11 +13,14 @@
 #import "App/Onboarding/Onboarding.h"
 #import "Shared/Lyrics/Lyrics.h"
 #import "Core/SGPrefs.h"
+#import "Core/SGLocalize.h"
+#import "Settings/SGModPage.h"
+#import "Shared/SponsorBlock/SponsorBlock.h"
 #import <objc/runtime.h>
 
 static BOOL sg_old;
 static NSDictionary *sg_installInfo;
-static NSMutableArray<NSString *> *sg_warningTitles;
+void CheckSponsorBlockScreens(UIWindow *window);
 
 @interface NSBundle (SGInstallFixture)
 - (id)sg_installObjectForInfoDictionaryKey:(NSString *)key;
@@ -44,11 +47,6 @@ void SGShowSigningFixIfPending(void) {}
 // The environment check's install questions are answered from this app's fixture below.
 #import "Shared/LiveActivity/LiveActivity.h"
 #import "Shared/Haptics/Haptics.h"
-// Settings/SGModPage.m, for the Mod Settings rows, which the harness does not show.
-SGModRow *SGWarningRow(NSString *title, NSString *subtitle, void (^action)(void)) {
-    [sg_warningTitles addObject:title];
-    return (SGModRow *)[NSObject new];
-}
 // Shared/Lyrics/KaraokeSource.x's look for EeveeSpotify, by the loaded image's name alone.
 BOOL SGEeveeSpotifyInjected(void) {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -76,18 +74,16 @@ static int checkInstallWarnings(void) {
     int result = 0;
     for (NSUInteger i = 0; i < installs.count; i++) {
         sg_installInfo = installs[i];
-        sg_warningTitles = [NSMutableArray array];
-        SGEnvironmentWarningRows();
-        BOOL warned = [sg_warningTitles containsObject:@"Installed without the app changes"];
+        NSArray *titles = [SGEnvironmentWarningRows() valueForKey:@"title"];
+        BOOL warned = [titles containsObject:SGL(@"settings.environment.without_app_changes.title", @"Installed without the app changes")];
         if (warned != expectedWarnings[i].boolValue) {
-            NSLog(@"FAIL: %@ must %@show the app-changes warning",
-                  i == 0 ? @"IPA with extension removed" : @"Hand-injected .deb", i == 0 ? @"not " : @"");
+            NSLog(@"FAIL: %@ must %@show the app-changes warning; actual rows %@",
+                  i == 0 ? @"IPA with extension removed" : @"Hand-injected .deb", i == 0 ? @"not " : @"", titles);
             result = 1;
             break;
         }
     }
     sg_installInfo = nil;
-    sg_warningTitles = nil;
     method_exchangeImplementations(original, fixture);
     if (!result) NSLog(@"PASS: stripped IPA is quiet; hand-injected .deb gets the app-changes warning");
     return result;
@@ -120,6 +116,10 @@ static int checkInstallWarnings(void) {
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = home;
     [self.window makeKeyAndVisible];
+    if ([arguments containsObject:@"sponsorblock-check"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ CheckSponsorBlockScreens(self.window); });
+        return;
+    }
 
     if ([arguments containsObject:@"environment"]) {
         [NSUserDefaults.standardUserDefaults removeObjectForKey:@"spotifyglass.environment.told"];

@@ -15,3 +15,8 @@ seconds in, which shows the note under the cards: what Legacy goes without, or b
 risks. `whatsnew` puts the sheet up instead. `environment` loads a stand-in `EeveeSpotify.dylib` from the
 app and runs the install check, which finds it and the harness's own version (1.0, not Spotify's) and says
 both in one alert about five seconds in.
+
+`sh harness/onboarding/sponsorblock-check.sh` builds into a temporary directory and runs
+the environment check and the English/Korean SponsorBlock screens on its own simulator.
+It renders the settings and category rows, checks the welcome switch layout and default,
+and finishes the tour to verify the opt-in is persisted separately from Premium.

@@ -63,6 +63,7 @@
 #import <dlfcn.h>
 #import "Redesigned/Kit/SGRTokens.h"
 #import "../harness-fail.h"
+#import "../sponsorblock/markers-check.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdlib.h>
@@ -1185,6 +1186,8 @@ static void loadLyrics(void) {
             HARNESS_CHECK(SGRNowPlayingArtwork(NULL,NULL));
             [host layoutIfNeeded]; // Consume only an invalidation caused by artwork arrival.
             HARNESS_CHECK(SGRPlayerTwoColumns());
+            [self expectFooterRowWithQueueStandIn:YES];
+            HARNESS_CHECK(!self->_failures);
             NSLog(@"[harness] late-wide passed"); exit(0);
         });
         return YES;
@@ -1872,6 +1875,7 @@ static void loadLyrics(void) {
     else if ([scenario() isEqualToString:@"preview"]) [self runPreviewChecks];
     else if ([scenario() isEqualToString:@"seek"]) [self runSeekChecks];
     else if ([scenario() isEqualToString:@"timerow"]) [self performSelector:@selector(runTimeRowChecks) withObject:nil afterDelay:1];
+    else if ([scenario() hasPrefix:@"sponsorblock"]) [self performSelector:@selector(runSponsorBlockChecks) withObject:nil afterDelay:1];
     else if ([scenario() isEqualToString:@"volumebar"]) [self performSelector:@selector(runVolumeBarChecks) withObject:nil afterDelay:1];
     else if ([scenario() isEqualToString:@"visualiser"]) [self runVisualiserChecks];
     else if ([scenario() isEqualToString:@"autoviz"]) [self runAutoVisualiserChecks];
@@ -4804,6 +4808,31 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
 // Spotify's bar, with Spotify reporting High (bitrateLevel 3): the Music app's measures (its player, 2026-11 screenshot:
 // the digits 14pt under the bar, the badge 9.5pt under it with its text on the times' baseline), the redesign's words
 // and details, the bar translucent and lit whole while a finger scrubs; then the native look's badge, as it was.
+// SponsorBlock's marks on the redesign's bar (harness/sponsorblock/markers-check.m): Spotify's bar in the duration unit,
+// drawn translucent by the unit's layout, scrubbed in code with animations off so the drawn window is the end state.
+- (void)runSponsorBlockChecks {
+    UIViewController *durationUnit = nil;
+    for (UIViewController *candidate in _units) {
+        if ([candidate isKindOfClass:_TtC20NowPlaying_ModesImpl19DurationElementUnit.class]) durationUnit = candidate;
+    }
+    HARNESS_CHECK(durationUnit != nil);
+    UIView *unit = durationUnit.view;
+    unit.subviews.firstObject.hidden = YES; // the launch's drawn stand-in for the bar
+    NSArray<UILabel *> *labels;
+    UISlider *slider = spotifyBar(unit, &labels);
+    [durationUnit viewDidLayoutSubviews];
+    [unit layoutIfNeeded];
+    NSString *shots = NSProcessInfo.processInfo.environment[@"HARNESS_SHOTS"] ?: NSTemporaryDirectory();
+    NSUInteger wrong = SBMarksRun(slider, @"redesign", ^(BOOL dragging) {
+        [UIView setAnimationsEnabled:NO];
+        UITouch *none = nil;
+        if (dragging) [slider beginTrackingWithTouch:none withEvent:nil];
+        else [slider endTrackingWithTouch:none withEvent:nil];
+        [UIView setAnimationsEnabled:YES];
+    }, shots);
+    exit(wrong ? 1 : 0);
+}
+
 - (void)runTimeRowChecks {
     UIViewController *durationUnit = _units[2];
     UIView *unit = durationUnit.view;
@@ -6144,9 +6173,35 @@ static NSUInteger footerBandsIn(UIView *player) {
     return bands;
 }
 
+- (void)expectFooterRowWithQueueStandIn:(BOOL)standIn {
+    UIView *queue = SGRFindByIdentifier(_host, @"QueueButtonNowPlaying", NULL);
+    UIViewController *unit = unitOf(queue.superview.superview);
+    UIView *footer = unit.view;
+    CGRect ordinary = footer.bounds;
+    CGPoint center = queue.center;
+    // Labs' Agent button adds space below the row, not inside it.
+    for (NSNumber *extra in @[@44, @0]) {
+        CGRect bounds = ordinary;
+        bounds.size.height += extra.doubleValue;
+        footer.bounds = bounds;
+        queue.center = CGPointMake(center.x, center.y + (extra.doubleValue ? 0.25 : 0));
+        [unit viewDidLayoutSubviews];
+        UIView *lyrics = firstOfClass(footer, @"SGRGlyphButton");
+        UIView *placedQueue = SGRFindByIdentifier(footer, @"retrine.player.queue", NULL);
+        BOOL aligned = lyrics && lyrics != placedQueue && lyrics.center.y == 22;
+        if (standIn) aligned = aligned && placedQueue && placedQueue.center.y == lyrics.center.y;
+        [self expect:aligned step:extra.doubleValue ? @"Footer glyphs stay on the row above the prompt" : @"Footer glyphs stay centered without the prompt"
+              detail:[NSString stringWithFormat:@"Lyrics y %.2f, queue stand-in %@, footer height %.1f", lyrics.center.y,
+                      placedQueue ? @(placedQueue.center.y) : @"absent", bounds.size.height]];
+    }
+}
+
 - (void)runLook {
     UIImage *second = secondArtwork();
-    after(3, ^{ [self expectFooterTouches:@"a track"]; });
+    after(3, ^{
+        [self expectFooterTouches:@"a track"];
+        [self expectFooterRowWithQueueStandIn:NO];
+    });
     after(8, ^{
         serve(imageURI(@"ffff"), second, 0.25, NO);
         [self playTrack:@"spotify:track:harnessF" image:imageURI(@"ffff")];

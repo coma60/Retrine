@@ -4,6 +4,7 @@
 #import "Core/SGCore.h"
 #import "Core/SGDataRoot.h"
 #import "Shared/AdBlock/AdBlock.h"
+#import "Shared/SponsorBlock/SponsorBlock.h"
 #import "Shared/Lyrics/Lyrics.h"
 #import "Settings/SGPageStyle.h"
 #import "About.h"
@@ -14,7 +15,7 @@
 // here. What is left out belongs to this install rather than to its user's choices.
 static BOOL isSetting(NSString *key) {
     if (![key hasPrefix:@"spotifyglass."]) return NO;
-    if (SGPrivatePreferenceKey(key)) return NO;
+    if (SGPrivatePreferenceKey(key) || [key isEqual:SGKeySponsorBlockServer]) return NO;
     for (NSString *local in @[@"spotifyglass.adblock.counts", @"spotifyglass.privacy.counts", @"spotifyglass.update.",
                               @"spotifyglass.signing.", @"spotifyglass.onboarding.", @"spotifyglass.navbar.stock",
                               @"spotifyglass.redesign.navbar.stock", @"spotifyglass.automix.saved",

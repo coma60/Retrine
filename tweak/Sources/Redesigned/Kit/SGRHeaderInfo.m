@@ -843,7 +843,8 @@ static const NSUInteger kMeasuredWidths = 3;
     CGFloat width = self.bounds.size.width, inset = _beside ? 0 : kSide, text = MAX(0, width - 2 * inset);
     BOOL rtl = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     NSTextAlignment leading = rtl ? NSTextAlignmentRight : NSTextAlignmentLeft;
-    BOOL atLeading = _beside || _largeTitle;
+    // Only the column beside the cover is laid out from the leading edge; stacked, the artist's large name is centred too.
+    BOOL atLeading = _beside;
     CGFloat content = [self contentHeightForWidth:width];
     CGFloat y = round(self.bounds.size.height - SGRHeaderInfoBottom - content);
     if (self.pinnedTop > 0 && self.pinnedTop + content <= self.bounds.size.height) y = round(self.pinnedTop);

@@ -384,7 +384,7 @@ static void applyHeader(UIView *header, BOOL full) {
         info.trailingOffSymbol = @"person.badge.plus";
         info.trailingOnSymbol = @"person.fill.checkmark";
         info.roundPlay = roundPlay();
-        // The Music app's artist name: large and at the leading edge, on the bottom of the photo.
+        // The Music app's artist name on iOS 26: large and centered, on the bottom of the photo.
         info.largeTitle = YES;
         objc_setAssociatedObject(container, &kInfoKey, info, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }

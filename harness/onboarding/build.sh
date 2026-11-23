@@ -14,8 +14,11 @@ ALLOW_UPSTREAM=1 ../../scripts/whats-new.sh "$VERSION" ../../CHANGELOG.md "$OUT/
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 xcrun -sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-arc -g -O0 \
     -I"$SRC" -I"$SRC/App/Onboarding" -isysroot "$SDK" -Wno-deprecated-declarations -DSG_VERSION="\"$VERSION\"" \
-    main.m "$SRC"/App/Onboarding/Tour.m "$OUT"/onboarding/WhatsNew.m "$SRC"/App/Onboarding/Environment.m \
+    main.m sponsorblock-check.m "$SRC"/App/Onboarding/Tour.m "$OUT"/onboarding/WhatsNew.m "$SRC"/App/Onboarding/Environment.m \
     "$SRC"/App/About/Update.m \
+    "$SRC"/Shared/SponsorBlock/SponsorBlockSettings.m "$SRC"/Shared/SponsorBlock/SponsorBlockPrefs.m \
+    "$SRC"/Shared/SponsorBlock/SponsorBlockModel.m \
+    "$SRC"/Settings/SGModPage.m "$SRC"/Settings/SGSettingsSearch.m "$SRC"/Settings/SGSettingsIndex.m "$SRC"/Settings/SGGlowSwitch.m \
     "$SRC"/Settings/SGPage.m "$SRC"/Settings/SGPageStyle.m \
     "$SRC"/Core/SGLog.m "$SRC"/Core/SGPrefs.m "$SRC"/Core/SGLocalize.m "$SRC"/Core/SGViewTree.m "$SRC"/Core/SGGlass.m \
     "$SRC"/Core/SGBackdrop.m "$SRC"/Core/SGFlagForce.m \
@@ -48,5 +51,6 @@ cat > "$OUT/OnboardingHarness.app/Info.plist" <<'PLIST'
 </dict>
 </dict></plist>
 PLIST
+cp -R "$SRC/../layout/Library/Application Support/Retrine.bundle" "$OUT/OnboardingHarness.app/"
 codesign -f -s - "$OUT/OnboardingHarness.app" >/dev/null 2>&1
 echo "built $OUT/OnboardingHarness.app"

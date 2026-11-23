@@ -84,9 +84,9 @@ BOOL SGRPageFullCover(NSString *key);
 // Where the content starts, from the top; 0 keeps it on the bottom edge. Content that would then run past the
 // bottom goes back on the bottom edge.
 @property (nonatomic) CGFloat pinnedTop;
-// The artist's name the Music app's way (Artist/ArtistHeader.x): Large Title bold (34pt at the default size, capped
-// with the rest at Extra Large) and the name, the logo standing for it and the lines under it at the leading edge of
-// the text rather than centered. NO is the album's and the playlist's centered Title 2.
+// The artist's name the Music app's way on iOS 26 (Artist/ArtistHeader.x): Large Title bold (34pt at the default size,
+// capped with the rest at Extra Large), the name, the logo standing for it and the lines under it centered like the
+// album's. NO is the album's and the playlist's centered Title 2.
 @property (nonatomic) BOOL largeTitle;
 // Play a circle 64pt across with its glyph alone, its word only what VoiceOver reads, in a 64pt row, and the buttons
 // either side 44pt across, 20pt off it (the artist's, SGRKeyArtistRoundPlay). NO is the capsule in its 48pt row.

@@ -4,6 +4,7 @@
 #import "App/About/About.h"
 #import "App/Pages.h"
 #import "Shared/AdBlock/AdBlock.h"
+#import "Shared/SponsorBlock/SponsorBlock.h"
 
 static const CGFloat kMargin = 24;
 static const CGFloat kCardRadius = 22;
@@ -336,8 +337,8 @@ static BOOL adFree(void) {
 
 @implementation SGOnboardingController {
     SGTourLogo *_logo;
-    SGLookCard *_redesigned, *_legacy, *_adsCard;
-    UISwitch *_ads;
+    SGLookCard *_redesigned, *_legacy, *_adsCard, *_sponsorCard;
+    UISwitch *_ads, *_sponsor;
     UIStackView *_column;
     UIView *_splitTip;   // the redesign's; the lyrics tip's line changes with the look too
     UILabel *_lyricsTip;
@@ -479,13 +480,30 @@ static BOOL adFree(void) {
     adsNote.layoutMargins = UIEdgeInsetsMake(4, 4, 0, 4);
     adsNote.layoutMarginsRelativeArrangement = YES;
 
+    _sponsor = [UISwitch new];
+    _sponsor.onTintColor = SGGreen();
+    _sponsor.on = SGHidden(SGKeySponsorBlock);
+    NSString *sponsorTitle = SGL(@"settings.sponsorblock.title", @"SponsorBlock");
+    NSString *sponsorHint = SGL(@"settings.onboarding.sponsorblock.subtitle", @"Skip listener-marked podcast segments. Undo plays the segment instead.");
+    _sponsorCard = [[SGLookCard alloc] initWithSymbol:@"forward.end" title:sponsorTitle subtitle:sponsorHint accessory:_sponsor];
+    [_sponsorCard addTarget:self action:@selector(toggleSponsor) forControlEvents:UIControlEventTouchUpInside];
+    _sponsorCard.isAccessibilityElement = YES;
+    _sponsorCard.accessibilityLabel = sponsorTitle;
+    _sponsorCard.accessibilityHint = sponsorHint;
+    _sponsorCard.accessibilityValue = _sponsor.on ? SGL(@"common.on", @"On") : SGL(@"common.off", @"Off");
+    _sponsorCard.accessibilityTraits = _adsCard.accessibilityTraits;
+    UILabel *sponsorText = [UILabel new];
+    sponsorText.text = [NSString stringWithFormat:SGL(@"settings.onboarding.sponsorblock.note", @"Sends a five-digit episode hash prefix and selected categories to %@. Change the server and categories in Mod Settings > Premium, ads & privacy > SponsorBlock."), SGSponsorBlockServer()];
+    UIStackView *sponsorNote = noteLine(SGSymbolView(@"info.circle.fill", 15, UIImageSymbolWeightSemibold, 22), sponsorText);
+    sponsorNote.arrangedSubviews.firstObject.tintColor = SGGrey();
+
     UILabel *tipsHeading = [UILabel new];
     tipsHeading.text = SGL(@"settings.onboarding.tips.heading", @"Easy to miss");
     tipsHeading.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     tipsHeading.textColor = UIColor.whiteColor;
     UIView *tips = [self tipsView];
 
-    _column = [[UIStackView alloc] initWithArrangedSubviews:@[strip, heading, _redesigned, _legacy, _note, _adsCard, adsNote, tipsHeading, tips]];
+    _column = [[UIStackView alloc] initWithArrangedSubviews:@[strip, heading, _redesigned, _legacy, _note, _adsCard, adsNote, _sponsorCard, sponsorNote, tipsHeading, tips]];
     UIStackView *column = _column;
     column.axis = UILayoutConstraintAxisVertical;
     column.spacing = 12;
@@ -493,6 +511,7 @@ static BOOL adFree(void) {
     [column setCustomSpacing:24 afterView:heading];
     [column setCustomSpacing:32 afterView:_note];
     [column setCustomSpacing:32 afterView:adsNote];
+    [column setCustomSpacing:32 afterView:sponsorNote];
     column.translatesAutoresizingMaskIntoConstraints = NO;
     [self updateNote];
 
@@ -541,7 +560,7 @@ static BOOL adFree(void) {
     [self refresh];
 
     // The tour opens on the logo alone; the page waits under it until the reeds land.
-    _page = @[heading, _redesigned, _legacy, _note, _adsCard, adsNote, tipsHeading, tips, _primary, footer];
+    _page = @[heading, _redesigned, _legacy, _note, _adsCard, adsNote, _sponsorCard, sponsorNote, tipsHeading, tips, _primary, footer];
     [_logo prepare];
     BOOL reduce = UIAccessibilityIsReduceMotionEnabled();
     for (UIView *view in _page) {
@@ -588,7 +607,13 @@ static BOOL adFree(void) {
 // The look and the ad switches are read at launch, so a choice that differs from the running one ends the
 // tour in a restart.
 - (BOOL)needsRestart {
-    return _redesigned.selected != SGRedesignedUI() || (_ads.on && !adFree());
+    return _redesigned.selected != SGRedesignedUI() || (_ads.on && !adFree()) || _sponsor.on != SGHidden(SGKeySponsorBlock);
+}
+
+- (void)toggleSponsor {
+    [_sponsor setOn:!_sponsor.on animated:YES];
+    _sponsorCard.accessibilityValue = _sponsor.on ? SGL(@"common.on", @"On") : SGL(@"common.off", @"Off");
+    [self refresh];
 }
 
 - (void)refresh {
@@ -605,6 +630,7 @@ static BOOL adFree(void) {
     SGSetEnabled(SGKeyOnboardingSeen, YES);
     SGSetRedesignedUI(_redesigned.selected);
     if (_ads.on) for (NSString *key in adKeys()) SGSetEnabled(key, YES);
+    if (_sponsor.on != SGHidden(SGKeySponsorBlock)) SGSetEnabled(SGKeySponsorBlock, _sponsor.on);
     if (restart) {
         SGRestartSpotify();
         return;

@@ -27,6 +27,7 @@
 #import "Shared/Haptics/Haptics.h"
 #import "Shared/Lyrics/Lyrics.h"
 #import "Shared/Player/AudioQuality.h"
+#import "Shared/SponsorBlock/SponsorBlock.h"
 #import "Player.h"
 #import "PlayerMix.h"
 #import "Shared/AutoMix/AutoMixPreview.h"
@@ -1224,6 +1225,33 @@ static void durationLaidOut(UIViewController *unit) {
     }
 }
 %end
+
+#pragma mark - SponsorBlock marks
+
+// SponsorBlock's segments on the bar (Shared/SponsorBlock/SponsorBlockMarkers.m), installed only with the progress
+// bar switch on. Without an episode bar they lie under the translucent rail as AutoMix's bands do (PlayerMix.x), the
+// played part's light white over them as over the background, and take the track's height when a scrub thickens it
+// (trackRectForBounds: above).
+static const double kSponsorBlockMarksOpacity = 0.8;
+
+%group SGRSponsorBlockMarks
+%hook _TtCO17NowPlaying_ECMKit11ProgressBar6Slider
+- (void)layoutSubviews {
+    %orig;
+    SGSponsorBlockMarksLaidOut((UISlider *)self);
+}
+
+- (void)didMoveToWindow {
+    %orig;
+    if (((UIView *)self).window) SGSponsorBlockMarksShown((UISlider *)self, kSponsorBlockMarksOpacity);
+}
+%end
+%end
+
+%ctor {
+    if (!SGRedesignedUI() || !SGSponsorBlockMarkersEnabled() || !NSClassFromString(@"_TtCO17NowPlaying_ECMKit11ProgressBar6Slider")) return;
+    %init(SGRSponsorBlockMarks);
+}
 
 #pragma mark - Podcast buffering
 

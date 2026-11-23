@@ -868,20 +868,23 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     SGRVanish(sharedBy);
     SGRVanish(arrangedAround(sharedBy, host));
 
+    UIView *queue = SGRFindByIdentifier(host, @"QueueButtonNowPlaying", &kQueueKey);
+    CGPoint queueMiddle = CGPointMake(CGRectGetMidX(queue.bounds), CGRectGetMidY(queue.bounds));
+    // The Agent prompt adds height below the row. The queue only moves sideways, so its y stays on the row.
+    CGFloat rowY = queue.window ? round([queue convertPoint:queueMiddle toView:host].y) : middleY;
     SGRGlyphButton *lyrics = SGRPlayerLyricsGlyphIn(host);
     lyrics.bounds = CGRectMake(0, 0, 44, 44);
-    lyrics.center = CGPointMake(round(width * (rtl ? kTrailing : kLeading)), middleY);
+    lyrics.center = CGPointMake(round(width * (rtl ? kTrailing : kLeading)), rowY);
     SGRPlayerLyricsChanged();
 
     UIView *connect = SGRFindByIdentifier(host, @"Components.ConnectButtonOutputSwitcher", &kConnectKey);
     UIView *glyph = SGRPlayerConnectGlyphIn(host, connect);
     CGFloat connectFrom = glyph ? moveTo(arrangedAround(connect, host), glyph, CGPointMake(CGRectGetMidX(glyph.bounds), CGRectGetMidY(glyph.bounds)), host, round(width * kMiddle)) : -1;
 
-    UIView *queue = SGRFindByIdentifier(host, @"QueueButtonNowPlaying", &kQueueKey);
     standInForQueue((SPTEncoreIconView *)SGRFindByIdentifier(queue, @"Encore.IconView", &kQueueIconKey));
     CGFloat queueX = round(width * (rtl ? kLeading : kTrailing));
-    CGFloat queueFrom = moveTo(arrangedAround(queue, host), queue, CGPointMake(CGRectGetMidX(queue.bounds), CGRectGetMidY(queue.bounds)), host, queueX);
-    placeQueueGlyph(host, arrangedAround(queue, host), CGPointMake(queueX, middleY));
+    CGFloat queueFrom = moveTo(arrangedAround(queue, host), queue, queueMiddle, host, queueX);
+    placeQueueGlyph(host, arrangedAround(queue, host), CGPointMake(queueX, rowY));
 
     SGRPlayerLowerRow(host);
     SGRPlayerCoverConnect(arrangedAround(connect, host), glyph);
@@ -897,7 +900,7 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
 
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        SGLog(@"redesign player: footer lyrics at %.0f, connect %.0f (%@) to %.0f, queue %.0f to %.0f, share %@", lyrics.center.x,
+        SGLog(@"redesign player: footer lyrics at %.0f,%.0f (unit middle %.0f), connect %.0f (%@) to %.0f, queue %.0f to %.0f, share %@", lyrics.center.x, lyrics.center.y, middleY,
               connectFrom, glyph ? @"glyph" : @"button", round(width * kMiddle), queueFrom, queueX, share ? @"gone" : @"not found");
     });
 }

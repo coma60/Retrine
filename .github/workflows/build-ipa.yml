@@ -30,10 +30,14 @@ on:
         required: false
         type: string
       runner:
-        description: "macOS runner. A build not given its runner within 3 min starts again on the next (macos-latest -> macos-26-intel -> macos-15 -> macos-15-intel)"
+        description: "macOS runner (both have Xcode 26.6). A build not given its runner within 3 min starts again on the other one"
         default: macos-latest
         type: choice
-        options: [macos-latest, macos-26-intel, macos-15, macos-15-intel]
+        options: [macos-latest, macos-26-intel]
+      runner_hops:
+        description: "Set by the runner watchdog: how many times this build has moved runner. Leave at 0"
+        default: 0
+        type: number
 
 permissions:
   contents: read
@@ -47,16 +51,15 @@ jobs:
   # RUNNER_WAIT_SECONDS after it was created, it dispatches this workflow again with the same inputs on the next
   # runner in FALLBACK and cancels this run. The last runner has no watchdog, so it never loops.
   #
-  # Every runner in FALLBACK has Xcode 26 (the iOS 26 SDK the redesign needs), each from its own pool, so a
-  # starved pool is left rather than queued on again (runner-images, November 2026):
-  #   macos-latest   = macos-26 arm64, Xcode 26.6 (the runner every build so far used)
-  #   macos-26-intel = macOS 26 x64,   Xcode 26.6 (the same toolchain on another pool)
-  #   macos-15       = macOS 15 arm64, Xcode 26.3 (latest-stable; its default is 16.4)
-  #   macos-15-intel = macOS 15 x64,   Xcode 26.3
-  # `macos-26` is not in the list: it is the same pool as macos-latest. macOS 14 has no Xcode 26 and is retired.
-  # 180 s: a healthy pool hands a macOS runner over in well under a minute, so three minutes means it is starved.
+  # Only runners with the toolchain every build so far used (Xcode 26.6, iOS 26.5 SDK) are in FALLBACK, each its own
+  # pool, so a starved pool is left rather than queued on again (runner-images, November 2026):
+  #   macos-latest   = macOS 26 arm64, Xcode 26.6
+  #   macos-26-intel = macOS 26 x64,   Xcode 26.6
+  # Left out: macos-26 (the same pool as macos-latest), macOS 15 (newest Xcode 26.3, an older iOS SDK the code was
+  # never built against) and macOS 14 (no Xcode 26, retired). The two take turns up to MAX_HOPS moves, then the
+  # build waits where it is. 180 s: a healthy pool hands a macOS runner over in well under a minute.
   runner-watchdog:
-    if: inputs.runner != 'macos-15-intel'
+    if: inputs.runner_hops < 5
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -69,7 +72,9 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           REF: ${{ github.ref_name }}
           RUNNER_WAIT_SECONDS: "180"
-          FALLBACK: "macos-latest=macos-26-intel macos-26-intel=macos-15 macos-15=macos-15-intel"
+          FALLBACK: "macos-latest=macos-26-intel macos-26-intel=macos-latest"
+          MAX_HOPS: "5"
+          HOPS: ${{ inputs.runner_hops || 0 }}
           CURRENT_RUNNER: ${{ inputs.runner || 'macos-latest' }}
           IN_IPA_URL: ${{ inputs.ipa_url }}
           IN_UPLOAD_METHOD: ${{ inputs.upload_method }}
@@ -93,8 +98,9 @@ jobs:
           current = os.environ["CURRENT_RUNNER"]
           fallback = dict(pair.split("=", 1) for pair in os.environ["FALLBACK"].split())
           after = fallback.get(current)
-          if not after:
-              print(f"{current} is the last runner; nothing to fall back to")
+          hops = int(float(os.environ["HOPS"] or 0))
+          if not after or hops >= int(os.environ["MAX_HOPS"]):
+              print(f"no further runner after {current} (moves so far: {hops}); the build waits where it is")
               raise SystemExit(0)
 
           def build_job():
@@ -133,6 +139,7 @@ jobs:
               "enable_pixie": os.environ["IN_ENABLE_PIXIE"] or "true",
               "bundle_id": os.environ["IN_BUNDLE_ID"],
               "runner": after,
+              "runner_hops": str(hops + 1),
           }
           command = ["gh", "workflow", "run", "build-ipa.yml", "--ref", os.environ["REF"]]
           for key, value in inputs.items():
@@ -153,14 +160,16 @@ jobs:
         with:
           brew: aria2
 
-      # Every fallback runner has an Xcode 26; this says so plainly if an image ever stops having one, instead of
-      # failing deep in the build on a missing iOS 26 API.
+      # Never build against an iOS SDK older than the one the code is known to build with (Xcode 26.6's): if an
+      # image ever ships an older newest Xcode, this stops here and says so instead of failing on a missing API.
       - name: Check the iOS SDK
+        env:
+          MIN_IOS_SDK: "26.5"
         run: |
           sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
           echo "runner ${{ inputs.runner || 'macos-latest' }} ($(uname -m)), $(xcodebuild -version | head -1), iOS SDK $sdk"
-          if [ "${sdk%%.*}" -lt 26 ]; then
-            echo "::error::this runner's newest Xcode has the iOS $sdk SDK; Retrine needs iOS 26. Pick another runner."
+          if [ "$(printf '%s\n%s\n' "$MIN_IOS_SDK" "$sdk" | sort -V | head -1)" != "$MIN_IOS_SDK" ]; then
+            echo "::error::this runner's newest Xcode has the iOS $sdk SDK; Retrine is built against iOS $MIN_IOS_SDK or newer. Pick another runner."
             exit 1
           fi
 

@@ -343,7 +343,9 @@ static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
 // plainly composited under Increase Contrast.
 // The ink the audio quality badge shares (AudioQuality.x: its text and glyph), so the two read alike: SGRBackdropInk.h
 // raises it toward kTimeInkLightAlpha over a light backdrop, and draws it plain where plusL cannot see the backdrop.
-static const CGFloat kTimeInkAlpha = 0.40, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
+// Against the Music app's player over a dark blue and a pink animated cover (3x) the times stood a fifth dimmer than
+// its own at 0.40, so they take 0.48.
+static const CGFloat kTimeInkAlpha = 0.48, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
 static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
@@ -803,8 +805,10 @@ BOOL SGRFire(UIControl *control) {
 
 NSNotificationName const SGRBackdropInkDidChangeNotification = @"spotifyglass.redesign.backdropInkDidChange";
 
-// The field is drawn this small and read in rows, each averaged across the width.
-enum { kInkColumns = 8, kInkRows = 48 };
+// The field is drawn this small and read cell by cell, so a view's ink is taken from the backdrop behind it alone: a
+// row's mean across the width read a left-aligned artist line over a dark cover's middle (a dark figure, a black
+// sleeve) as darker than what stands behind the text, and drew it dimmer than the Music app's.
+enum { kInkColumns = 16, kInkRows = 48 };
 // Seconds between readings; four times that in Low Power Mode.
 static const NSTimeInterval kInkEvery = 0.25;
 // A reading is reported when a row moved this much (of 1).
@@ -819,6 +823,7 @@ static __weak UIView *sg_inkSource;
 static NSTimer *sg_inkTimer;
 static NSHashTable<UIView *> *sg_inkObservers;
 static float sg_inkRows[kInkRows];
+static float sg_inkCells[kInkRows][kInkColumns];
 static BOOL sg_inkHave;
 static NSUInteger sg_inkTicks;
 
@@ -867,13 +872,14 @@ static void readField(void) {
     if (!bitmap) return;
     CGContextDrawImage(bitmap, CGRectMake(0, 0, kInkColumns, kInkRows), cg);
     CGContextRelease(bitmap);
-    float rows[kInkRows];
+    float rows[kInkRows], cells[kInkRows][kInkColumns];
     BOOL any = NO;
     for (int y = 0; y < kInkRows; y++) {
         CGFloat sum = 0;
         for (int x = 0; x < kInkColumns; x++) {
             const uint8_t *p = pixels + (y * kInkColumns + x) * 4;
-            sum += inkLuma(p);
+            cells[y][x] = (float)inkLuma(p);
+            sum += cells[y][x];
             any = any || p[0] || p[1] || p[2];
         }
         rows[y] = sum / kInkColumns;
@@ -881,9 +887,12 @@ static void readField(void) {
     // A blank picture is a failed draw (nothing is black all the way down the player), not a reading.
     if (!any) return;
     BOOL moved = !sg_inkHave;
-    for (int y = 0; y < kInkRows && !moved; y++) moved = fabsf(rows[y] - sg_inkRows[y]) > kInkReportDelta;
+    for (int y = 0; y < kInkRows && !moved; y++) {
+        for (int x = 0; x < kInkColumns && !moved; x++) moved = fabsf(cells[y][x] - sg_inkCells[y][x]) > kInkReportDelta;
+    }
     if (!moved) return;
     memcpy(sg_inkRows, rows, sizeof rows);
+    memcpy(sg_inkCells, cells, sizeof cells);
     sg_inkHave = YES;
     notifyInk();
 }
@@ -906,17 +915,50 @@ void SGRBackdropInkSetSource(UIView *source) {
     [NSRunLoop.mainRunLoop addTimer:sg_inkTimer forMode:NSRunLoopCommonModes];
 }
 
+// Where a label's text stands in it: a leading-aligned label is often laid out wider than its text, and what is behind
+// the empty rest of it is not what the text is read against. Any other view, or alignment, is taken whole.
+static CGRect textBounds(UIView *view) {
+    CGRect bounds = view.bounds;
+    if (![view isKindOfClass:UILabel.class]) return bounds;
+    UILabel *label = (UILabel *)view;
+    BOOL rtl = view.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+    NSTextAlignment alignment = label.textAlignment;
+    BOOL leading = alignment == NSTextAlignmentNatural || alignment == (rtl ? NSTextAlignmentRight : NSTextAlignmentLeft);
+    if (!leading || !label.text.length) return bounds;
+    CGFloat width = [label textRectForBounds:bounds limitedToNumberOfLines:label.numberOfLines].size.width;
+    if (width <= 0 || width >= bounds.size.width) return bounds;
+    return CGRectMake(rtl ? CGRectGetMaxX(bounds) - width : bounds.origin.x, bounds.origin.y, width, bounds.size.height);
+}
+
 CGFloat SGRBackdropLightnessBehind(UIView *view) {
     UIView *source = sg_inkSource;
     if (!sg_inkHave || !view || !source || !view.window || view.window != source.window) return -1;
     CGSize size = source.bounds.size;
     if (size.width < 1 || size.height < 1) return -1;
-    CGRect rect = [view convertRect:view.bounds toView:source];
+    CGRect rect = [view convertRect:textBounds(view) toView:source];
     CGFloat top = MAX(0, MIN(1, CGRectGetMinY(rect) / size.height)), bottom = MAX(0, MIN(1, CGRectGetMaxY(rect) / size.height));
     int from = MIN(kInkRows - 1, (int)floor(top * kInkRows)), to = MIN(kInkRows - 1, MAX(from, (int)ceil(bottom * kInkRows) - 1));
-    CGFloat sum = 0;
-    for (int y = from; y <= to; y++) sum += sg_inkRows[y];
-    return sum / (to - from + 1);
+    // The columns the view spans; a label's frame is often wider than its text, which starts at its leading edge, so
+    // the cells are weighed by how much of each the view covers.
+    CGFloat left = MAX(0, MIN(1, CGRectGetMinX(rect) / size.width)) * kInkColumns;
+    CGFloat right = MAX(0, MIN(1, CGRectGetMaxX(rect) / size.width)) * kInkColumns;
+    if (right - left < 0.5) {
+        CGFloat middle = (left + right) / 2;
+        left = MAX(0, middle - 0.25);
+        right = MIN(kInkColumns, middle + 0.25);
+    }
+    CGFloat sum = 0, weights = 0;
+    for (int x = (int)floor(left); x < kInkColumns && x < right; x++) {
+        CGFloat w = MIN(right, x + 1) - MAX(left, x);
+        if (w <= 0) continue;
+        for (int y = from; y <= to; y++) sum += w * sg_inkCells[y][x];
+        weights += w * (to - from + 1);
+    }
+    if (weights <= 0) {
+        for (int y = from; y <= to; y++) sum += sg_inkRows[y];
+        return sum / (to - from + 1);
+    }
+    return sum / weights;
 }
 
 BOOL SGRInkIsolated(UIView *view) {

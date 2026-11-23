@@ -175,7 +175,10 @@ static void setShownFont(UILabel *self, SEL _cmd, UIFont *font) {
 // cover, saturating at white on a light one); under Increase Contrast the secondary color as it was. Over a light
 // backdrop, where that adds next to nothing, the alpha rises to kArtistInkLight (SGRBackdropInk.h), and it is drawn
 // plain where plusL cannot see the backdrop. The title as Spotify paints it.
-static const CGFloat kArtistInk = 0.44, kArtistInkLight = 0.85;
+// Compared with the Music app's player at 3x over a dark blue and a pink animated cover, 0.44 drew the artist 70 to 90
+// of 255 above its backdrop where the Music app's stands 125 to 160 above it (near white with the backdrop's tint), so
+// it adds 0.62, drawn plain as 0.62 / (1 - the backdrop's lightness) where plusL cannot see it.
+static const CGFloat kArtistInk = 0.62, kArtistInkLight = 0.9;
 static void setShownColor(UILabel *self, SEL _cmd, UIColor *color) {
     BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled(), plusL = YES;
     UIColor *ink = title ? color : (contrast ? SGRSecondary() : SGRInkFor(self, kArtistInk, kArtistInkLight, &plusL));

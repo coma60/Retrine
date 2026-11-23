@@ -44,6 +44,9 @@
 #import <objc/message.h>
 
 static const CGFloat kLyricsGlyphSize = 20;
+// The weight of the row's glyphs. Measured against the Music app's footer at 3x (its lyrics, AirPlay and queue glyphs),
+// its strokes stand 2.25 pt thick where regular's stood 1.74 pt, with the glyphs a pixel larger each way: semibold's.
+static const UIImageSymbolWeight kFooterGlyphWeight = UIImageSymbolWeightSemibold;
 // The platter a pressed glyph of the row sinks into (SGRPress.h), the row's touch square.
 static const CGFloat kFooterPlatter = 44;
 // Filled and at full strength while the lyrics are up, the way the Music app marks the control that is on.
@@ -84,11 +87,23 @@ static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // pink and a white cover: 115 to 122 of 255 above it, saturating at white over a light one). Plain white 0.65 is the
 // same over a dark backdrop; over a lighter one the alpha rises to what SGRInkPlainAlpha works out, so they do not sink
 // into it. Taken again at each new reading of the backdrop (refreshFooterInk).
-static const CGFloat kFooterInkAdd = 0.46;
+// The floor is what 0.46 added over the dark foot of the screen (about 0.16 light) comes to drawn plain: the secondary
+// color's 0.65 stood 140 of 255 above it where the Music app's glyphs stand 116 to 122.
+static const CGFloat kFooterInkAdd = 0.46, kFooterInkFloor = 0.55;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
 static UIColor *footerRest(UIView *view) {
-    CGFloat floorAlpha = CGColorGetAlpha(SGRSecondary().CGColor);
+    CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkFloor;
     return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
+}
+
+// The row's own glyph buttons in the row's weight (the Kit's are regular).
+static void footerWeight(SGRGlyphButton *button) {
+    button.glyph.preferredSymbolConfiguration = [UIImageSymbolConfiguration configurationWithPointSize:kLyricsGlyphSize
+                                                                                                weight:kFooterGlyphWeight];
+    [button.glyph sizeToFit];
+    button.largeContentImage = button.glyph.image;
+    [button invalidateIntrinsicContentSize];
+    [button setNeedsLayout];
 }
 // Spotify's queue button, taken off the row while the two columns' queue glyph (placeQueueGlyph) stands in its place.
 static NSHashTable<UIView *> *sg_queueStoodIn;
@@ -237,6 +252,7 @@ SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
     SGRGlyphButton *glyph = objc_getAssociatedObject(host, &kLyricsGlyphKey);
     if (!glyph) {
         glyph = [SGRGlyphButton buttonWithSymbol:kLyricsSymbol pointSize:kLyricsGlyphSize title:SGL(@"settings.main.lyrics.title", @"Lyrics")];
+        footerWeight(glyph);
         glyph.glyph.tintColor = footerRest(glyph);
         glyph.onTap = ^{ SGRPlayerToggleLyrics(); };
         objc_setAssociatedObject(host, &kLyricsGlyphKey, glyph, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -273,7 +289,7 @@ static SGRGlyphView *standIn(UIView *drawn, NSString *symbol) {
     if (!drawn) return nil;
     SGRGlyphView *glyph = objc_getAssociatedObject(drawn, &kStandInKey);
     if (!glyph) {
-        glyph = [[SGRGlyphView alloc] initWithSymbol:symbol pointSize:kLyricsGlyphSize weight:UIImageSymbolWeightRegular];
+        glyph = [[SGRGlyphView alloc] initWithSymbol:symbol pointSize:kLyricsGlyphSize weight:kFooterGlyphWeight];
         glyph.userInteractionEnabled = NO;
         glyph.isAccessibilityElement = NO;
         glyph.tintColor = footerRest(drawn);   // at rest, as the Lyrics glyph while it is off
@@ -822,6 +838,7 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     }
     if (!glyph) {
         glyph = [SGRGlyphButton buttonWithSymbol:kQueueSymbol pointSize:kLyricsGlyphSize title:SGL(@"settings.player.ipad.queue", @"Queue")];
+        footerWeight(glyph);
         glyph.accessibilityIdentifier = @"retrine.player.queue";
         __weak SGRGlyphButton *weakGlyph = glyph;
         glyph.onTap = ^{

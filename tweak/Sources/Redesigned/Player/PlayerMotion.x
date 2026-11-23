@@ -158,9 +158,11 @@ static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 120;
 // The veil's own black comes on top of the dim and the deepening, which already darken a light cover to the Music
 // app's measured 0.63 at the foot (a white cover: 108 of 255 there, 61 here with the veil's black on top of them). It
 // is kept for a dark cover, whose dim is at its floor, and goes by the time the cover's bright end (the dim's
-// reading) is kVeilBrightTo of linear luminance.
+// reading) is kVeilBrightTo of linear luminance. Against the Music app's player over a dark blue animated cover (3x),
+// 0.49 of it left the foot a third darker than the Music app's and grayer (its blue 45 of 255 to the Music app's 70),
+// so it keeps 0.30.
 static const CGFloat kVeilBrightFrom = 0.25, kVeilBrightTo = 0.55;
-static const CGFloat kVeilFadeMost = 0.49, kVeilFadeLength = 223, kVeilFadePower = 2.43;
+static const CGFloat kVeilFadeMost = 0.30, kVeilFadeLength = 223, kVeilFadePower = 2.43;
 enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
 // The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
 // last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
@@ -170,6 +172,16 @@ static const float kLiveFollow = 0.35f;
 // The material blur under the controls tints the bottom of the player gray, which the Music app's player does not
 // have: its colors run on to the bottom untouched. NO leaves the blur's view in place with no effect on it.
 static const BOOL kSeamBlur = NO;
+// Under a cover shorter than the screen the Music app does not cut from the sharp cover to its colors at one line: the
+// cover goes soft from well above its bottom edge (over the title), more the further down, and goes on below its edge
+// as itself blurred and mirrored, so the colors under the title are the cover's own and move with it. Two blurred
+// copies of the same picture (the poster, and the playing clip over it) stand for that: a light blur coming in from
+// kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, from
+// kSofterFrom to kSofterWhole, held kSofterReach points below the edge and gone into the veil kSofterFade points
+// further down. Radii in points; each copy is rendered at its scale, as it is blurred anyway.
+static const CGFloat kSoftFrom = 0.78, kSoftWhole = 0.88, kSoftRadius = 8, kSoftScale = 0.5;
+static const CGFloat kSofterFrom = 0.85, kSofterWhole = 0.98, kSofterRadius = 26, kSofterScale = 0.25;
+static const CGFloat kSofterReach = 90, kSofterFade = 150;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -477,6 +489,9 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     CALayer *_still;    // the poster, with the video drawn over it
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
+    CALayer *_soft, *_softer;   // the cover blurred a little, and a lot and mirrored below its edge (kSoftFrom)
+    NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
+    NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
     CAGradientLayer *_foot;   // the colors of the poster's last rows, from side to side, from the seam down
     CGFloat _veilScale;   // how much of kVeilFadeMost the veil's picture was drawn with
     CALayer *_veil;   // under a cover shorter than the screen: the foot blurred, more the further down, over _foot
@@ -539,6 +554,46 @@ static UIBlurEffect *blurEffect(void) {
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
 }
 
+// The poster with the clip drawn over it, as _still is, for one of the blurred copies.
+static CALayer *softPicture(NSMutableArray *pictures, NSMutableArray *clips) {
+    CALayer *picture = [CALayer layer];
+    picture.contentsGravity = kCAGravityResizeAspectFill;
+    picture.masksToBounds = YES;
+    AVPlayerLayer *clip = [AVPlayerLayer layer];
+    clip.videoGravity = AVLayerVideoGravityResizeAspectFill;
+    [picture addSublayer:clip];
+    [pictures addObject:picture];
+    [clips addObject:clip];
+    return picture;
+}
+
+// A blurred copy of the cover, masked in (see kSoftFrom); `mirrored` adds the cover flipped below its bottom edge.
+static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutableArray *pictures, NSMutableArray *clips) {
+    CALayer *copy = [CALayer layer];
+    copy.hidden = YES;
+    [copy addSublayer:softPicture(pictures, clips)];
+    if (mirrored) {
+        CALayer *mirror = softPicture(pictures, clips);
+        mirror.transform = CATransform3DMakeScale(1, -1, 1);
+        [copy addSublayer:mirror];
+    }
+    CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
+    if (blur) {
+        [blur setValue:@(radius) forKey:@"inputRadius"];
+        // The copy's edges blur against themselves, not against the clear around it.
+        [blur setValue:@YES forKey:@"inputNormalizeEdges"];
+        copy.filters = @[blur];
+        copy.rasterizationScale = scale;
+        copy.shouldRasterize = YES;
+    }
+    CAGradientLayer *mask = [CAGradientLayer layer];
+    mask.colors = mirrored ? @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor,
+                               (id)UIColor.clearColor.CGColor]
+                           : @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
+    copy.mask = mask;
+    return copy;
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
@@ -570,6 +625,13 @@ static UIBlurEffect *blurEffect(void) {
     _clipMask.locations = @[@0, @(kFootFrom), @1];
     _still.mask = _clipMask;
     [_picture.layer addSublayer:_still];
+    NSMutableArray *softPictures = [NSMutableArray array], *softClips = [NSMutableArray array];
+    _soft = softCopy(kSoftRadius, kSoftScale, NO, softPictures, softClips);
+    _softer = softCopy(kSofterRadius, kSofterScale, YES, softPictures, softClips);
+    _softPictures = softPictures;
+    _softClips = softClips;
+    [_picture.layer addSublayer:_soft];
+    [_picture.layer addSublayer:_softer];
     _dim = [CAGradientLayer layer];
     _dim.colors = dimColors(NO);
     _dim.opacity = kDimLeast;
@@ -621,6 +683,7 @@ static UIBlurEffect *blurEffect(void) {
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
+    for (AVPlayerLayer *clip in _softClips) clip.player = nil;
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
@@ -672,6 +735,7 @@ static UIBlurEffect *blurEffect(void) {
     // A cover shorter than the screen gets the blurred foot below it, a Canvas (which fills the screen) none.
     BOOL shorter = _veilRow && height < screen - 0.5 && total > seam;
     _veil.hidden = !shorter;
+    [self layoutSoftFor:shorter width:width height:height total:total];
     if (shorter) {
         _veil.frame = _foot.frame;
         CGRect geometry = CGRectMake(seam, height, width, total);
@@ -710,6 +774,30 @@ static UIBlurEffect *blurEffect(void) {
     _seamMask.frame = bounds;
     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
     [CATransaction commit];
+}
+
+// The blurred copies over a cover shorter than the screen (kSoftFrom), none over a Canvas or in the cover. Called
+// inside the layout's transaction.
+- (void)layoutSoftFor:(BOOL)shorter width:(CGFloat)width height:(CGFloat)height total:(CGFloat)total {
+    BOOL shown = shorter && !_inCover && height > 0;
+    _soft.hidden = _softer.hidden = !shown;
+    if (!shown) return;
+    CGRect cover = CGRectMake(0, 0, width, height);
+    for (CALayer *copy in @[_soft, _softer]) {
+        copy.frame = CGRectMake(0, 0, width, total);
+        copy.mask.frame = copy.bounds;
+    }
+    for (CALayer *picture in _softPictures) {
+        picture.bounds = cover;
+        // The mirror is the second of the strong copy's: flipped about the cover's bottom edge.
+        BOOL mirror = picture.superlayer == _softer && picture != _softer.sublayers.firstObject;
+        picture.position = CGPointMake(width / 2, mirror ? height * 1.5 : height / 2);
+        ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
+    }
+    NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
+    ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
+    ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole),
+                                                    at(height + kSofterReach), at(height + kSofterReach + kSofterFade)];
 }
 
 // The veil's picture again from the foot's colors now, for the layout it was last placed in.
@@ -788,6 +876,7 @@ static UIBlurEffect *blurEffect(void) {
     _veilRow = veilRow(picture.CGImage);
     _veilFor = CGRectZero;
     _still.contents = (__bridge id)picture.CGImage;
+    for (CALayer *soft in _softPictures) soft.contents = (__bridge id)picture.CGImage;
     [self setNeedsLayout];
 }
 
@@ -806,7 +895,7 @@ static UIBlurEffect *blurEffect(void) {
     if (_inCover) {
         // The cover's own picture: nothing over it to keep readable, and nothing under it to fade into.
         _still.mask = nil;
-        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = YES;
+        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = YES;
         return;
     }
     [self measure:file poster:poster];
@@ -821,6 +910,7 @@ static UIBlurEffect *blurEffect(void) {
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
+    for (AVPlayerLayer *clip in _softClips) clip.player = nil;
     _player = [AVQueuePlayer new];
     _player.muted = YES;
     _player.preventsDisplaySleepDuringVideoPlayback = NO;
@@ -829,6 +919,7 @@ static UIBlurEffect *blurEffect(void) {
     _looper = [AVPlayerLooper playerLooperWithPlayer:_player templateItem:[AVPlayerItem playerItemWithURL:_file]];
     [_looper addObserver:self forKeyPath:@"status" options:0 context:&SGRPlayerMotionLooperContext];
     _clip.player = _player;
+    for (AVPlayerLayer *clip in _softClips) clip.player = _player;
     // The layer's readiness belongs to the item it has now, and goes back to NO for every one the looper swaps
     // in: what is kept is that this clip drew a frame at all, not that this item has.
     [_clip addObserver:self forKeyPath:@"readyForDisplay" options:NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew

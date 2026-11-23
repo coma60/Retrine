@@ -150,8 +150,7 @@ static const CGFloat kLiftFrom = 0.27, kLiftEase = 1.5, kLiftFoot = 0.066, kLift
 // down it goes, and darker. Measured on the Music app's player over an animated cover (3x, 874 pt) and fitted: the
 // foot's colors smoothed along the width by a Gaussian of kVeilNear of the width, and from kVeilCrossFrom to
 // kVeilCrossTo points below the cover's bottom taken over by the same smoothed by kVeilWide and pulled kVeilMean of
-// the way to the foot's mean color, then darkened by kVeilFadeMost of black, which comes in along
-// 1 - exp(-(d / kVeilFadeLength)^kVeilFadePower), d the points below the cover's bottom.
+// the way to the foot's mean color, then brought row by row to the luma kVeilFootLuma says.
 // It is a small picture (kVeilColumns by kVeilRows) the layer stretches smoothly, drawn once for a cover and a
 // layout. It comes in over the clip's last tenth, as the clip dissolves into it.
 // Fitted again against the Music app's center-to-side brightness below a dark blue cover (rms error 0.07 against
@@ -162,18 +161,15 @@ static const CGFloat kVeilNear = 0.03, kVeilWide = 0.177, kVeilMean = 0.67, kVei
 // Against the Music app's player over a pink animated cover, its colors had come to the mean 76 pt below the cover's
 // bottom, where the cover's own dark and light columns still ran on down here: taken over by kVeilCrossTo 70, not 120.
 static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
-// The veil's own black comes on top of the dim and the deepening, which already darken a light cover to the Music
-// app's measured 0.63 at the foot (a white cover: 108 of 255 there, 61 here with the veil's black on top of them). It
-// is kept for a dark cover, whose dim is at its floor, and goes by the time the cover's bright end (the dim's
-// reading) is kVeilBrightTo of linear luminance. Against the Music app's player over a dark blue animated cover (3x),
-// 0.49 of it left the foot a third darker than the Music app's and grayer (its blue 45 of 255 to the Music app's 70),
-// so it keeps 0.30.
-static const CGFloat kVeilBrightFrom = 0.25, kVeilBrightTo = 0.55;
-static const CGFloat kVeilFadeMost = 0.30, kVeilFadeLength = 223, kVeilFadePower = 2.43;
-// The deepening is lighter under the veil (kDeepenVeiled), and a light foot needs black of its own: the Music app's
-// foot ends about as light under a light blue foot as under a dark pink one. Black comes in along the same curve,
-// from none at kVeilFootFrom of the foot's mean luma (0 to 1) to kVeilFootMost at kVeilFootTo.
-static const CGFloat kVeilFootFrom = 0.35, kVeilFootTo = 0.6, kVeilFootMost = 0.45;
+// How light the veil ends. Measured on the Music app's player over three animated covers (3x, 874 pt: a light blue and
+// pink collage, a dark pink photo, a dark blue one), the foot ends at one luma, 44 to 50 of 255, in each cover's own
+// hue, however light or dark the cover's foot was, and gets there in a straight line from the cover's bottom edge (the
+// collage's sides: 117, 101, 80, 59 and 47 at 1, 76, 163, 250 and 316 pt below it). A fixed black over the dim and the
+// deepening ended a dark cover a third too light and a light one too dark, and darkened late, so the controls stood on
+// the cover's colors and the foot came in under them. So each row of the veil takes the luma that straight line puts
+// there as it will be seen, the dim and the deepening over it included (veilShade), from what shows at the cover's
+// edge to kVeilFootLuma at the bottom of the screen, scaled by at most kVeilGainLeast to kVeilGainMost of its own.
+static const CGFloat kVeilFootLuma = 0.184, kVeilGainLeast = 0.35, kVeilGainMost = 1.8;
 enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
 // The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
 // last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
@@ -198,8 +194,10 @@ static const BOOL kSeamBlur = NO;
 // On the phone 0.045 lower kept the cover sharp past the Music app's (twice as much detail 50 pt above its bottom), so
 // they start halfway between. The mirror, held 30 pt, still stood as a light patch behind the badge: it is gone into
 // the veil 70 pt below the cover's edge.
-static const CGFloat kSoftFrom = 0.80, kSoftWhole = 0.90, kSoftRadius = 8, kSoftScale = 0.5;
-static const CGFloat kSofterFrom = 0.87, kSofterWhole = 1.0, kSofterRadius = 32, kSofterScale = 0.25;
+// Against the Music app's again over a light collage and a dark blue cover, 0.80 lost the detail 10 pt too soon
+// (three fifths of the Music app's 30 pt above the cover's bottom): 0.81 and 0.88.
+static const CGFloat kSoftFrom = 0.81, kSoftWhole = 0.91, kSoftRadius = 8, kSoftScale = 0.5;
+static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 32, kSofterScale = 0.25;
 static const CGFloat kSofterReach = 0, kSofterFade = 70;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
@@ -435,7 +433,21 @@ static void smoothedAt(const float *row, CGFloat sigma, CGFloat u, CGFloat out[3
 // The veil's picture for a view `width` wide and `total` tall whose cover ends at `bottom`, drawn from `seam` down: its
 // rows run from the seam to the foot of the view. Premultiplied, so the top rows, where it comes in over the clip's
 // dissolve, are clear. The caller releases it.
-static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFloat total, CGFloat fadeScale) {
+// What the dim and the deepening over the veil leave of it (veilShade), as SGRPlayerMotionView's layout and dim set them:
+// their opacities, where their ramp down the lower half starts and ends, and whether the dim is whole at every stop
+// (the lyrics).
+typedef struct {
+    CGFloat dim, deepen, rampFrom, rampTo;
+    BOOL wholeDim;
+} SGRVeilShade;
+
+// The share of a row at `y` the dim and the deepening leave: each is black along kDimEase from rampFrom to rampTo.
+static CGFloat veilShade(SGRVeilShade shade, CGFloat y) {
+    CGFloat span = MAX(1, shade.rampTo - shade.rampFrom), r = pow(MIN(1, MAX(0, (y - shade.rampFrom) / span)), kDimEase);
+    return (1 - shade.dim * (shade.wholeDim ? 1 : r)) * (1 - shade.deepen * r);
+}
+
+static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFloat total, SGRVeilShade shade) {
     const float *row = rowData.bytes;
     CGFloat mean[3] = {0}, weights = 0;
     for (int j = 0; j < kVeilSamples; j++) {
@@ -444,10 +456,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
         for (int c = 0; c < 3; c++) mean[c] += w * row[j * 3 + c];
     }
     for (int c = 0; c < 3; c++) mean[c] /= weights;
-    CGFloat footLuma = 0;
-    for (int j = 0; j < kVeilSamples; j++) footLuma += 0.299 * row[j * 3] + 0.587 * row[j * 3 + 1] + 0.114 * row[j * 3 + 2];
-    footLuma /= kVeilSamples;
-    CGFloat blackMost = MIN(0.9, kVeilFadeMost * fadeScale + kVeilFootMost * smoothStep(kVeilFootFrom, kVeilFootTo, footLuma));
+    CGFloat edgeShade = veilShade(shade, bottom), run = MAX(1, total - bottom);
     uint8_t *pixels = calloc(kVeilColumns * kVeilRows * 4, 1);
     // Each column's two colors, the near and the far, once for every row.
     CGFloat narrowAt[kVeilColumns][3], farAt[kVeilColumns][3];
@@ -460,12 +469,22 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     for (int r = 0; r < kVeilRows; r++) {
         CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
         CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);
-        CGFloat dark = blackMost * (1 - exp(-pow(d / kVeilFadeLength, kVeilFadePower)));
         CGFloat enter = bottom > seam ? smoothStep(seam, bottom, y) : 1;
+        // The row's colors, and their mean luma: one gain for the whole row keeps its columns' light and dark.
+        CGFloat colors[kVeilColumns][3], luma = 0;
+        for (int k = 0; k < kVeilColumns; k++) {
+            for (int c = 0; c < 3; c++) colors[k][c] = narrowAt[k][c] * (1 - across) + farAt[k][c] * across;
+            luma += 0.299 * colors[k][0] + 0.587 * colors[k][1] + 0.114 * colors[k][2];
+        }
+        luma = MAX(0.01, luma / kVeilColumns);
+        // The straight line from what shows at the cover's edge to kVeilFootLuma, as seen through the dim and the
+        // deepening at this row.
+        CGFloat along = MIN(1, d / run), seen = luma * edgeShade * (1 - along) + kVeilFootLuma * along;
+        CGFloat gain = MIN(kVeilGainMost, MAX(kVeilGainLeast, seen / (luma * MAX(0.05, veilShade(shade, y)))));
         for (int k = 0; k < kVeilColumns; k++) {
             uint8_t *pixel = pixels + (r * kVeilColumns + k) * 4;
             for (int c = 0; c < 3; c++) {
-                CGFloat color = (narrowAt[k][c] * (1 - across) + farAt[k][c] * across) * (1 - dark);
+                CGFloat color = colors[k][c] * gain;
                 pixel[c] = (uint8_t)lrint(MIN(1, MAX(0, color * enter)) * 255);
             }
             pixel[3] = (uint8_t)lrint(enter * 255);
@@ -516,7 +535,8 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
     NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
     CAGradientLayer *_foot;   // the colors of the poster's last rows, from side to side, from the seam down
-    CGFloat _veilScale;   // how much of kVeilFadeMost the veil's picture was drawn with
+    SGRVeilShade _veilShade;   // what the veil's picture was drawn for of the dim and the deepening over it
+    CGFloat _rampFrom, _rampTo;   // the dim's and the deepening's ramp down the lower half, as last laid out
     CALayer *_veil;   // under a cover shorter than the screen: the foot blurred, more the further down, over _foot
     NSData *_veilRow;   // the foot's colors now (the poster's last rows at first, then the clip's), kVeilSamples (floats) left to right
     AVPlayerItemVideoOutput *_liveOutput;   // reads the playing clip's frames, on the item it is on
@@ -765,7 +785,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
         CGRect geometry = CGRectMake(seam, height, width, total);
         if (!CGRectEqualToRect(geometry, _veilFor)) {
             _veilFor = geometry;
-            [self redrawVeil];
+            _veilShade.rampTo = -1;   // drawn again below, once the ramp is laid out
         }
     }
     _dim.frame = bounds;
@@ -791,6 +811,9 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     NSMutableArray *deepen = [NSMutableArray arrayWithObject:at(rampFrom)];
     for (int j = 1; j <= kRampSteps; j++) [deepen addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
     _deepen.locations = deepen;
+    _rampFrom = rampFrom;
+    _rampTo = screen;
+    [self redrawVeilIfShaded];
     CGFloat liftFrom = screen * kLiftFrom;
     NSMutableArray *lift = [NSMutableArray arrayWithObject:at(liftFrom)];
     for (int j = 1; j <= kRampSteps; j++) [lift addObject:at(liftFrom + (screen - liftFrom) * j / kRampSteps)];
@@ -834,8 +857,8 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 // The veil's picture again from the foot's colors now, for the layout it was last placed in.
 - (void)redrawVeil {
     if (_veil.hidden || !_veilRow || CGRectIsEmpty(_veilFor)) return;
-    _veilScale = [self veilFadeScale];
-    CGImageRef image = veilImage(_veilRow, _veilFor.origin.x, _veilFor.origin.y, _veilFor.size.height, _veilScale);
+    _veilShade = [self veilShadeNow];
+    CGImageRef image = veilImage(_veilRow, _veilFor.origin.x, _veilFor.origin.y, _veilFor.size.height, _veilShade);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _veil.contents = (__bridge id)image;
@@ -843,10 +866,16 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     CGImageRelease(image);
 }
 
-// The share of the veil's own black that is kept: all of it under a dark cover, none under a light one (see
-// kVeilBrightFrom).
-- (CGFloat)veilFadeScale {
-    return 1 - smoothStep(kVeilBrightFrom, kVeilBrightTo, brightEnd(_luminances));
+// The dim and the deepening over the veil now (kVeilFootLuma).
+- (SGRVeilShade)veilShadeNow {
+    return (SGRVeilShade){_dim.opacity, _deepen.opacity, _rampFrom, _rampTo, _lyricsUp};
+}
+
+// The veil's picture again when the dim or the deepening over it changed since it was drawn.
+- (void)redrawVeilIfShaded {
+    SGRVeilShade now = [self veilShadeNow], was = _veilShade;
+    if (fabs(now.dim - was.dim) > 0.01 || fabs(now.deepen - was.deepen) > 0.01 || fabs(now.rampFrom - was.rampFrom) > 0.5
+        || fabs(now.rampTo - was.rampTo) > 0.5 || now.wholeDim != was.wholeDim) [self redrawVeil];
 }
 
 // While the clip plays, the foot takes its colors from the clip's frames. The output is on the item the player has
@@ -1099,7 +1128,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
     CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
     _lift.opacity = _lyricsUp ? 0 : (float)(kLiftFoot * share);
-    if (fabs([self veilFadeScale] - _veilScale) > 0.02) [self redrawVeil];
+    [self redrawVeilIfShaded];
     _scrim.opacity = (float)(contrast ? kStillScrimTop * SGRPlayerClipDim(1, YES, NO) / SGRPlayerClipDim(1, NO, NO) : kStillScrimTop);
 }
 

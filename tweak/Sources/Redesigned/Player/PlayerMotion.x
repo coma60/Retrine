@@ -127,6 +127,11 @@ enum { kDimSteps = 4, kRampSteps = 8 };
 // The black over the dim at the bottom of the screen, from none where the lower half starts to darken: the Music
 // app's player darkens toward its foot (issue #39).
 static const CGFloat kDeepenBottom = 0.40;
+// Under a cover shorter than the screen the veil carries the foot, and the Music app's colors there hold nearly their
+// brightness to the bottom: over a pink animated cover (3x, 874 pt) they lost an eighth from the times to the foot,
+// where the deepening above took two fifths. There the deepening is this much (the lyrics and Increase Contrast keep
+// kDeepenBottom).
+static const CGFloat kDeepenVeiled = 0.12;
 // The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
 // cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
 // (SGRPlayerClipDim) asks for, and it grows down the whole lower half (kBottomStart), not over kBlurRamp. Increase
@@ -154,7 +159,9 @@ static const CGFloat kLiftFrom = 0.27, kLiftEase = 1.5, kLiftFoot = 0.066, kLift
 // edge (kVeilCrossFrom 0) down to kVeilCrossTo. The mean the far color is pulled to weighs each column by its
 // brightness plus kVeilMeanFloor, so a dark middle does not pull a bright cover's sides down to it.
 static const CGFloat kVeilNear = 0.03, kVeilWide = 0.177, kVeilMean = 0.67, kVeilMeanFloor = 0.5;
-static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 120;
+// Against the Music app's player over a pink animated cover, its colors had come to the mean 76 pt below the cover's
+// bottom, where the cover's own dark and light columns still ran on down here: taken over by kVeilCrossTo 70, not 120.
+static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
 // The veil's own black comes on top of the dim and the deepening, which already darken a light cover to the Music
 // app's measured 0.63 at the foot (a white cover: 108 of 255 there, 61 here with the veil's black on top of them). It
 // is kept for a dark cover, whose dim is at its floor, and goes by the time the cover's bright end (the dim's
@@ -163,6 +170,10 @@ static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 120;
 // so it keeps 0.30.
 static const CGFloat kVeilBrightFrom = 0.25, kVeilBrightTo = 0.55;
 static const CGFloat kVeilFadeMost = 0.30, kVeilFadeLength = 223, kVeilFadePower = 2.43;
+// The deepening is lighter under the veil (kDeepenVeiled), and a light foot needs black of its own: the Music app's
+// foot ends about as light under a light blue foot as under a dark pink one. Black comes in along the same curve,
+// from none at kVeilFootFrom of the foot's mean luma (0 to 1) to kVeilFootMost at kVeilFootTo.
+static const CGFloat kVeilFootFrom = 0.35, kVeilFootTo = 0.6, kVeilFootMost = 0.45;
 enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
 // The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
 // last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
@@ -184,9 +195,12 @@ static const BOOL kSeamBlur = NO;
 // masks start that much lower. The mirror held 90 pt and fading over 150 more stood as the cover's own shapes, light
 // and dark patches, behind the times and the controls, where the Music app's colors run on smooth and dim steadily to
 // the foot: it is held 30 pt, gone into the veil 110 pt further down, and blurred more (32 against 26).
-static const CGFloat kSoftFrom = 0.825, kSoftWhole = 0.925, kSoftRadius = 8, kSoftScale = 0.5;
-static const CGFloat kSofterFrom = 0.895, kSofterWhole = 1.025, kSofterRadius = 32, kSofterScale = 0.25;
-static const CGFloat kSofterReach = 30, kSofterFade = 110;
+// On the phone 0.045 lower kept the cover sharp past the Music app's (twice as much detail 50 pt above its bottom), so
+// they start halfway between. The mirror, held 30 pt, still stood as a light patch behind the badge: it is gone into
+// the veil 70 pt below the cover's edge.
+static const CGFloat kSoftFrom = 0.80, kSoftWhole = 0.90, kSoftRadius = 8, kSoftScale = 0.5;
+static const CGFloat kSofterFrom = 0.87, kSofterWhole = 1.0, kSofterRadius = 32, kSofterScale = 0.25;
+static const CGFloat kSofterReach = 0, kSofterFade = 70;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -430,6 +444,10 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
         for (int c = 0; c < 3; c++) mean[c] += w * row[j * 3 + c];
     }
     for (int c = 0; c < 3; c++) mean[c] /= weights;
+    CGFloat footLuma = 0;
+    for (int j = 0; j < kVeilSamples; j++) footLuma += 0.299 * row[j * 3] + 0.587 * row[j * 3 + 1] + 0.114 * row[j * 3 + 2];
+    footLuma /= kVeilSamples;
+    CGFloat blackMost = MIN(0.9, kVeilFadeMost * fadeScale + kVeilFootMost * smoothStep(kVeilFootFrom, kVeilFootTo, footLuma));
     uint8_t *pixels = calloc(kVeilColumns * kVeilRows * 4, 1);
     // Each column's two colors, the near and the far, once for every row.
     CGFloat narrowAt[kVeilColumns][3], farAt[kVeilColumns][3];
@@ -442,7 +460,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     for (int r = 0; r < kVeilRows; r++) {
         CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
         CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);
-        CGFloat dark = kVeilFadeMost * fadeScale * (1 - exp(-pow(d / kVeilFadeLength, kVeilFadePower)));
+        CGFloat dark = blackMost * (1 - exp(-pow(d / kVeilFadeLength, kVeilFadePower)));
         CGFloat enter = bottom > seam ? smoothStep(seam, bottom, y) : 1;
         for (int k = 0; k < kVeilColumns; k++) {
             uint8_t *pixel = pixels + (r * kVeilColumns + k) * 4;
@@ -740,6 +758,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     // A cover shorter than the screen gets the blurred foot below it, a Canvas (which fills the screen) none.
     BOOL shorter = _veilRow && height < screen - 0.5 && total > seam;
     _veil.hidden = !shorter;
+    [self updateDeepen];
     [self layoutSoftFor:shorter width:width height:height total:total];
     if (shorter) {
         _veil.frame = _foot.frame;
@@ -779,6 +798,13 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     _seamMask.frame = bounds;
     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
     [CATransaction commit];
+}
+
+// Lighter under the veil (kDeepenVeiled), except behind the lyrics and under Increase Contrast.
+- (void)updateDeepen {
+    BOOL veiled = !_veil.hidden && !_lyricsUp && !UIAccessibilityDarkerSystemColorsEnabled();
+    float opacity = (float)(veiled ? kDeepenVeiled : kDeepenBottom);
+    if (_deepen.opacity != opacity) _deepen.opacity = opacity;
 }
 
 // The blurred copies over a cover shorter than the screen (kSoftFrom), none over a Canvas or in the cover. Called
@@ -1069,6 +1095,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     // lyrics' own.
     if (!_lyricsUp && !contrast) dim *= kDimSoften;
     _dim.opacity = (float)dim;
+    [self updateDeepen];
     // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
     CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
     _lift.opacity = _lyricsUp ? 0 : (float)(kLiftFoot * share);

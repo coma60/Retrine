@@ -62,6 +62,23 @@ static CGFloat spreadWeight(CGFloat spread) {
     return u * u * (3 - 2 * u);
 }
 
+// A warm field is not colored up: over a black cover with a red and gold emblem (field 45,34,30, HLS 0.20, hue 18) and
+// a beige and orange painting (79,66,56, 0.17, hue 27) the Music app's background held the field's own saturation
+// (44,35,33 at 0.14, 82,68,56 at 0.19), where the pull raised both to about 0.33; the blue painting's field (hue 200)
+// is raised whole. Raising fades in with the hue's distance from kSatWarmHue, from kSatWarmFrom to kSatWarmTo degrees.
+static const CGFloat kSatWarmHue = 25, kSatWarmFrom = 40, kSatWarmTo = 80;
+
+static CGFloat hueWeight(const CGFloat e[3], CGFloat most, CGFloat spread) {
+    CGFloat hue;
+    if (most == e[0]) hue = fmod((e[1] - e[2]) / spread + 6, 6);
+    else if (most == e[1]) hue = (e[2] - e[0]) / spread + 2;
+    else hue = (e[0] - e[1]) / spread + 4;
+    CGFloat away = fabs(hue * 60 - kSatWarmHue);
+    away = MIN(away, 360 - away);
+    CGFloat u = MIN(1, MAX(0, (away - kSatWarmFrom) / (kSatWarmTo - kSatWarmFrom)));
+    return u * u * (3 - 2 * u);
+}
+
 // HLS saturation of the encoded color `e` (0 to 1) drawn toward `target`, lightness and hue kept.
 static void pullSaturation(CGFloat e[3], CGFloat target) {
     CGFloat most = MAX(e[0], MAX(e[1], e[2])), least = MIN(e[0], MIN(e[1], e[2]));
@@ -72,7 +89,7 @@ static void pullSaturation(CGFloat e[3], CGFloat target) {
     // A near-gray is not colored up: a black cover's faint tint (21,23,22 of 255, a spread of 2) was pulled to a dark
     // green, where the Music app's background stays the gray 31,33,33. Raising saturation fades in with the color's
     // spread from kSatSpreadFrom to kSatSpreadTo (the gray painting's field, 54,64,70, a spread of 16, is raised whole).
-    if (want > sat) want = sat + (want - sat) * spreadWeight(spread);
+    if (want > sat) want = sat + (want - sat) * spreadWeight(spread) * hueWeight(e, most, spread);
     // The same hue at the new saturation: each channel keeps its place between the least and the most.
     CGFloat newSpread = want * (light <= 0.5 ? 2 * light : 2 - 2 * light);
     CGFloat newLeast = light - newSpread / 2;

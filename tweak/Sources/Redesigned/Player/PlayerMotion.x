@@ -1650,6 +1650,7 @@ static BOOL showStill(void) {
 }
 
 void SGRPlayerStillChanged(void) {
+    SGRPlayerFieldLookChanged();
     if (SGRPlayerStillOn()) {
         if (SGRPlayerAnimatedVisualiserOn()) SGSetEnabled(SGRKeyPlayerAnimatedVisualiser, NO);
         showStill();
@@ -1663,6 +1664,7 @@ BOOL SGRPlayerAnimatedVisualiserOn(void) {
 
 // The still goes first, so the Visualizer finds the cover back and the field uncovered.
 void SGRPlayerAnimatedVisualiserChanged(void) {
+    SGRPlayerFieldLookChanged();
     if (SGRPlayerAnimatedVisualiserOn() && SGRPlayerStillOn()) {
         SGSetEnabled(SGRKeyPlayerAnimatedStill, NO);
         SGRPlayerStillChanged();
@@ -1673,6 +1675,7 @@ void SGRPlayerAnimatedVisualiserChanged(void) {
 // Both switches saved on (an older build, or set from two places at once): the full-screen cover stays.
 void SGRPlayerReconcileFallbackSwitches(void) {
     if (SGRPlayerStillOn() && SGRPlayerAnimatedVisualiserOn()) SGSetEnabled(SGRKeyPlayerAnimatedVisualiser, NO);
+    SGRPlayerFieldLookChanged();
 }
 
 BOOL SGRPlayerVisualiserFallbackWanted(void) {
@@ -1723,6 +1726,7 @@ static BOOL beginTrack(NSString *track) {
 }
 
 void SGRPlayerBackgroundDidChange(void) {
+    SGRPlayerFieldLookChanged();
     // A clip left playing under black or a photo would keep the cover masked until the next track.
     clear(YES);
     [sg_follower restart];

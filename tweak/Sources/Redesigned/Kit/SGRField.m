@@ -185,12 +185,18 @@ UIColor *SGRFieldShownColor(UIColor *color) {
 
 #pragma mark - the moving field
 
+- (void)setFluidMusicLook:(BOOL)fluidMusicLook {
+    _fluidMusicLook = fluidMusicLook;
+    _fluidLayer.musicLook = fluidMusicLook;
+}
+
 - (void)setFluid:(BOOL)fluid {
     if (fluid == _fluid) return;
     _fluid = fluid;
     if (fluid) self.flows = NO;
     if (fluid && !_fluidLayer) {
         _fluidLayer = [SGRFluidLayer layer];
+        _fluidLayer.musicLook = _fluidMusicLook;
         [self.layer insertSublayer:_fluidLayer above:_solid];
     }
     // The fluid field is the whole picture, as the moving one is.

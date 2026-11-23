@@ -14,7 +14,7 @@ static const struct { CGFloat side, x, y; CFTimeInterval turn; } kCopy[] = {
 };
 enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 // The blurred cover is small: it is drawn several times the screen's size, so detail is lost anyway. The Blur
-// setting is its radius in steps of 1.25 px, so the standard 24 is 30 px (see kBaseGain). No brightness
+// setting is its radius in steps of 1.25 px, so the standard 8 is 10 px, a twelfth of the side. No brightness
 // offset: Core Image works in linear light, where even -0.08 turned every channel under about 30% to black
 // (issue #100), leaving dark covers black and the rest a single saturated channel. The ceiling below darkens.
 static const CGFloat kBlurSide = 128, kBlurPerStep = 1.25;
@@ -35,13 +35,14 @@ static const CGFloat kLowerFrom = 0.5;
 // Each blurred pixel's linear luminance is capped here (kCeilingContrast with Increase Contrast): 0.17 keeps white
 // text at 4.7:1 on the brightest pixel before any shade, where 0.07 held every cover far darker than the Music app's.
 static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
-// The Music app's player behind a still cover: the cover blurred until only its broad colors are left, at its own
-// saturation, about a third as light (linear) as the cover's mean. Measured over a black cover with a red and gold
-// emblem and a blue and teal painting (3x, 874 pt), its background above the title stood at 44,34,32 and 55,75,88
-// of 255, where the 10 px blur and 150% saturation stood at 96,79,70 (the emblem's gold, drawn twice the screen's
-// size) and 52,96,108 (the waves' teal). Modelled from the same covers: a 30 px blur (Blur 24), 110% saturation and
-// this gain on linear light, times the Brightness setting, give 42,32,27 and 56,70,84.
-static const CGFloat kBaseGain = 0.35;
+// The Music app's look (musicLook): behind a still cover its player shows the cover blurred until only its broad
+// colors are left, at its own saturation, about a third as light (linear) as the cover's mean. Measured over a black
+// cover with a red and gold emblem and a blue and teal painting (3x, 874 pt), its background above the title stood
+// at 44,34,32 and 55,75,88 of 255, where Fluid's standards (a 10 px blur, 150% saturation) stood at 96,79,70 (the
+// emblem's gold, drawn twice the screen's size) and 52,96,108 (the waves' teal). Modelled from the same covers, this
+// blur radius (px on the 128 px cover), saturation and gain on linear light give 42,32,27 and 56,70,84. The Player
+// page's Blur, Saturation and Brightness are Fluid's own and do not apply to it.
+static const CGFloat kMusicBlur = 30, kMusicSaturation = 1.1, kMusicGain = 0.35;
 
 NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.redesign.fluidSettingsDidChange";
 
@@ -49,8 +50,8 @@ NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.
 static const struct { __unsafe_unretained NSString *key; SGRFluidLimits limits; } kSetting[] = {
     {@"spotifyglass.redesign.fluid.speed", {25, 300, 25, 100}},
     {@"spotifyglass.redesign.fluid.warp", {0, 100, 5, 100}},
-    {@"spotifyglass.redesign.fluid.blur", {2, 32, 1, 24}},
-    {@"spotifyglass.redesign.fluid.saturation", {0, 250, 10, 110}},
+    {@"spotifyglass.redesign.fluid.blur", {2, 24, 1, 8}},
+    {@"spotifyglass.redesign.fluid.saturation", {0, 250, 10, 150}},
     {@"spotifyglass.redesign.fluid.brightness", {40, 150, 5, 100}},
     {@"spotifyglass.redesign.fluid.grain", {0, 200, 10, 100}},
 };
@@ -192,6 +193,12 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     dispatch_async(dispatch_get_main_queue(), ^{ [self reblur]; });
 }
 
+- (void)setMusicLook:(BOOL)musicLook {
+    if (musicLook == _musicLook) return;
+    _musicLook = musicLook;
+    [self reblur];
+}
+
 // The same cover blurred again, for a new Blur, Saturation, Brightness or contrast.
 - (void)reblur {
     UIImage *source = _source;
@@ -329,7 +336,12 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     NSUInteger generation = ++_generation;
     BOOL contrast = SGRIncreaseContrast();
     CGFloat radius = kBlurPerStep * SGRFluidValue(SGRFluidBlur), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
-    CGFloat gain = kBaseGain * SGRFluidValue(SGRFluidBrightness) / 100.0;
+    CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
+    if (_musicLook) {
+        radius = kMusicBlur;
+        saturation = kMusicSaturation;
+        gain = kMusicGain;
+    }
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         CGFloat lowerLight = 0;

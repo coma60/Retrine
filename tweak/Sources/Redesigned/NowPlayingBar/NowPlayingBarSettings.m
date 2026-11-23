@@ -39,7 +39,7 @@ NSArray<SGModRow *> *SGRNowPlayingBarRows(void) {
     next.changed = ^(BOOL on) { SGRNowPlayingBarFollowTabBar(); };
     SGModRow *shape = SGChoiceRow(SGL(@"settings.nowplayingbar.artwork_shape.title", @"Artwork shape"), nil, SGRKeyBarArtworkShape,
                                   @[SGL(@"settings.nowplayingbar.artwork_shape.rounded_square", @"Rounded square"), SGL(@"settings.nowplayingbar.artwork_shape.circle", @"Circle")],
-                                  SGRBarArtworkShapeCircle);
+                                  SGRBarArtworkShapeRoundedSquare);
     shape.chosen = ^(NSInteger index) { SGRNowPlayingBarFollowTabBar(); };
     // Spotify's own flag for the bar's save button, off unless shown (SGRBarAddFlag): a flip stores the override
     // either way, so a stored choice wins over the redesign's default.

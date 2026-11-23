@@ -50,6 +50,14 @@ static const CGFloat kCardPressScale = 0.97, kCardPressDim = 0.22;
 static const CGFloat kArtworkSquareRadius = 8;
 // The cover's largest side: the phone's card's is 40 pt, the iPad's 60 pt.
 static const CGFloat kCardArtworkMax = 48, kCapsuleArtworkMax = 64;
+// The Music app's mini player on the phone (measured at 3x on a 402 pt screen, the same track and tab bar): its card is
+// 48 pt high where Spotify's is 56, its bottom where Spotify's is, so the card's glass leaves kCompactCut off the top and
+// what is on it goes kCompactDrop down to stay in its middle. Its cover is 30 pt, its middle 31 pt in from the card's
+// side (Spotify's 40 pt one: 27.7), so the cover is drawn at kCompactArtworkScale and kCompactArtworkShift further in;
+// its title (13 pt semibold) and artist (12 pt) start 2.6 pt nearer the cover (kCompactTextShift). Not on the iPad's
+// capsule, in a Jam (the strip's own height) or in the tab bar's row.
+static const CGFloat kCompactCut = 8, kCompactDrop = 4, kCompactArtworkScale = 0.75, kCompactArtworkShift = 3.3, kCompactTextShift = -2.6;
+static BOOL sg_compact;
 // kRoundedKey marks the cover's views this file rounded, so a change of shape rounds them again.
 static char kGlassKey, kStripGlassKey, kDimKey, kRoundedKey;
 static __weak UIView *sg_card;
@@ -231,7 +239,7 @@ static CGFloat capsuleSquareRadius(CGFloat radius, CGFloat inset) {
 
 // The cover's corners for the Player page's Artwork shape (SGRKeyBarArtworkShape), on a card `cardHeight` high.
 static CGFloat artworkRadius(CGFloat width, CGFloat cardHeight) {
-    if (SGInt(SGRKeyBarArtworkShape, SGRBarArtworkShapeCircle) != SGRBarArtworkShapeRoundedSquare) return width / 2;
+    if (SGInt(SGRKeyBarArtworkShape, SGRBarArtworkShapeRoundedSquare) != SGRBarArtworkShapeRoundedSquare) return width / 2;
     return sg_capsule ? capsuleSquareRadius(cardHeight / 2, (cardHeight - width) / 2) : kArtworkSquareRadius;
 }
 
@@ -262,6 +270,22 @@ static void restyleCardContent(UIView *card) {
         }
         sg_cardArtwork = outer;
     });
+    // The compact card's content (kCompactCut): down to the glass's middle, the cover smaller and further in. Only a
+    // view at rest or at this file's own transform is moved, so none of Spotify's own animations is overridden.
+    CGAffineTransform drop = sg_compact ? CGAffineTransformMakeTranslation(0, kCompactDrop) : CGAffineTransformIdentity;
+    CGAffineTransform ownDrop = CGAffineTransformMakeTranslation(0, kCompactDrop);
+    for (UIView *v in card.subviews) {
+        if (inStrip(v, card) || isStrip(v)) continue;
+        if ((CGAffineTransformIsIdentity(v.transform) || CGAffineTransformEqualToTransform(v.transform, ownDrop)) &&
+            !CGAffineTransformEqualToTransform(v.transform, drop)) v.transform = drop;
+    }
+    UIView *cover = sg_cardArtwork;
+    if ([cover isDescendantOfView:card]) {
+        CGAffineTransform smaller = CGAffineTransformScale(CGAffineTransformMakeTranslation(kCompactArtworkShift, 0), kCompactArtworkScale, kCompactArtworkScale);
+        CGAffineTransform want = sg_compact ? smaller : CGAffineTransformIdentity;
+        if ((CGAffineTransformIsIdentity(cover.transform) || CGAffineTransformEqualToTransform(cover.transform, smaller)) &&
+            !CGAffineTransformEqualToTransform(cover.transform, want)) cover.transform = want;
+    }
     __block UIView *progress = sg_progress;
     if (![progress isDescendantOfView:card]) {
         progress = nil;
@@ -275,7 +299,7 @@ static void restyleCardContent(UIView *card) {
     // off the round ends, a capsule's height in from each side.
     CGSize cardSize = card.bounds.size;
     CGRect target = sg_capsule ? CGRectMake(cardSize.height, cardSize.height - 6, MAX(0, cardSize.width - 2 * cardSize.height), 2)
-                               : CGRectMake(52, cardSize.height - 6, MAX(0, cardSize.width - 160), 2);
+                               : CGRectMake(52, cardSize.height - 6 - (sg_compact ? kCompactDrop : 0), MAX(0, cardSize.width - 160), 2);
     if (progress && !CGRectEqualToRect(progress.frame, target)) {
         progress.frame = target;
         [progress setNeedsLayout];
@@ -863,9 +887,14 @@ static const CGFloat kRowLinesGap = 1, kRowLinesMargin = 6;
 @property (nonatomic) BOOL artistInRow;
 @end
 
+// Every bar text there is, so a change between the compact card and the others refits them all (SGRBarTextRefit).
+static NSHashTable<SGRBarText *> *sg_barTexts;
+
 @implementation SGRBarText
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
+    if (!sg_barTexts) sg_barTexts = [NSHashTable weakObjectsHashTable];
+    [sg_barTexts addObject:self];
     self.userInteractionEnabled = NO;
     self.accessibilityElementsHidden = YES;
     _title = [SGMarqueeLabel new];
@@ -880,8 +909,9 @@ static const CGFloat kRowLinesGap = 1, kRowLinesMargin = 6;
 
 // Capped at Large, so a bar made at one text size and shown at another needs them made again.
 - (void)applyFonts {
-    _title.font = SGCategoryCappedFont(UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryLarge);
-    _artists.font = SGCategoryCappedFont(UIFontTextStyleFootnote, UIFontWeightRegular, UIContentSizeCategoryLarge);
+    // The compact card's 13 pt title and 12 pt artist (kCompactCut), else the 15 and 13 of before.
+    _title.font = SGCategoryCappedFont(sg_compact ? UIFontTextStyleFootnote : UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryLarge);
+    _artists.font = SGCategoryCappedFont(sg_compact ? UIFontTextStyleCaption1 : UIFontTextStyleFootnote, UIFontWeightRegular, UIContentSizeCategoryLarge);
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -900,13 +930,22 @@ static const CGFloat kRowLinesGap = 1, kRowLinesMargin = 6;
     BOOL two = _inRow ? has && _artistInRow && titleHeight + artistsHeight + kRowLinesMargin <= size.height : has;
     // The full card's lines share 2pt of their leading, set as close as the Music app sets its card's; the row's
     // are parted by a point.
-    CGFloat overlap = _inRow ? -kRowLinesGap : 2;
+    // The compact card's lines are set apart as the Music app's: baselines 15 pt apart (kCompactCut).
+    CGFloat overlap = _inRow ? -kRowLinesGap : sg_compact ? 0 : 2;
     CGFloat top = round((size.height - titleHeight - (two ? artistsHeight - overlap : 0)) / 2);
     _title.frame = CGRectMake(0, top, size.width, titleHeight);
     _artists.frame = CGRectMake(0, top + titleHeight - overlap, size.width, artistsHeight);
     _artists.alpha = two ? 1 : 0;
 }
 @end
+
+// The card turned compact or back (kCompactCut): every bar text takes its fonts and lines again.
+static void SGRBarTextRefit(void) {
+    for (SGRBarText *text in sg_barTexts.allObjects) {
+        [text applyFonts];
+        [text setNeedsLayout];
+    }
+}
 
 static NSString *marqueeText(UIView *marquee) {
     for (UIView *sub in marquee.subviews) if ([sub isKindOfClass:UILabel.class]) return ((UILabel *)sub).text;
@@ -1056,7 +1095,7 @@ static void placeText(UIView *page) {
     }
     // Inside Spotify's unit, so the text moves and fades with it as Spotify slides a page's in and out: the page's
     // height, which the card shows whole, and a line of text wide.
-    CGRect frame = CGRectMake(0, -SGFrameIn(unit, page).origin.y, unit.bounds.size.width, page.bounds.size.height);
+    CGRect frame = CGRectMake(sg_compact ? kCompactTextShift : 0, -SGFrameIn(unit, page).origin.y, unit.bounds.size.width, page.bounds.size.height);
     BOOL inRow = sg_inline != nil;
     void (^place)(void) = ^{
         if (text.superview != unit) [unit addSubview:text];
@@ -1197,6 +1236,15 @@ static void styleNowPlayingBar(UIViewController *container) {
     }
     frame.size.height = MIN(frame.size.height, 80);
     if (frame.size.height < 30 || frame.size.width < 100) return;
+    BOOL compact = !capsule && !strip && !sg_inline && frame.size.height >= 52;
+    if (compact != sg_compact) {
+        sg_compact = compact;
+        SGRBarTextRefit();
+    }
+    if (compact) {
+        frame.origin.y += kCompactCut;
+        frame.size.height -= kCompactCut;
+    }
 
     CGFloat radius = capsule ? frame.size.height / 2 : MIN(kCardRadius, frame.size.height / 2);
     if (card) {

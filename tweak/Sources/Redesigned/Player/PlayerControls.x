@@ -1116,6 +1116,30 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
 // The ordinary player's duration unit and the AI DJ's (DJMDurationElementsUnit) hold the same progress bar and times.
 static char kDurationHostKey;
 
+
+// The badge's ink as the times' (SGRBackdropInk.h): the same alphas, raised the same way over a light backdrop, and
+// plain where plusL cannot see the backdrop. Taken again at each new reading of it.
+static const CGFloat kBadgeLightInk = 0.85, kBadgeLightFill = 0.14;
+static void inkBadge(UIView *host) {
+    UIView *badge = SGAudioQualityShownBadge(host);
+    if (!badge) return;
+    BOOL plusL = YES;
+    CGFloat ink = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL).CGColor);
+    CGFloat fill = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardFill(), kBadgeLightFill, &plusL).CGColor);
+    SGAudioQualitySetRedesignedInk(host, ink, fill, plusL);
+}
+
+// The badge placed between the times and inked for what is behind it.
+static char kBadgeInkKey;
+static void placeBadge(UIView *host) {
+    SGAudioQualityPlaceRedesignedBadge(host, kTimesDrop);
+    inkBadge(host);
+    if (objc_getAssociatedObject(host, &kBadgeInkKey)) return;
+    objc_setAssociatedObject(host, &kBadgeInkKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    __weak UIView *weak = host;
+    SGRBackdropInkObserve(host, ^{ if (weak) inkBadge(weak); });
+}
+
 static void durationLaidOut(UIViewController *unit) {
     UIView *host = unit.viewIfLoaded;
     if (!host) return;
@@ -1141,7 +1165,7 @@ static void durationLaidOut(UIViewController *unit) {
                            SGRFindByIdentifier(host, @"now-playing-time-remaning-label", &kRemainingTimeKey) ?: NSNull.null]) {
         if ([time isKindOfClass:UIView.class] && !CGAffineTransformEqualToTransform(time.transform, drop)) time.transform = drop;
     }
-    SGAudioQualityPlaceRedesignedBadge(host, kTimesDrop);
+    placeBadge(host);
     // Whether Spotify's font has digits of one width shows in the descriptor's feature settings.
     if (!taken) return;
     static dispatch_once_t once;
@@ -1164,7 +1188,7 @@ static void durationLaidOut(UIViewController *unit) {
     if (![time.accessibilityIdentifier isEqualToString:@"now-playing-time-take-label"]) return;
     for (UIView *view = time.superview; view; view = view.superview) {
         if (!objc_getAssociatedObject(view, &kDurationHostKey)) continue;
-        SGAudioQualityPlaceRedesignedBadge(view, kTimesDrop);
+        placeBadge(view);
         return;
     }
 }

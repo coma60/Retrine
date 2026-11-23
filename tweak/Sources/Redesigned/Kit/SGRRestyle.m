@@ -3,6 +3,7 @@
 #import "Core/SGCore.h"
 #import "Settings/SGPageStyle.h"
 #import "SGRRestyle.h"
+#import "SGRBackdropInk.h"
 #import "SGRRefinements.h"
 #import "SGRTokens.h"
 
@@ -340,7 +341,9 @@ static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
 // with the backdrop: measured on its player over a light, a mid and a dark cover, its digits stand 67 of 255 above
 // the backdrop each time (0.265), where Spotify's own #B3B3B3 peaked at 179 whatever stood behind. More opaque and
 // plainly composited under Increase Contrast.
-static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7;
+// The ink the audio quality badge shares (AudioQuality.x: its text and glyph), so the two read alike: SGRBackdropInk.h
+// raises it toward kTimeInkLightAlpha over a light backdrop, and draws it plain where plusL cannot see the backdrop.
+static const CGFloat kTimeInkAlpha = 0.40, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
 static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
@@ -349,8 +352,12 @@ static UIFont *timeFont(void) {
     return SGMonospacedDigitsFont(base);
 }
 
-static UIColor *timeInk(void) {
-    return [UIColor colorWithWhite:1 alpha:UIAccessibilityDarkerSystemColorsEnabled() ? kTimeInkContrastAlpha : kTimeInkAlpha];
+static UIColor *timeInk(UILabel *label, BOOL *plusL) {
+    if (UIAccessibilityDarkerSystemColorsEnabled()) {
+        if (plusL) *plusL = NO;
+        return [UIColor colorWithWhite:1 alpha:kTimeInkContrastAlpha];
+    }
+    return SGRInkFor(label, kTimeInkAlpha, kTimeInkLightAlpha, plusL);
 }
 
 static BOOL sameFont(UIFont *a, UIFont *b) {
@@ -392,13 +399,15 @@ static void applyMonospaced(UILabel *label, Class original) {
     // The times' ink, except while a finger scrubs and they are lit (SGRTimeLabelLit). It goes through the label's own
     // textColor, which colors the whole text, so the label's color is the ink too and is what a scrub gives back.
     if (styled && !objc_getAssociatedObject(label, &kTimeLitKey)) {
-        UIColor *ink = timeInk();
+        UIColor *ink = timeInk(label, NULL);
         NSAttributedString *now = label.attributedText;
         UIColor *shown = now.length ? [now attribute:NSForegroundColorAttributeName atIndex:0 effectiveRange:NULL] : label.textColor;
         if (!shown || ![shown isEqual:ink]) ((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&parent, @selector(setTextColor:), ink);
     }
     if (styled) {
-        NSString *filter = UIAccessibilityDarkerSystemColorsEnabled() ? nil : @"plusL";
+        BOOL plusL = NO;
+        timeInk(label, &plusL);
+        NSString *filter = plusL ? @"plusL" : nil;
         if (![label.layer.compositingFilter isEqual:filter]) label.layer.compositingFilter = filter;
     }
 }
@@ -413,6 +422,20 @@ static void keepMonospaced(UILabel *label, Class original) {
     sg_keepingMonospaced = YES;
     applyMonospaced(label, original);
     sg_keepingMonospaced = NO;
+}
+
+// The same pass again, for a new reading of the backdrop: the class the override was made over is found as
+// SGRMonospacedDigits's own end finds it. Only the ink changes (the text and font are already as styled).
+static void refreshTimeInk(UILabel *label) {
+    if (!label || !label.window || objc_getAssociatedObject(label, &kTimeStyleKey) == nil) return;
+    Class original = object_getClass(label);
+    for (Class c = original; c; c = class_getSuperclass(c)) {
+        if ([NSStringFromClass(c) hasPrefix:@"SGRMonospaced_"]) {
+            original = class_getSuperclass(c);
+            break;
+        }
+    }
+    keepMonospaced(label, original);
 }
 
 // Snapshot the input, not UIKit's synthesized attributedText. Edits through
@@ -479,6 +502,9 @@ void SGRTimeLabelStyle(UILabel *label) {
     objc_setAssociatedObject(label, &kTimeStyleKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // The override is in place or goes in now, and the label is given the style once at once.
     SGRMonospacedDigits(label);
+    // The ink follows how light the backdrop is (SGRBackdropInk.h): taken again at each new reading.
+    __weak UILabel *weak = label;
+    SGRBackdropInkObserve(label, ^{ refreshTimeInk(weak); });
 }
 
 void SGRTimeLabelLit(UILabel *label, BOOL lit) {
@@ -771,4 +797,154 @@ BOOL SGRFire(UIControl *control) {
     if (!fire) return NO;
     [control sendActionsForControlEvents:fire];
     return YES;
+}
+
+#pragma mark - the ink over a light backdrop (SGRBackdropInk.h)
+
+NSNotificationName const SGRBackdropInkDidChangeNotification = @"spotifyglass.redesign.backdropInkDidChange";
+
+// The field is drawn this small and read in rows, each averaged across the width.
+enum { kInkColumns = 8, kInkRows = 48 };
+// Seconds between readings; four times that in Low Power Mode.
+static const NSTimeInterval kInkEvery = 0.25;
+// A reading is reported when a row moved this much (of 1).
+static const CGFloat kInkReportDelta = 0.02;
+// The ink starts to rise where the backdrop is this light (encoded luma) and has risen whole at the second.
+static const CGFloat kInkLightFrom = 0.50, kInkLightTo = 0.75;
+// Never divide by less than this headroom when drawing plusL's result as a normal white.
+static const CGFloat kInkLeastHeadroom = 0.05;
+
+static char kInkObserverKey;
+static __weak UIView *sg_inkSource;
+static NSTimer *sg_inkTimer;
+static NSHashTable<UIView *> *sg_inkObservers;
+static float sg_inkRows[kInkRows];
+static BOOL sg_inkHave;
+static NSUInteger sg_inkTicks;
+
+static CGFloat inkLuma(const uint8_t *p) {
+    return (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255.0;
+}
+
+static BOOL sourceShows(UIView *source) {
+    if (!source.window) return NO;
+    for (UIView *view = source; view; view = view.superview)
+        if (view.hidden || view.alpha <= 0.01) return NO;
+    return UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+}
+
+static void notifyInk(void) {
+    for (UIView *view in sg_inkObservers.allObjects) {
+        void (^block)(void) = objc_getAssociatedObject(view, &kInkObserverKey);
+        if (block) block();
+    }
+    [NSNotificationCenter.defaultCenter postNotificationName:SGRBackdropInkDidChangeNotification object:nil];
+}
+
+// The source drawn kInkColumns by kInkRows pixels, as the render server shows it (Metal and video layers included, which a
+// layer's own renderInContext: leaves out).
+static void readField(void) {
+    UIView *source = sg_inkSource;
+    if (!sourceShows(source)) return;
+    CGSize bounds = source.bounds.size;
+    if (bounds.width < 1 || bounds.height < 1) return;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.scale = 1;
+    format.opaque = YES;
+    __block BOOL drawn = NO;
+    UIImage *image = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(kInkColumns, kInkRows) format:format]
+        imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        CGContextScaleCTM(context.CGContext, kInkColumns / bounds.width, kInkRows / bounds.height);
+        drawn = [source drawViewHierarchyInRect:source.bounds afterScreenUpdates:NO];
+    }];
+    CGImageRef cg = image.CGImage;
+    if (!drawn || !cg) return;
+    uint8_t pixels[kInkColumns * kInkRows * 4] = {0};
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef bitmap = CGBitmapContextCreate(pixels, kInkColumns, kInkRows, 8, kInkColumns * 4, space,
+                                                kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (!bitmap) return;
+    CGContextDrawImage(bitmap, CGRectMake(0, 0, kInkColumns, kInkRows), cg);
+    CGContextRelease(bitmap);
+    float rows[kInkRows];
+    BOOL any = NO;
+    for (int y = 0; y < kInkRows; y++) {
+        CGFloat sum = 0;
+        for (int x = 0; x < kInkColumns; x++) {
+            const uint8_t *p = pixels + (y * kInkColumns + x) * 4;
+            sum += inkLuma(p);
+            any = any || p[0] || p[1] || p[2];
+        }
+        rows[y] = sum / kInkColumns;
+    }
+    // A blank picture is a failed draw (nothing is black all the way down the player), not a reading.
+    if (!any) return;
+    BOOL moved = !sg_inkHave;
+    for (int y = 0; y < kInkRows && !moved; y++) moved = fabsf(rows[y] - sg_inkRows[y]) > kInkReportDelta;
+    if (!moved) return;
+    memcpy(sg_inkRows, rows, sizeof rows);
+    sg_inkHave = YES;
+    notifyInk();
+}
+
+static void inkTick(void) {
+    sg_inkTicks++;
+    if (NSProcessInfo.processInfo.lowPowerModeEnabled && sg_inkTicks % 4) return;
+    readField();
+}
+
+void SGRBackdropInkSetSource(UIView *source) {
+    if (source == sg_inkSource && (sg_inkTimer.valid || !source)) return;
+    sg_inkSource = source;
+    sg_inkHave = NO;
+    [sg_inkTimer invalidate];
+    sg_inkTimer = nil;
+    if (!source) return;
+    sg_inkTimer = [NSTimer timerWithTimeInterval:kInkEvery repeats:YES block:^(NSTimer *timer) { inkTick(); }];
+    sg_inkTimer.tolerance = kInkEvery / 2;
+    [NSRunLoop.mainRunLoop addTimer:sg_inkTimer forMode:NSRunLoopCommonModes];
+}
+
+CGFloat SGRBackdropLightnessBehind(UIView *view) {
+    UIView *source = sg_inkSource;
+    if (!sg_inkHave || !view || !source || !view.window || view.window != source.window) return -1;
+    CGSize size = source.bounds.size;
+    if (size.width < 1 || size.height < 1) return -1;
+    CGRect rect = [view convertRect:view.bounds toView:source];
+    CGFloat top = MAX(0, MIN(1, CGRectGetMinY(rect) / size.height)), bottom = MAX(0, MIN(1, CGRectGetMaxY(rect) / size.height));
+    int from = MIN(kInkRows - 1, (int)floor(top * kInkRows)), to = MIN(kInkRows - 1, MAX(from, (int)ceil(bottom * kInkRows) - 1));
+    CGFloat sum = 0;
+    for (int y = from; y <= to; y++) sum += sg_inkRows[y];
+    return sum / (to - from + 1);
+}
+
+BOOL SGRInkIsolated(UIView *view) {
+    for (UIView *v = view; v; v = v.superview) {
+        CALayer *layer = v.layer;
+        if (layer.mask || layer.shouldRasterize || layer.filters.count) return YES;
+    }
+    return NO;
+}
+
+UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
+    CGFloat light = SGRBackdropLightnessBehind(view);
+    if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) {
+        if (plusL) *plusL = YES;
+        return [UIColor colorWithWhite:1 alpha:alpha];
+    }
+    CGFloat t = MAX(0, MIN(1, (light - kInkLightFrom) / (kInkLightTo - kInkLightFrom)));
+    t = t * t * (3 - 2 * t);
+    CGFloat shown = alpha + (MAX(alpha, lightAlpha) - alpha) * t;
+    BOOL isolated = SGRInkIsolated(view);
+    if (isolated) shown = MIN(1, shown / MAX(1 - light, kInkLeastHeadroom));
+    if (plusL) *plusL = !isolated;
+    return [UIColor colorWithWhite:1 alpha:shown];
+}
+
+void SGRBackdropInkObserve(UIView *view, void (^changed)(void)) {
+    if (!view) return;
+    if (!sg_inkObservers) sg_inkObservers = [NSHashTable weakObjectsHashTable];
+    [sg_inkObservers addObject:view];
+    objc_setAssociatedObject(view, &kInkObserverKey, changed, OBJC_ASSOCIATION_COPY_NONATOMIC);
 }

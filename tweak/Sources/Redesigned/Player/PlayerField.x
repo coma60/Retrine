@@ -216,6 +216,8 @@ static SGRArtworkField *fieldIn(UIView *plane) {
     else if (plane.subviews.lastObject != field) [plane bringSubviewToFront:field];
     if (!CGRectEqualToRect(field.frame, plane.bounds)) field.frame = plane.bounds;
     visibilityChanged();
+    // The small text over the field is inked for how light the field is behind it (SGRBackdropInk.h).
+    SGRBackdropInkSetSource(field);
     // Before the clip's: taking black or the photo away uncovers the field, which a clip then covers again.
     SGRPlayerBackdropLaidOut(field);
     SGRPlayerMotionFieldLaidOut();

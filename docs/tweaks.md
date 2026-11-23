@@ -958,9 +958,9 @@ Shared:
                   Lossless: a small capsule in semibold caption type and the secondary label color, centered under the
                   progress bar between the two times and on their middle (AudioQuality.x, AudioQualityRules.m). The
                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
-                  4.6 pt corners (a quarter of its height) in medium caption type, lit by adding light to what is behind it
-                  (plusL: 17 of 255 for the fill, 165 more for the text and glyph, the Music app's measured 107 lifted so
-                  the words read as clearly over the player's light lower half), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 6 pt further from the bar and, with the artist, added to what is behind them (plusL, 0.265 and 0.44 white, as measured on the Music app's player over a light, a mid and a dark cover) so they brighten and darken with the cover, plainly composited under Increase Contrast
+                  4.6 pt corners (a quarter of its height) in semibold caption type (the times'), lit by adding light to what is behind it
+                  (plusL: 17 of 255 for the fill, 0.40 white for the text and glyph, the times' own alpha so the two read alike; over a
+                  light backdrop both rise to 0.85 and, where plusL cannot see the backdrop, are drawn plain: see Backdrop ink below), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 6 pt further from the bar and, with the artist, added to what is behind them (plusL, 0.265 and 0.44 white, as measured on the Music app's player over a light, a mid and a dark cover) so they brighten and darken with the cover, plainly composited under Increase Contrast
                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
@@ -1669,7 +1669,7 @@ Redesigned:
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
                   in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
-                  the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.265 alpha (0.7 with Increase Contrast) as the Music app's times are dim and translucent, a minus sign before the time left) and, with Rolling time digits on (the
+                  the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.40 alpha (0.7 with Increase Contrast; 0.85 over a light backdrop, see Backdrop ink) added to what is behind it, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
                   Player page) keeps the player's add button on the title row, which the ⋯ otherwise stands in for, and
@@ -2510,7 +2510,7 @@ is drawn, so a failed shader leaves Light; Reset keeps the style. Checked in the
 Speed (25-300 %, how fast the four blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
 far from the middle they turn and how much the upper three show; at none one copy turns alone), Blur (2-24, the
 radius at 1.25 px a step on the 128 px cover), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
-light that the luminance ceiling for the player's text, 0.07 or 0.04 with Increase Contrast, still caps) and Grain (0-200 %, 100 standard, shown only while Smooth
+light that the luminance ceiling, 0.17 or 0.04 with Increase Contrast, still caps; the shade over the lower part, not the ceiling, keeps the text's 4.5:1: see Backdrop ink) and Grain (0-200 %, 100 standard, shown only while Smooth
 is the style, spotifyglass.redesign.fluid.grain: the noise that breaks up banding, half an eight-bit step either way at 100
 and none at 0, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the
 text keeps its contrast; the Light copies have no grain to scale); the
@@ -2670,3 +2670,25 @@ area's bottom (kRowAboveSafeArea), the gaps from the artist to the bar, the bar 
 90 and 92 pt with the volume row 50 pt over the footer row (SGRPlayerVolumeToRow), previous and next 107 pt from play
 (kSpreadShare 0.31) at 29.5 pt glyph size and play at 50 pt, the footer's lyrics and queue glyphs at 0.216 and 0.784 of
 the width, and the volume row 5 pt past the side margins with a 4 pt glyph gap.
+
+### Backdrop ink (Redesigned/Kit/SGRBackdropInk.h, in SGRRestyle.m)
+
+The artist, the times and the audio quality badge are white ADDED to the backdrop (plusL), which goes nowhere over a
+light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a
+reader that draws it 8 by 48 pixels four times a second (once in four in Low Power Mode, never while the player is
+hidden or the app inactive) and keeps each row's mean encoded luma; it is read through the render server
+(drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. SGRInkFor gives a
+label's ink from the rows behind it: its legacy alpha below 0.50 luma, the ceiling (0.85) from 0.75, smoothly
+between, and the legacy alpha unchanged with no reading yet or under Increase Contrast. A label under an ancestor with a
+mask, a rasterized layer or a filter is drawn into a group of its own where plusL adds to nothing; SGRInkIsolated finds
+that and the ink is then a plain white of the alpha that lands on the same value over the measured backdrop
+(alpha / (1 - luma)). The times (SGRTimeLabelStyle), the artist (PlayerTitle.x) and the badge
+(PlayerControls.x, SGAudioQualitySetRedesignedInk) take the ink again at each new reading. The badge and the times
+share one alpha (0.40, 0.85 light), and the badge uses the times' semibold.
+
+The Fluid field's lower part follows the Music app's player (Mr. Blue Sky cover, measured: ochre at the title, olive at
+the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before), and the
+shade over the bottom starts at 40% of the visible rect and grows along x^1.75 to a peak of 0.30 over a dark cover up to
+0.62 over one at the ceiling (SGRFluid.m, kShade*), the peak read from the lower half of each blurred cover and
+crossfaded with it, so white text keeps 4.5:1 whatever the cover. Not run on a device or simulator: checked by reading
+the code paths only.

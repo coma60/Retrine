@@ -20,9 +20,21 @@ enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 static const CGFloat kBlurSide = 128, kBlurPerStep = 1.25;
 // The upper three copies' opacity at full Warp.
 static const float kOverOpacity = 0.7;
-// The shade over the bottom of the visible rect, where the controls are. Light: the ceiling already keeps the
-// text's contrast, and 0.55 left the lower half of a dark cover black (issue #100).
-static const CGFloat kShadeFrom = 0.45, kShadeAlpha = 0.3;
+// The shade over the bottom of the visible rect, where the controls are. It was flat and light, because the ceiling
+// below kept the whole cover dark (and 0.55 left the lower half of a dark cover black, issue #100). The Music app's
+// player instead keeps the cover's own colors and brightness down to the title and the bar and goes dark only toward
+// its foot (measured over the Mr. Blue Sky cover: ochre at the title, olive at the controls, near black at the foot),
+// so the ceiling is higher and the shade does the darkening: none down to kShadeFrom of the visible rect, then along
+// x^kShadeEase (x the way from there to the bottom) to its peak. The peak follows how light the lower part of the
+// blurred cover is: kShadeLeast over a dark cover (nothing to hold back), kShadeMost over one at the ceiling, so the
+// text's contrast holds whatever the cover (4.5:1 at the title and the times, more below).
+static const CGFloat kShadeFrom = 0.40, kShadeEase = 1.75, kShadeLeast = 0.30, kShadeMost = 0.62;
+enum { kShadeSteps = 6 };
+// The share of the blurred cover (from its top) that counts as its lower part, for the shade's peak.
+static const CGFloat kLowerFrom = 0.5;
+// Each blurred pixel's linear luminance is capped here (kCeilingContrast with Increase Contrast): 0.17 keeps white
+// text at 4.7:1 on the brightest pixel before any shade, where 0.07 held every cover far darker than the Music app's.
+static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
 
 NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.redesign.fluidSettingsDidChange";
 
@@ -71,7 +83,7 @@ NSArray<NSString *> *SGRFluidRendererNames(void) {
 }
 
 // `gain` is the Brightness setting as a factor on linear light, applied under the ceiling below.
-static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat saturation, CGFloat gain) {
+static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat saturation, CGFloat gain, CGFloat *lowerLight) {
     CGImageRef source = image.CGImage;
     if (!source) return nil;
     CIImage *input = [CIImage imageWithCGImage:source];
@@ -100,7 +112,8 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGContextDrawImage(bitmap, CGRectMake(0, 0, width, height), cg);
     CGImageRelease(cg);
     unsigned char *pixels = CGBitmapContextGetData(bitmap);
-    CGFloat ceiling = contrast ? 0.04 : 0.07;
+    CGFloat ceiling = contrast ? kCeilingContrast : kCeiling, lowerSum = 0;
+    size_t lowerCount = 0, lowerRow = (size_t)floor(height * kLowerFrom);
     for (size_t i = 0; i < width * height; i++) {
         unsigned char *p = pixels + i * 4;
         CGFloat rgb[3];
@@ -110,12 +123,15 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         }
         CGFloat light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
         CGFloat cap = MIN(gain * (light > ceiling ? ceiling / light : 1), ceiling / light);
+        if (i / width >= lowerRow) { lowerSum += MIN(ceiling, light * cap); lowerCount++; }
         for (int c = 0; c < 3; c++) {
             CGFloat v = MIN(1, rgb[c] * cap);
             p[c] = floor(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055));
         }
         p[3] = 255;
     }
+    // 0 for a black lower part, 1 for one at the ceiling.
+    if (lowerLight) *lowerLight = lowerCount ? MIN(1, lowerSum / lowerCount / ceiling) : 0;
     cg = CGBitmapContextCreateImage(bitmap);
     UIImage *result = cg ? [UIImage imageWithCGImage:cg] : nil;
     if (cg) CGImageRelease(cg);
@@ -126,6 +142,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
 @implementation SGRFluidLayer {
     CALayer *_copies[kCopies];
     CAGradientLayer *_shade;
+    CGFloat _lowerLight;   // how light the shown cover's lower part is, 0 to 1 (blurred())
     UIImage *_source;
     UIImage *_blur;   // the last blurred cover shown, handed to Smooth when it comes
     NSUInteger _generation;
@@ -149,7 +166,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     }
     [self applyWarp];
     _shade = [CAGradientLayer layer];
-    _shade.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor, (id)[UIColor colorWithWhite:0 alpha:kShadeAlpha].CGColor];
+    [self updateShadeColors];
     [self addSublayer:_shade];
     [self applyRenderer];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(contrastChanged)
@@ -259,6 +276,17 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [self setNeedsLayout];
 }
 
+// The shade's stops: nothing at the top, then x^kShadeEase of the peak down to the bottom, the peak following how light
+// the cover's lower part is.
+- (void)updateShadeColors {
+    CGFloat peak = kShadeLeast + (kShadeMost - kShadeLeast) * MAX(0, MIN(1, _lowerLight));
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:kShadeSteps + 1];
+    for (int i = 0; i <= kShadeSteps; i++) {
+        [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:peak * pow((CGFloat)i / kShadeSteps, kShadeEase)].CGColor];
+    }
+    _shade.colors = colors;
+}
+
 - (void)layoutSublayers {
     [super layoutSublayers];
     CGRect bounds = self.bounds;
@@ -267,8 +295,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _shade.frame = bounds;
-    _shade.locations = @[@(MIN(1, (CGRectGetMinY(visible) + visible.size.height * kShadeFrom) / total)),
-                         @(MIN(1, CGRectGetMaxY(visible) / total))];
+    CGFloat shadeTop = MIN(1, (CGRectGetMinY(visible) + visible.size.height * kShadeFrom) / total), shadeBottom = MIN(1, CGRectGetMaxY(visible) / total);
+    NSMutableArray *at = [NSMutableArray arrayWithCapacity:kShadeSteps + 1];
+    for (int i = 0; i <= kShadeSteps; i++) [at addObject:@(shadeTop + (shadeBottom - shadeTop) * i / kShadeSteps)];
+    _shade.locations = at;
     _gpu.frame = bounds;
     _gpu.visibleRect = visible;
     if (!CGRectEqualToRect(visible, _laidOutFor) && visible.size.width >= 1) {
@@ -295,17 +325,25 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        UIImage *blur = blurred(image, contrast, radius, saturation, gain);
+        CGFloat lowerLight = 0;
+        UIImage *blur = blurred(image, contrast, radius, saturation, gain, &lowerLight);
         dispatch_async(dispatch_get_main_queue(), ^{
             SGRFluidLayer *layer = weakSelf;
             if (!blur || !layer || generation != layer->_generation) return;
-            [layer show:blur animated:animated];
+            [layer show:blur lowerLight:lowerLight animated:animated];
         });
     });
 }
 
-- (void)show:(UIImage *)blur animated:(BOOL)animated {
+- (void)show:(UIImage *)blur lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
     _blur = blur;
+    _lowerLight = lowerLight;
+    // The shade's peak follows the new cover's lower part, crossfading with the cover.
+    [CATransaction begin];
+    [CATransaction setDisableActions:!animated];
+    [CATransaction setAnimationDuration:SGRCrossfade];
+    [self updateShadeColors];
+    [CATransaction commit];
     [_gpu setPicture:blur.CGImage animated:animated];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];

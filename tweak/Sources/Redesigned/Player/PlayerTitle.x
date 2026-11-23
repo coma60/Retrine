@@ -172,15 +172,16 @@ static void setShownFont(UILabel *self, SEL _cmd, UIFont *font) {
 
 // The artist in the Music app's ink: white ADDED to what is behind it (plusL), 0.44 of it, so it brightens and darkens
 // with the cover behind it (measured on its player: 112 of 255 above the backdrop over a light, a mid and a dark
-// cover, saturating at white on a light one); under Increase Contrast the secondary color as it was. The title as
-// Spotify paints it.
-static const CGFloat kArtistInk = 0.44;
+// cover, saturating at white on a light one); under Increase Contrast the secondary color as it was. Over a light
+// backdrop, where that adds next to nothing, the alpha rises to kArtistInkLight (SGRBackdropInk.h), and it is drawn
+// plain where plusL cannot see the backdrop. The title as Spotify paints it.
+static const CGFloat kArtistInk = 0.44, kArtistInkLight = 0.85;
 static void setShownColor(UILabel *self, SEL _cmd, UIColor *color) {
-    BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled();
-    UIColor *ink = title ? color : (contrast ? SGRSecondary() : [UIColor colorWithWhite:1 alpha:kArtistInk]);
+    BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled(), plusL = YES;
+    UIColor *ink = title ? color : (contrast ? SGRSecondary() : SGRInkFor(self, kArtistInk, kArtistInkLight, &plusL));
     ((void (*)(id, SEL, UIColor *))spotifys(self, _cmd))(self, _cmd, ink);
     if (!title) {
-        NSString *filter = contrast ? nil : @"plusL";
+        NSString *filter = contrast || !plusL ? nil : @"plusL";
         if (![self.layer.compositingFilter isEqual:filter]) self.layer.compositingFilter = filter;
     }
 }
@@ -252,6 +253,11 @@ static void adopt(UILabel *label, BOOL title) {
     [label setText:objc_getAssociatedObject(label, &kOriginalKey)];
     [label setFont:label.font];
     [label setTextColor:label.textColor];
+    // The artist's ink follows how light the backdrop is: taken again at each new reading.
+    if (!title) {
+        __weak UILabel *weak = label;
+        SGRBackdropInkObserve(label, ^{ [weak setTextColor:weak.textColor]; });
+    }
 }
 
 static void refresh(void) {

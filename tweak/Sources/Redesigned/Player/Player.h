@@ -97,12 +97,6 @@ SGRArtworkField *SGRPlayerField(void);
 // Holds the field still, or lets it move, for what is over it now: a paused song, an Animated artwork clip, the
 // Visualizer (PlayerField.x).
 void SGRPlayerHoldField(void);
-// Animated with Song without a clip on the cover art (neither the full-screen cover nor the Visualizer): the Fluid
-// field under it, which a song with no clip shows, takes the Music app's look behind a still cover (SGRFluidLayer's
-// musicLook) instead of the Player page's Fluid settings. Called when the background or either switch changes
-// (PlayerField.x).
-BOOL SGRPlayerFieldMusicLook(void);
-void SGRPlayerFieldLookChanged(void);
 
 #pragma mark - the player's margins and rhythm
 

@@ -49,9 +49,6 @@ NSArray<NSString *> *SGRFluidRendererNames(void);   // in SGRFluidRenderer's ord
 - (void)setArtwork:(UIImage *)image animated:(BOOL)animated;
 // Turning, or held still where it is. Off to begin with.
 @property (nonatomic) BOOL moving;
-// The Music app's look behind a still cover (SGRFluid.m, kMusicBlur) in place of the Player page's Blur, Saturation
-// and Brightness: the cover blurred to its broad colors, at its own saturation and darker. Off to begin with.
-@property (nonatomic) BOOL musicLook;
 // The part of the layer on screen, in its own coordinates: the copies turn about points in it and the
 // shade darkens its bottom, whatever the layer bleeds past it. The whole layer while empty.
 @property (nonatomic) CGRect visibleRect;

@@ -134,14 +134,6 @@ void SGRPlayerHoldField(void) {
     sg_field.motionHeld = fieldHeld();
 }
 
-BOOL SGRPlayerFieldMusicLook(void) {
-    return SGRPlayerArtworkBackground() == SGRPlayerBackgroundAnimated && !SGRPlayerStillOn() && !SGRPlayerAnimatedVisualiserOn();
-}
-
-void SGRPlayerFieldLookChanged(void) {
-    sg_field.fluidMusicLook = SGRPlayerFieldMusicLook();
-}
-
 #pragma mark - the field
 
 // Follow the cover: the most colorful of the cover's five colors (its quarters and the whole), once per artwork. A
@@ -179,7 +171,6 @@ static SGRArtworkField *fieldIn(UIView *plane) {
     // Under black or a photo the field is made as the artwork's last choice, so going back to it needs no restart.
     SGRPlayerBackgroundKind background = SGRPlayerArtworkBackground();
     field.flows = background == SGRPlayerBackgroundColours;
-    field.fluidMusicLook = SGRPlayerFieldMusicLook();
     field.fluid = background >= SGRPlayerBackgroundFluid;
     field.motionHeld = fieldHeld();
     field.bleed = kBleed;

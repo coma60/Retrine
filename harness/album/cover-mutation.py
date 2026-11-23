@@ -24,6 +24,8 @@ if mode == "seams":
         replace("SGMotionAlbumRowMatcher(", "SGRAlbumTestRowMatcher(")
     if "SGMotionPageIdentifierCover(" in source:
         replace("SGMotionPageIdentifierCover(", "SGRAlbumTestIdentifierCover(")
+    if "SGMotionPageStillEditionCover(" in source:
+        replace("SGMotionPageStillEditionCover(", "SGRAlbumTestStillEditionCover(")
     replace("SGMotionPoster(file,", "SGRAlbumTestPoster(file,")
     replace("SGRCoverRead(poster,", "SGRAlbumTestStillRead(poster,")
     replace("[AVPlayerLayer playerLayerWithPlayer:_player]", "SGRAlbumTestPlayerLayer(_player)")

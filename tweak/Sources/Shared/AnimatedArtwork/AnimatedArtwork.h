@@ -99,6 +99,9 @@ void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, v
 // The album by its identifiers (barcode, then a recording): `identified` YES when they named a release, with a clip or
 // still, so a title search cannot take a same-named release of another year in its place.
 void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
+// After the identifiers named a still edition: the album by its title among Apple's releases of the album's year on
+// Spotify (within a year), so another of the same name and another year cannot stand in; nil without a year or a clip.
+void SGMotionPageStillEditionCover(NSString *albumURI, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file));
 SGMotionTicket *SGMotionRequestSongClip(NSString *uri, NSURL *canvas, NSString *artist, NSString *album, NSString *song,
                                       CGFloat pixels, void (^done)(NSURL *file, NSString *source));
 SGMotionTicket *SGMotionRequestAlbumSongClip(NSString *uri, NSURL *canvas, NSString *artist, NSString *album, NSString *song,

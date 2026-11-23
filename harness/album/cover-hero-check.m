@@ -226,6 +226,11 @@ static NSMutableArray<NSURL *> *shownClips;
 + (NSString *)albumURI:(UIViewController *)controller { return controller.restorationIdentifier; }
 @end
 
+// A still edition's title search finds nothing in these fixtures.
+void SGRAlbumTestStillEditionCover(NSString *uri, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
+    done(nil);
+}
+
 void SGRAlbumTestIdentifierCover(NSString *uri, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     HARNESS_CHECK([uri isEqual:fixtureURI] && [album isEqual:@"Fixture Album"]);
     identifierResult = [done copy];

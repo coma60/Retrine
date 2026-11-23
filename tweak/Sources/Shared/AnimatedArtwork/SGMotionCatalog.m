@@ -674,10 +674,26 @@ static NSString *releaseKey(id name) {
     return key;
 }
 
-// `album` is Spotify's whole name: one that already reads "X - Single" stays apart from Apple's album "X".
+// A name's words in order, every run of punctuation one gap: Spotify's "Moana (Original Motion Picture
+// Soundtrack/Deluxe Edition)" and Apple Music's "Moana (Original Motion Picture Soundtrack) [Deluxe Edition]" are the
+// same words, set apart by a slash on one side and brackets on the other.
+static NSString *wordsKey(NSString *name) {
+    if (![name isKindOfClass:NSString.class]) return @"";
+    NSString *key = [name stringByFoldingWithOptions:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch | NSWidthInsensitiveSearch
+                                              locale:nil].lowercaseString;
+    // An apostrophe joins its word ("n'" and "n’" both "n"), every other mark parts words.
+    key = [key stringByReplacingOccurrencesOfString:@"['’]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, key.length)];
+    key = [key stringByReplacingOccurrencesOfString:@"[^\\p{L}\\p{N}]+" withString:@" " options:NSRegularExpressionSearch range:NSMakeRange(0, key.length)];
+    return [key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+}
+
+// `album` is Spotify's whole name: one that already reads "X - Single" stays apart from Apple's album "X". The same
+// words with other punctuation are the same release; a " - Single" or " - EP" still has to be there to count.
 static BOOL sameRelease(id record, NSString *album) {
     NSString *name = coverKey(dig(record, @"attributes/name"));
-    return [name isEqual:album] || [releaseKey(name) isEqual:album];
+    if ([name isEqual:album] || [releaseKey(name) isEqual:album]) return YES;
+    NSString *words = wordsKey(album);
+    return words.length && ([wordsKey(name) isEqual:words] || [wordsKey(releaseKey(name)) isEqual:words]);
 }
 
 // An Apple single that Spotify names without " - Single". It is taken only when no album or EP of that name
@@ -796,18 +812,24 @@ static void identifiedCover(NSString *video, CGFloat pixels, CoverAnswer answer)
 }
 
 // The recording's albums of the same name are editions of one release (Apple Music's "Moana (Original Motion Picture
-// Soundtrack)" and its Deluxe Edition, where Spotify has only "Moana (Original Motion Picture Soundtrack/Deluxe
-// Edition)"), and often only one of them moves. The one that moves is taken; of several that move, the one with the
-// shortest name (the standard edition, which the others add words to), then the lowest identifier, so every song of
-// the release lands on the same clip. nil when none moves.
-static NSString *editionWithVideo(NSDictionary<NSString *, id> *albums) {
+// Soundtrack)" and its "[Deluxe Edition]"), and either may be the one that moves. Of those that move, the one whose
+// words are most like Spotify's name (the edition words, "deluxe edition", decide it), then the shortest name (the
+// standard edition, which the others add words to), then the lowest identifier, so every song of the release lands
+// on the same clip. nil when none moves.
+static NSString *editionWithVideo(NSDictionary<NSString *, id> *albums, NSString *album) {
+    NSSet *wanted = [NSSet setWithArray:[wordsKey(album) componentsSeparatedByString:@" "]];
     NSString *chosen = nil;
-    NSUInteger chosenLength = NSUIntegerMax;
+    NSUInteger chosenShared = 0, chosenLength = NSUIntegerMax;
     for (NSString *identifier in [albums.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
         id record = albums[identifier];
         if (!videoOf(dig(record, @"attributes/editorialVideo"))) continue;
-        NSUInteger length = coverKey(dig(record, @"attributes/name")).length;
-        if (length < chosenLength) { chosen = identifier; chosenLength = length; }
+        NSArray *words = [wordsKey(dig(record, @"attributes/name")) componentsSeparatedByString:@" "];
+        NSUInteger shared = 0;
+        for (NSString *word in words) if ([wanted containsObject:word]) shared++;
+        NSUInteger length = words.count;
+        if (!chosen || shared > chosenShared || (shared == chosenShared && length < chosenLength)) {
+            chosen = identifier; chosenShared = shared; chosenLength = length;
+        }
     }
     return chosen;
 }
@@ -850,7 +872,7 @@ static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSU
                 }
             }
             if (!albums.count) albums = singles;
-            NSString *chosen = complete ? editionWithVideo(albums) : nil;
+            NSString *chosen = complete ? editionWithVideo(albums, album) : nil;
             SGLog(@"motion: %@ ISRC %@: %lu matching albums, %@", track, isrc, (unsigned long)albums.count,
                   chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"none moves" : @"no matching non-single album"));
             if (!chosen) { answer(albums.count && complete ? @NO : nil, complete); return; }

@@ -795,6 +795,23 @@ static void identifiedCover(NSString *video, CGFloat pixels, CoverAnswer answer)
     masterFile(video, pixels, ^(NSURL *file) { answer(file ?: (id)@NO, file != nil); });
 }
 
+// The recording's albums of the same name are editions of one release (Apple Music's "Moana (Original Motion Picture
+// Soundtrack)" and its Deluxe Edition, where Spotify has only "Moana (Original Motion Picture Soundtrack/Deluxe
+// Edition)"), and often only one of them moves. The one that moves is taken; of several that move, the one with the
+// shortest name (the standard edition, which the others add words to), then the lowest identifier, so every song of
+// the release lands on the same clip. nil when none moves.
+static NSString *editionWithVideo(NSDictionary<NSString *, id> *albums) {
+    NSString *chosen = nil;
+    NSUInteger chosenLength = NSUIntegerMax;
+    for (NSString *identifier in [albums.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        id record = albums[identifier];
+        if (!videoOf(dig(record, @"attributes/editorialVideo"))) continue;
+        NSUInteger length = coverKey(dig(record, @"attributes/name")).length;
+        if (length < chosenLength) { chosen = identifier; chosenLength = length; }
+    }
+    return chosen;
+}
+
 static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSUInteger generation, CoverAnswer answer) {
     if (!SGSpotifyValidURI(track, @"track")) {
         SGLog(@"motion: ISRC not read for %@: no track URI", album);
@@ -833,10 +850,10 @@ static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSU
                 }
             }
             if (!albums.count) albums = singles;
-            NSString *chosen = complete && albums.count == 1 ? albums.allKeys.firstObject : nil;
+            NSString *chosen = complete ? editionWithVideo(albums) : nil;
             SGLog(@"motion: %@ ISRC %@: %lu matching albums, %@", track, isrc, (unsigned long)albums.count,
-                  chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"ambiguous" : @"no matching non-single album"));
-            if (!chosen) { answer(nil, complete); return; }
+                  chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"none moves" : @"no matching non-single album"));
+            if (!chosen) { answer(albums.count && complete ? @NO : nil, complete); return; }
             identifiedCover(videoOf(dig(albums[chosen], @"attributes/editorialVideo")), pixels, answer);
         });
     });
@@ -851,7 +868,8 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
     id previous = sg_kept[[@"album\nbarcode\n" stringByAppendingString:uri]];
     if (previous && previous != NSNull.null) { done(previous); return; }
     // "identifiers" misses were decided without the recording's single, so they are not read.
-    NSString *key = [@"album\nidentifiers2\n" stringByAppendingString:uri];
+    // "identifiers2" took a barcode's still edition as final, though another edition of the release may move.
+    NSString *key = [@"album\nidentifiers3\n" stringByAppendingString:uri];
     NSUInteger generation = sg_generation;
     lookUp(key, done, ^(void (^answer)(id, BOOL)) {
         SGSpotifyMetadataRequestAllowConstrained(path, nil, SGFlag(SGKeyMotionLowData, NO), ^(NSData *data, NSInteger status, NSError *error) {
@@ -874,7 +892,11 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
                         video = videoOf(dig(record, @"attributes/editorialVideo"));
                         if (video) break;
                     }
-                    if (identified) identifiedCover(video, pixels, answer);
+                    if (video) identifiedCover(video, pixels, answer);
+                    // The barcode's edition is still: another edition of the recording may move. Still it is, if not.
+                    else if (identified) recordingCover(recording, album, pixels, generation, ^(id result, BOOL keep) {
+                        answer(result ?: @NO, keep);
+                    });
                     else if (answered) recordingCover(recording, album, pixels, generation, answer);
                     else answer(nil, NO);
                 });
@@ -1008,16 +1030,27 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong7\n" stringByAppendingString:song];
     }
     NSUInteger generation = sg_generation;
+    // The album's clip, once any of its songs found one: every song of the album plays the same clip, rather than each
+    // looking for its own by title and finding another edition's, or none.
+    NSString *albumClip = SGSpotifyValidURI(albumURI, @"album") ? [@"album\nclip\n" stringByAppendingString:albumURI] : nil;
     // The remote file is what is kept: the store may drop its local copy later in the launch.
     void (^deliver)(id) = ^(id remote) {
         if (ticket.cancelled) return;
         if (generation != sg_generation) { done(nil, NO); return; }   // asked before a clear: no download after it
         NSURL *address = [remote isKindOfClass:NSURL.class] ? remote : nil;
+        if (address && albumClip && ![sg_kept[albumClip] isEqual:address]) {
+            keepValue(albumClip, address);
+            keepAlbumAnswer(albumClip, address);
+        }
         ticket.child = SGMotionRequestFile(address, ^(NSURL *file) {
             ticket.child = nil;
             if (!ticket.cancelled) done(file, remote != nil);
         });
     };
+    if (albumClip && [sg_kept[albumClip] isKindOfClass:NSURL.class]) {
+        deliver(sg_kept[albumClip]);
+        return ticket;
+    }
     lookUp(key, ^(id remote) {
         if (!remote && albumURI && sg_kept[key] == NSNull.null && generation == sg_generation && !ticket.cancelled)
             identifierCover(albumURI, album, trackURI, pixels, deliver);

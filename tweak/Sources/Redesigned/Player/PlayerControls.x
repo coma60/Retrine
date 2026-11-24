@@ -1150,15 +1150,15 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
 static char kDurationHostKey;
 
 
-// The badge's text and glyph inked as the times are (SGRBackdropInk.h): brighter over a light backdrop. Its fill stays
-// as it is, so the badge itself does not whiten. Taken again at each new reading of the backdrop.
-static const CGFloat kBadgeLightInk = 0.6;
+// The badge's ink as the times' (SGRBackdropInk.h): the same alphas, raised the same way over a light backdrop, and
+// plain where plusL cannot see the backdrop. Taken again at each new reading of it.
+static const CGFloat kBadgeLightInk = 0.85, kBadgeLightFill = 0.14;
 static void inkBadge(UIView *host) {
     UIView *badge = SGAudioQualityShownBadge(host);
     if (!badge) return;
     BOOL plusL = YES;
     CGFloat ink = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL).CGColor);
-    CGFloat fill = SGAudioQualityStandardFill();
+    CGFloat fill = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardFill(), kBadgeLightFill, &plusL).CGColor);
     SGAudioQualitySetRedesignedInk(host, ink, fill, plusL);
 }
 

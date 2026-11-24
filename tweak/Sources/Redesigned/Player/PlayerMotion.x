@@ -223,10 +223,15 @@ static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50,
 static const CGFloat kMirrorStretch = 2;
 // Over it the Music app's color adjustment (NowPlayingArtworkBackgroundEffect.ColorAdjustmentsLayer): a gradient whose
 // alpha takes each color toward kAdjustKeep of itself plus kAdjustLift of white (its dimming matrix, 0.3 c + 0.0651),
-// from none kAdjustFrom of the way down its region to whole at the region's foot. The region is the bottom
-// kAdjustShare of the screen (its length, width * 1.2296 * aspect * 9 / 19.5, on a phone taller than 700 pt). Its
-// saturation (2.4 in the same matrix) is left out, so the mirror keeps the clip's own colors.
-static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.2, kAdjustShare = 1.2296 * 9 / 19.5;
+// from none at kAdjustFrom of the screen to whole at its foot, along x^kAdjustEase (x the share of the way from there
+// to the foot). Measured on the Music app's player over Wish You Were Here's animated cover, whose white margins show
+// the adjustment alone (3x, 874 pt): white starts to darken at a quarter of the screen and goes on smoothly, 0.82 of
+// itself at the title, 0.39 at the foot, which that curve meets within a hundredth all the way down. Started at
+// the bottom 0.5675 of the screen and 0.2 into it (the region the Music app's layer is framed to), and drawn along a
+// line, it left the screen white down to below the title, which vanished in it. Its saturation (2.4 in the same
+// matrix) is left out, so the mirror keeps the clip's own colors.
+static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.25, kAdjustEase = 1.52;
+enum { kAdjustSteps = 10 };
 // The same matrix saturates by kAdjustSaturation (CAColorMatrixMakeSaturation 2.4). Saturation and the dimming commute
 // (the lift is gray), so the mirror is saturated before it is dimmed, and its blur carries the change smoothly across
 // the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
@@ -627,6 +632,14 @@ static NSArray *deepenColors(void) {
     return colors;
 }
 
+// The adjustment's stops (kAdjustEase): nothing where it starts, then the curve to whole, `white` at `alpha` when whole.
+static NSArray *adjustColors(CGFloat white, CGFloat alpha) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
+    for (int j = 0; j <= kAdjustSteps; j++)
+        [colors addObject:(__bridge id)[UIColor colorWithWhite:white alpha:alpha * pow((CGFloat)j / kAdjustSteps, kAdjustEase)].CGColor];
+    return colors;
+}
+
 // The white that lifts a dark clip's foot: nothing where it starts, then the curve to whole (its opacity is kLiftFoot).
 static NSArray *liftColors(void) {
     NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
@@ -719,11 +732,11 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     [_picture.layer addSublayer:_soft];
     [_picture.layer addSublayer:_softer];
     _adjust = [CAGradientLayer layer];
-    _adjust.colors = @[(id)UIColor.clearColor.CGColor, (id)[UIColor colorWithWhite:0 alpha:1 - kAdjustKeep].CGColor];
+    _adjust.colors = adjustColors(0, 1 - kAdjustKeep);
     _adjust.hidden = YES;
     [_picture.layer addSublayer:_adjust];
     _adjustLift = [CAGradientLayer layer];
-    _adjustLift.colors = @[(id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:kAdjustLift].CGColor];
+    _adjustLift.colors = adjustColors(1, kAdjustLift);
     _adjustLift.compositingFilter = @"plusL";
     _adjustLift.hidden = YES;
     [_picture.layer addSublayer:_adjustLift];
@@ -908,8 +921,9 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
     ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
     ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
-    CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, region = screen * kAdjustShare;
-    NSArray *adjustAt = @[at(screen - region * (1 - kAdjustFrom)), at(screen)];
+    CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, adjustFrom = screen * kAdjustFrom;
+    NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
+    for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
     for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
         layer.frame = CGRectMake(0, 0, width, total);
         layer.locations = adjustAt;

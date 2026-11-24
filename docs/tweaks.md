@@ -2793,8 +2793,9 @@ fixed alpha of white to the backdrop (artist 0.46, times 0.265, badge 0.40 ink a
 so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the
 "ink tree" log lines (SGRRestyle.m) show no mask, rasterized layer or filter between the ink and the field on 9.2.0:
 added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink
-plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), and the alpha as it is
-with no reading yet. Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
+plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), at most 0.6 for the
+times and the badge's text and 0.8 for the artist so the text brightens without going solid white, and the alpha as it
+is with no reading yet. The badge's fill stays at 17/255, so the badge itself does not whiten. Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
 times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk)
 and the footer (refreshFooterInk) take the ink again at each new reading; the badge uses the times' semibold.
 

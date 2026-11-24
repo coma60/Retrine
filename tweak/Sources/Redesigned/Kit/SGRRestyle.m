@@ -344,7 +344,7 @@ static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
 // Against the Music app's player over a dark blue and a pink animated cover (3x) they stood a fifth dimmer than its own
 // and were lifted to 0.48; that was ink drawn plain, decided while the opening player's container was masked and kept
 // (SGRInkFor). Added to the backdrop they are back at 0.265.
-static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
+static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.6;
 static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
@@ -977,13 +977,14 @@ UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL)
     // rasterizing between the ink and the field: over a light cover the ink came out as plain white of that alpha (the
     // times at 0.265 all but vanished over Wish You Were Here's gray). So the ink is drawn plain at the alpha that lands
     // on the same value over the measured backdrop, alpha / (1 - luma): the Music app's lightness, whatever is behind.
-    // With no reading yet it is the alpha as it is.
-    (void)lightAlpha;
+    // With no reading yet it is the alpha as it is. It rises no further than `lightAlpha`, so the text brightens and
+    // is read without going solid white.
     noteInkView(view);
     if (plusL) *plusL = NO;
     CGFloat light = SGRBackdropLightnessBehind(view);
     if (light < 0) return [UIColor colorWithWhite:1 alpha:alpha];
-    return [UIColor colorWithWhite:1 alpha:MIN(1, alpha / MAX(1 - light, kInkLeastHeadroom))];
+    CGFloat shown = MIN(MAX(alpha, lightAlpha), alpha / MAX(1 - light, kInkLeastHeadroom));
+    return [UIColor colorWithWhite:1 alpha:MAX(alpha, shown)];
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {

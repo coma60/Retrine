@@ -179,7 +179,7 @@ static void setShownFont(UILabel *self, SEL _cmd, UIFont *font) {
 // of 255 above its backdrop where the Music app's stands 125 to 160 above it (near white with the backdrop's tint), so
 // it was lifted to 0.62. Those were drawn plain: the ink was decided while the opening player's container was masked
 // and kept. Added to the backdrop it is the Music app's 0.46 (115 of 255 above it, as measured).
-static const CGFloat kArtistInk = 0.46, kArtistInkLight = 0.9;
+static const CGFloat kArtistInk = 0.46, kArtistInkLight = 0.8;
 static void setShownColor(UILabel *self, SEL _cmd, UIColor *color) {
     BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled(), plusL = YES;
     UIColor *ink = title ? color : (contrast ? SGRSecondary() : SGRInkFor(self, kArtistInk, kArtistInkLight, &plusL));

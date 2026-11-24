@@ -25,7 +25,7 @@ CGFloat SGRBackdropLightnessBehind(UIView *view);
 // Whether plusL on `view` composites against nothing: a mask, a rasterized layer or a filter above it.
 BOOL SGRInkIsolated(UIView *view);
 // The ink for `view`: plain white that lands where `alpha` of white added to the backdrop behind it would
-// (alpha / (1 - its lightness)). `lightAlpha` is no longer used. `plusL` is set to NO: the color is the plain one.
+// (alpha / (1 - its lightness)), at most `lightAlpha`. `plusL` is set to NO: the color is the plain one.
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL);
 // For things drawn as plain translucent white that the Music app draws as white ADDED to the backdrop (its bars, its
 // glyphs): the plain alpha that lands on the same value as `add` of white added over the measured backdrop,

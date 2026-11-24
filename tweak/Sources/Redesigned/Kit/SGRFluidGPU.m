@@ -6,33 +6,38 @@
 #import "SGRFluidGPU.h"
 #import "SGRTokens.h"
 #import "SGRBridges.h"
+#import "Shared/Player/SGMusicSpectrum.h"
 
 // The Music app's backdrop, stage for stage, with the numbers read from its renderer:
 //   1. Three copies of the cover, drawn opaque one over the other into a picture a quarter of the drawable's size. Each
 //      is mixed toward black (0.5, and 0.0075 more per copy), its contrast and saturation raised about middle gray and
-//      Rec. 709 luma (kCopyContrast, kCopySaturation), on the cover's encoded values. The unit is half the visible
+//      Rec. 709 luma by the music (kContrastPerBass, kCopySaturation), on the cover's encoded values. The unit is half the visible
 //      rect's longer side (its aspect matrix scales x by height / width on a phone); the copies are 1.4, 0.7 and 0.7
 //      units across, at (0, 0), (-0.25, 0.15) and (0.7, 0.7) (y up), each turning clockwise about its own center once
 //      in 120, 70 and 90 s, the third also carried about the middle by the first's turn.
 //   2. That picture blurred, a Gaussian of kBlurPoints standard deviation on screen.
 //   3. Shown through a mesh: held still, flat and a quarter larger; flowing, bent and breathing between none and its
-//      full reach once in 2 pi * 3.5 s; going from one to the other over 0.8 s, eased in and out. Each pixel is mixed
-//      toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable).
+//      full reach once in 2 pi * 3.5 s of its clock; going from one to the other eased in and out (kSettleClock).
+//      Each pixel is mixed toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable).
 // The bend is Retrine's own (the Music app picks one of its own meshes at random): a push out from the middle and two
 // slow waves, at phases picked per layer, of the reach its meshes have.
-// Its numbers are 0.5 toward black, 2.4 saturation (0.166 more per unit of the music's loudness), contrast 1 (0.076
-// more per unit), 0.1 toward white and a 160 pt blur. Drawn with exactly those, this pipeline lands within 0.4 of 255
-// of a simulation of the Music app's own (its color table included), yet 4 to 14 off its screenshots over four
-// covers: something it does is not read yet. These are the same stages with their numbers fitted to its screenshots
-// (simulated over the covers at the moments of the turn that matched best, a downhill search over all six): 8.0 of
-// 255 off on average with its own numbers, 6.0 with these. kDepth takes each pixel's lowest channel down by that share
-// of its spread after the table, which its screenshots show (an orange's blue, a teal's red) and its numbers do not.
-static const float kCopyScrim = 0.576f, kCopyScrimStep = 0.0075f, kWhite = 0.07f, kDepth = 0.092f;
-static const float kCopySaturation = 2.985f, kCopyContrast = 0.965f;
-static const float kBlurPoints = 238;
+static const float kCopyScrim = 0.5f, kCopyScrimStep = 0.0075f, kWhite = 0.1f;
+static const float kCopySaturation = 2.4f;
+static const float kBlurPoints = 160;
+// The music, as the Music app's backdrop hears it (SGMusicSpectrum.h): the bands' shares, averaged over the last four
+// readings by these weights (oldest first), held at their peak and let down by these shares of themselves each of its
+// frames, followed half way each frame, and eased (smootherstep). Bass raises the copies' contrast about middle gray,
+// treble their saturation, and a mix of bass and middle grows the whole picture about the middle by 0.33 m^2.
+static const float kHistoryWeight[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+static const float kPeakFall[3] = {1.0f / 50, 1.0f / 100, 1.0f / 1000};
+static const float kContrastPerBass = 0.076f, kSaturationPerTreble = 0.166f, kGrowth = 0.33f, kGrowthMiddle = 0.1f;
+// Its clock and settling count frames, not seconds: each of its frames is 1/60 s (1/600 under Reduce Motion), and it
+// draws at the screen's most frames a second, so on a 120 Hz screen it turns and breathes at twice real time. Going
+// from held to flowing takes 2/60 s of its clock per frame over 0.8 s, eased (0.42, 0, 0.58, 1).
+static const double kFrameClock = 1.0 / 60, kFrameClockReduced = 1.0 / 600, kSettleClock = 0.8;
 static const float kHeldZoom = 1.25f;
 static const double kBreathPeriod = 3.5;
-static const CFTimeInterval kSettle = 0.8, kRunIn = 1.4;
+static const CFTimeInterval kRunIn = 1.4;
 static const double kDrawFramesPerSecond = 30;
 enum { kLUTSide = 32, kMeshCells = 24 };
 static const struct { float side, x, y, turn, orbit; } kCopy[3] = {
@@ -70,7 +75,6 @@ typedef struct {
     float cap;             // the most linear luminance (Increase Contrast), 0 for none
     float grain;           // the noise's spread in eight-bit steps
     float zoom;
-    float depth;           // how far the lowest channel is taken down, as a share of the spread
 } ShowUniforms;
 
 static const float kGrainStandardSteps = 1, kGrainMostSteps = 24;
@@ -86,7 +90,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct CopyU { float2 center; float2 scale; float halfSide; float angle; float scrim; float saturation; float contrast; float progress; };\n"
 "struct BlurU { float2 step; float sigma; int radius; };\n"
-"struct ShowU { float4 visible; float4 seed; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom; float depth; };\n"
+"struct ShowU { float4 visible; float4 seed; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom; };\n"
 "struct CV { float4 position [[position]]; float2 uv; uint copy [[flat]]; };\n"
 "struct V { float4 position [[position]]; float2 uv; };\n"
 // A copy: a square turned about its own center, clockwise (y up), placed and scaled into clip space.
@@ -159,8 +163,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    float3 c = picture.sample(s, in.uv).rgb;\n"
 "    c = mix(c, float3(1.0), u.white);\n"
 "    c = table.sample(s, saturate(c)).rgb;\n"
-"    float lo = min(c.r, min(c.g, c.b)), hi = max(c.r, max(c.g, c.b));\n"
-"    c = select(c, max(c - u.depth * (hi - lo), float3(0.0)), c == lo);\n"
+
 "    if (u.gain != 1.0 || u.cap > 0.0) {\n"
 "        float3 lin = decodeSRGB(c) * u.gain;\n"
 "        float light = dot(lin, float3(0.2126, 0.7152, 0.0722));\n"
@@ -306,8 +309,11 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     id<MTLTexture> _copies, _across, _blurred;   // the quarter-size picture, its blur's first pass, and the blurred one
     float _progress;
     CFTimeInterval _length, _last;
-    double _time, _breathClock;
+    double _time;
     float _settle;
+    float _history[4][3];   // the last four readings of the bands, oldest first
+    float _peak[3], _follow[3];
+    double _framesPerSecond;
     simd_float4 _seed;
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
@@ -325,6 +331,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     _gain = 1;
     _blur = 1;
     _progress = 1;
+    _framesPerSecond = MAX(30, UIScreen.mainScreen.maximumFramesPerSecond);
     for (int i = 0; i < 4; i++) _seed[i] = (float)(arc4random_uniform(62832) / 10000.0);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;
@@ -481,6 +488,37 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 
 #pragma mark - drawing
 
+// The Music app's ease for settling, a cubic Bezier through (0.42, 0) and (0.58, 1), solved for its x.
+static float easeInOut(float x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    float t = x;
+    for (int i = 0; i < 8; i++) {
+        float u = 1 - t;
+        float bx = 3 * u * u * t * 0.42f + 3 * u * t * t * 0.58f + t * t * t;
+        float dx = 3 * u * u * 0.42f + 6 * u * t * (0.58f - 0.42f) + 3 * t * t * (1 - 0.58f);
+        if (fabsf(dx) < 1e-5f) break;
+        t = MIN(1.0f, MAX(0.0f, t - (bx - x) / dx));
+    }
+    float u = 1 - t;
+    return 3 * u * t * t + t * t * t;
+}
+
+// The newest reading of the music into the four-reading average, then the peak and the follow, over `frames` of the
+// Music app's frames. Silent or paused, the readings are zeros and everything falls away.
+- (void)hearFor:(double)frames {
+    float shares[3];
+    SGMusicSpectrumRead(shares);
+    memmove(_history[0], _history[1], sizeof(float) * 3 * 3);
+    memcpy(_history[3], shares, sizeof shares);
+    for (int b = 0; b < 3; b++) {
+        float average = 0;
+        for (int k = 0; k < 4; k++) average += kHistoryWeight[k] * _history[k][b];
+        _peak[b] = MAX(average, _peak[b] * powf(1 - kPeakFall[b], (float)frames));
+        _follow[b] += (1 - powf(0.5f, (float)frames)) * (_peak[b] - _follow[b]);
+    }
+}
+
 // Going from held to flowing or back.
 - (BOOL)settling {
     return _moving ? _settle < 1 : _settle > 0;
@@ -496,6 +534,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     }
     BOOL eligible = _ready && _toPicture && [self mayDraw] && _firstFailures < 3;
     BOOL wants = eligible && (_moving || _progress < 1 || [self settling]);
+    SGMusicSpectrumSetWanted(eligible && _moving);
     if (eligible && !wants && _dirty && self.bounds.size.width >= 1 && self.bounds.size.height >= 1)
         wants = ![self draw] && _misses < 30;
     if (wants && !_link) {
@@ -521,11 +560,12 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     if (_last > 0 && floor(now * kDrawFramesPerSecond) == floor(_last * kDrawFramesPerSecond)) return;
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
-    if (_moving) {
-        _time += step * _rate;
-        _breathClock += step * _rate;
-    }
-    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * step / kSettle));
+    // Its frames in this step, and its clock's advance over them.
+    double frames = step * _framesPerSecond;
+    double clock = frames * (SGRReduceMotion() ? kFrameClockReduced : kFrameClock);
+    if (_moving) _time += clock * _rate;
+    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock / kSettleClock));
+    [self hearFor:frames];
     if (_progress < 1) {
         _progress = (float)MIN(1.0, _progress + step / MAX(0.05, _length));
         if (_progress >= 1) {
@@ -565,6 +605,15 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     simd_float2 middle = simd_make_float2((float)((CGRectGetMidX(visible) - bounds.origin.x) / bounds.size.width * 2 - 1),
                                           (float)(1 - (CGRectGetMidY(visible) - bounds.origin.y) / bounds.size.height * 2));
     simd_float2 scale = simd_make_float2((float)(unit / (bounds.size.width / 2)), (float)(unit / (bounds.size.height / 2)));
+    // The music: eased, then bass to contrast, treble to saturation, bass and middle to the growth.
+    float heard[3];
+    for (int b = 0; b < 3; b++) {
+        float x = MIN(1.0f, MAX(0.0f, _follow[b]));
+        heard[b] = x * x * x * (x * (x * 6 - 15) + 10);
+    }
+    float m = heard[0] + (heard[1] - heard[0]) * kGrowthMiddle;
+    float growth = 1 + kGrowth * m * m;
+    scale *= growth;
     float orbit = (float)(2 * M_PI * fmod(_time, kCopy[2].orbit) / kCopy[2].orbit);
     CopyUniforms copies[3];
     NSUInteger drawn = _warp > 0.01f ? 3 : 1;
@@ -582,8 +631,8 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
             .half = kCopy[i].side,
             .angle = (float)(2 * M_PI * fmod(_time, kCopy[i].turn) / kCopy[i].turn),
             .scrim = kCopyScrim + kCopyScrimStep * i,
-            .saturation = kCopySaturation * _saturation,
-            .contrast = kCopyContrast,
+            .saturation = (kCopySaturation + kSaturationPerTreble * heard[2]) * _saturation,
+            .contrast = 1 + kContrastPerBass * heard[0],
             .progress = _from ? _progress : 1,
         };
     }
@@ -626,7 +675,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
         [blur endEncoding];
     }
 
-    float eased = _settle * _settle * (3 - 2 * _settle);
+    float eased = easeInOut(_settle);
     ShowUniforms show = {
         .visible = simd_make_float4((float)((visible.origin.x - bounds.origin.x) / bounds.size.width),
                                     (float)((visible.origin.y - bounds.origin.y) / bounds.size.height),
@@ -634,14 +683,13 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
                                     (float)(MAX(1, visible.size.height) / bounds.size.height)),
         .seed = _seed,
         .playing = eased,
-        .breath = (float)(0.5 + 0.5 * sin(_breathClock / kBreathPeriod)),
+        .breath = (float)(0.5 + 0.5 * sin(_time / kBreathPeriod)),
         .warp = _warp,
         .white = kWhite,
         .gain = _gain,
         .cap = _contrast ? 0.04f : 0,
         .grain = grainSteps(_grain),
         .zoom = kHeldZoom,
-        .depth = kDepth,
     };
     MTLRenderPassDescriptor *showPass = [MTLRenderPassDescriptor renderPassDescriptor];
     showPass.colorAttachments[0].texture = output.texture;

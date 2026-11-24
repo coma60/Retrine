@@ -93,33 +93,9 @@ static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // color's 0.65 stood 140 of 255 above it where the Music app's glyphs stand 116 to 122.
 static const CGFloat kFooterInkAdd = 0.46, kFooterInkFloor = 0.55;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
-// Now added as the Music app's are: plusL over the backdrop, laid under
-// them where they sit in a group of their own (SGRInkUnderlay). Plain, they washed the backdrop's hue out (over a blue
-// cover 120, 110, 91 of 255 added to red, green, blue where the Music app adds 116, 119, 118).
-static UIView *footerInked(UIView *view) {
-    return [view isKindOfClass:SGRGlyphButton.class] ? ((SGRGlyphButton *)view).glyph : view;
-}
-
-static void footerFilter(UIView *view, NSString *filter) {
-    CALayer *layer = footerInked(view).layer;
-    if (![layer.compositingFilter isEqual:filter]) layer.compositingFilter = filter;
-}
-
 static UIColor *footerRest(UIView *view) {
     CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkFloor;
-    UIView *inked = footerInked(view);
-    if (!SGRIncreaseContrast() && (!SGRInkIsolated(inked) || SGRInkUnderlay(inked))) {
-        footerFilter(view, @"plusL");
-        return [UIColor colorWithWhite:1 alpha:kFooterInkAdd];
-    }
-    footerFilter(view, nil);
     return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
-}
-
-// Lit, a glyph is the primary color as it is, not light added.
-static UIColor *footerLit(UIView *view) {
-    footerFilter(view, nil);
-    return SGRPrimary();
 }
 
 // The row's own glyph buttons in the row's weight (the Kit's are regular).
@@ -189,8 +165,6 @@ static void paintEncore(SGRGlyphButton *button) {
     SPTEncoreIconView *encore = objc_getAssociatedObject(button, &kEncoreGlyphKey);
     UIColor *color = button.glyph.tintColor;
     if (encore && ![encore.foregroundColor isEqual:color]) encore.foregroundColor = color;
-    id filter = button.glyph.layer.compositingFilter;
-    if (encore && ![encore.layer.compositingFilter isEqual:filter]) encore.layer.compositingFilter = filter;
 }
 
 // The rest color again on every glyph that wears it: Lyrics while it is off, Queue while it is not shown, the stand-ins.
@@ -247,7 +221,7 @@ static void markQueueGlyph(void) {
     SGRGlyphButton *queue = sg_queueGlyph;
     if (!queue) return;
     BOOL shown = SGRPlayerQueueSideShown();
-    UIColor *tint = shown ? footerLit(queue) : footerRest(queue);
+    UIColor *tint = shown ? SGRPrimary() : footerRest(queue);
     if (![queue.glyph.tintColor isEqual:tint]) queue.glyph.tintColor = tint;
     queue.accessibilityTraits = UIAccessibilityTraitButton | (shown ? UIAccessibilityTraitSelected : 0);
     paintEncore(queue);
@@ -269,7 +243,7 @@ void SGRPlayerLyricsChanged(void) {
     [glyph.glyph setSymbol:open ? kLyricsSymbolOpen : kLyricsSymbol animated:animated];
     void (^mark)(void) = ^{
         glyph.enabled = enabled;
-        glyph.glyph.tintColor = open ? footerLit(glyph) : footerRest(glyph);
+        glyph.glyph.tintColor = open ? SGRPrimary() : footerRest(glyph);
         paintEncore(glyph);
     };
     if (animated) SGRAnimate(SGRMotionFade, mark, nil);

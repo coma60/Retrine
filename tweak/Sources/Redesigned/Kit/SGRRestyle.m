@@ -343,10 +343,9 @@ static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
 // plainly composited under Increase Contrast.
 // The ink the audio quality badge shares (AudioQuality.x: its text and glyph), so the two read alike: SGRBackdropInk.h
 // raises it toward kTimeInkLightAlpha over a light backdrop, and draws it plain where plusL cannot see the backdrop.
-// Drawn plain (plusL in a group of its own adds to nothing) they stood a fifth dimmer than its own and were lifted to
-// 0.48; with the backdrop under them (SGRInkUnderlay) plusL adds to it, and they are back at its 0.265 (64 to 66 of 255
-// above a blue backdrop, as measured on the Music app's player).
-static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
+// Against the Music app's player over a dark blue and a pink animated cover (3x) the times stood a fifth dimmer than
+// its own at 0.40, so they take 0.48.
+static const CGFloat kTimeInkAlpha = 0.48, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
 static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
@@ -904,10 +903,7 @@ static void inkTick(void) {
     readField();
 }
 
-static void placeInkCapture(UIView *source);
-
 void SGRBackdropInkSetSource(UIView *source) {
-    if (source) placeInkCapture(source);
     if (source == sg_inkSource && (sg_inkTimer.valid || !source)) return;
     sg_inkSource = source;
     sg_inkHave = NO;
@@ -965,69 +961,6 @@ CGFloat SGRBackdropLightnessBehind(UIView *view) {
     return sum / weights;
 }
 
-// plusL in a group of its own (under a mask or a filter) adds to the group's clear, not to the backdrop. A backdrop layer
-// captures the field under a group name, and another of the same name lies right behind the ink, inside that group, and
-// draws the captured backdrop there, so plusL adds to the real backdrop's pixels. The capture lies just above the field
-// (placeInkCapture, captureOnly: it draws nothing) and the copy at the bottom of the ink's superview (SGRInkUnderlay). Without them that text came out as a plain white of the same lightness, which washes
-// the backdrop's hue out (measured over a blue cover: 125, 104, 78 of 255 added to red, green, blue where the Music app
-// adds 119, 121, 105).
-static NSString *const kInkBackdropGroup = @"spotifyglass.redesign.inkBackdrop";
-static char kInkCaptureKey, kInkUnderlayKey;
-
-static CALayer *inkBackdrop(BOOL captureOnly) {
-    static Class backdrop;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ backdrop = NSClassFromString(@"CABackdropLayer"); });
-    CALayer *layer = backdrop ? [backdrop layer] : nil;
-    if (![layer respondsToSelector:NSSelectorFromString(@"setGroupName:")]) return nil;
-    [layer setValue:kInkBackdropGroup forKey:@"groupName"];
-    if (captureOnly) {
-        if (![layer respondsToSelector:NSSelectorFromString(@"setCaptureOnly:")]) return nil;
-        [layer setValue:@YES forKey:@"captureOnly"];
-    }
-    return layer;
-}
-
-// The capture, right above the field in its superview: the field's own layout brings it to the front, so it is put back
-// on top of it at each pass.
-static void placeInkCapture(UIView *source) {
-    UIView *plane = source.superview;
-    if (!plane) return;
-    CALayer *capture = objc_getAssociatedObject(source, &kInkCaptureKey);
-    if (!capture) {
-        capture = inkBackdrop(YES);
-        if (!capture) return;
-        objc_setAssociatedObject(source, &kInkCaptureKey, capture, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    NSArray *layers = plane.layer.sublayers;
-    NSUInteger at = [layers indexOfObjectIdenticalTo:source.layer];
-    if (capture.superlayer != plane.layer || at == NSNotFound || at + 1 >= layers.count || layers[at + 1] != capture)
-        [plane.layer insertSublayer:capture above:source.layer];
-    if (!CGRectEqualToRect(capture.frame, source.frame)) capture.frame = source.frame;
-    [CATransaction commit];
-}
-
-BOOL SGRInkUnderlay(UIView *view) {
-    UIView *host = view.superview;
-    CALayer *own = view.layer;
-    if (!host || own.mask || own.shouldRasterize || own.filters.count) return NO;   // the group is the view's own
-    if (host.backgroundColor && CGColorGetAlpha(host.backgroundColor.CGColor) > 0) return NO;   // it would be covered
-    CALayer *underlay = objc_getAssociatedObject(host, &kInkUnderlayKey);
-    if (!underlay) {
-        underlay = inkBackdrop(NO);
-        if (!underlay) return NO;
-        objc_setAssociatedObject(host, &kInkUnderlayKey, underlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    if (underlay.superlayer != host.layer || host.layer.sublayers.firstObject != underlay) [host.layer insertSublayer:underlay atIndex:0];
-    if (!CGRectEqualToRect(underlay.frame, host.bounds)) underlay.frame = host.bounds;
-    [CATransaction commit];
-    return YES;
-}
-
 BOOL SGRInkIsolated(UIView *view) {
     for (UIView *v = view; v; v = v.superview) {
         CALayer *layer = v.layer;
@@ -1037,22 +970,18 @@ BOOL SGRInkIsolated(UIView *view) {
 }
 
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
-    // As on the Music app's player, a fixed amount of white is added whatever is behind (it changes with Increase
-    // Contrast alone): over a light backdrop the text is lighter by itself, and the backdrop is kept dark enough to read
-    // it. So wherever plusL can add to the backdrop, directly or over the copy laid under it, the
-    // ink is that fixed alpha; only where it cannot is it raised over a light backdrop and drawn plain.
-    BOOL isolated = SGRInkIsolated(view) && !SGRInkUnderlay(view);
-    if (!isolated || UIAccessibilityDarkerSystemColorsEnabled()) {
+    CGFloat light = SGRBackdropLightnessBehind(view);
+    if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) {
         if (plusL) *plusL = YES;
         return [UIColor colorWithWhite:1 alpha:alpha];
     }
-    if (plusL) *plusL = NO;
-    CGFloat light = SGRBackdropLightnessBehind(view);
-    if (light < 0) return [UIColor colorWithWhite:1 alpha:alpha];
     CGFloat t = MAX(0, MIN(1, (light - kInkLightFrom) / (kInkLightTo - kInkLightFrom)));
     t = t * t * (3 - 2 * t);
     CGFloat shown = alpha + (MAX(alpha, lightAlpha) - alpha) * t;
-    return [UIColor colorWithWhite:1 alpha:MIN(1, shown / MAX(1 - light, kInkLeastHeadroom))];
+    BOOL isolated = SGRInkIsolated(view);
+    if (isolated) shown = MIN(1, shown / MAX(1 - light, kInkLeastHeadroom));
+    if (plusL) *plusL = !isolated;
+    return [UIColor colorWithWhite:1 alpha:shown];
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {

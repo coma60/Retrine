@@ -2,7 +2,6 @@
 #import "Core/SGCore.h"
 #import "SGRFluid.h"
 #import "SGRFluidGPU.h"
-#import "SGRBackdropLUT.h"
 #import "SGRTokens.h"
 
 // Each copy: its side as a share of the visible rect's longer side, its center as shares of that rect, and
@@ -40,29 +39,44 @@ static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
 // values (its texture loads with SRGB off): each copy of the cover is mixed toward black by kBackdropBlack (its
 // blackScrimAlpha in dark mode, 0.35 in light; each further copy adds 0.0075, left out here), its saturation is scaled
 // by kBackdropSaturation about its Rec. 709 luma (the compact layout's standard; the wide one takes 2.9), the result is
-// blurred, mixed toward white by kBackdropWhite (whiteScrimAlpha) and passed through its color table (SGRBackdropLUT.h),
-// which leaves grays as they are and pulls strong colors in. The Saturation slider scales kBackdropSaturation against
+// blurred, mixed toward white by kBackdropWhite (whiteScrimAlpha) and passed through a color grade (backdropGrade),
+// which leaves grays nearly as they are and pulls strong reds and blues in. The Saturation slider scales kBackdropSaturation against
 // its standard; the Brightness slider scales the result's linear light.
 static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropWhite = 0.1;
 
-// The color table at an encoded color `e` (0 to 1), trilinear.
-static void backdropTable(CGFloat e[3]) {
-    const int last = kSGRBackdropLUTSide - 1;
-    CGFloat u[3];
-    int lo[3];
-    for (int c = 0; c < 3; c++) {
-        CGFloat v = MIN(1, MAX(0, e[c])) * last;
-        lo[c] = MIN(last - 1, (int)floor(v));
-        u[c] = v - lo[c];
+// Retrine's grade for the backdrop, on an encoded color `e` (0 to 1), made to look like the Music app's. What its color
+// table does, read off its output: greens, yellows, cyans and magentas pass nearly untouched, while a color whose red
+// (or blue) stands out above both other channels is pulled toward a neutral point, by up to 36% (33% for blue) as that
+// channel stands further out; the other channels rise a little, and a slight contrast curve runs over everything (16
+// of 255 goes to 12, 239 to 243). Here that is a dozen numbers: the pull per standing-out channel (kGradeRed,
+// kGradeBlue: strength, then where the ease starts and ends, as the share of the channel above the next highest), the
+// neutral point (a mix of luma, the lowest channel and the mean, raised with the pull), and the curve (gain, offset).
+// Fitted to the look by least squares; it lands within 0.8 of 255 on average and 6.6 at worst (a pure red).
+static const CGFloat kGradeRed[3] = {0.3633, 0.1641, 0.8199}, kGradeBlue[3] = {0.3336, 0.1497, 0.8128};
+static const CGFloat kGradeLuma = 0.0821, kGradeFloor = 0.5891, kGradeRaise = 0.1736, kGradeLift = -0.0603;
+static const CGFloat kGradeGain = 1.0292, kGradeOffset = -0.0152;
+
+static CGFloat gradeEase(CGFloat from, CGFloat to, CGFloat v) {
+    CGFloat t = MIN(1, MAX(0, (v - from) / (to - from)));
+    return t * t * (3 - 2 * t);
+}
+
+static void backdropGrade(CGFloat e[3]) {
+    CGFloat lo = MIN(e[0], MIN(e[1], e[2])), hi = MAX(e[0], MAX(e[1], e[2]));
+    CGFloat c[3] = {e[0] - lo, e[1] - lo, e[2] - lo};
+    CGFloat pull = 0;
+    const CGFloat *curve[2] = {kGradeRed, kGradeBlue};
+    const int channel[2] = {0, 2};
+    for (int i = 0; i < 2; i++) {
+        int ch = channel[i];
+        CGFloat own = c[ch], other = MAX(c[(ch + 1) % 3], c[(ch + 2) % 3]);
+        if (own > 1e-9) pull += curve[i][0] * gradeEase(curve[i][1], curve[i][2], (own - other) / own);
     }
+    CGFloat luma = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2], mean = (e[0] + e[1] + e[2]) / 3;
+    CGFloat neutral = kGradeLuma * luma + kGradeFloor * lo + (1 - kGradeLuma - kGradeFloor) * mean + kGradeRaise * pull * hi;
     for (int k = 0; k < 3; k++) {
-        CGFloat sum = 0;
-        for (int corner = 0; corner < 8; corner++) {
-            int dr = corner & 1, dg = (corner >> 1) & 1, db = (corner >> 2) & 1;
-            CGFloat w = (dr ? u[0] : 1 - u[0]) * (dg ? u[1] : 1 - u[1]) * (db ? u[2] : 1 - u[2]);
-            sum += w * kSGRBackdropLUT[lo[2] + db][lo[1] + dg][lo[0] + dr][k];
-        }
-        e[k] = sum / 255.0;
+        CGFloat y = neutral + (1 - pull) * (e[k] - neutral) + kGradeLift * pull * hi;
+        e[k] = MIN(1, MAX(0, kGradeGain * y + kGradeOffset));
     }
 }
 
@@ -158,10 +172,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     size_t lowerCount = 0, lowerRow = (size_t)floor(height * kLowerFrom);
     for (size_t i = 0; i < width * height; i++) {
         unsigned char *p = pixels + i * 4;
-        // After the blur: toward white, then the color table.
+        // After the blur: toward white, then the grade.
         CGFloat e[3];
         for (int c = 0; c < 3; c++) e[c] = p[c] / 255.0 * (1 - kBackdropWhite) + kBackdropWhite;
-        backdropTable(e);
+        backdropGrade(e);
         // The Brightness setting on linear light, and with Increase Contrast the cap.
         CGFloat rgb[3];
         for (int c = 0; c < 3; c++) {

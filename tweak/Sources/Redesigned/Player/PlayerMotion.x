@@ -223,6 +223,11 @@ static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50,
 // kSoftestRadius, comes in over the strong one from the cover's edge and is whole kSoftestWhole of the way from there to
 // the foot of the screen.
 static const CGFloat kSoftestWhole = 0.6, kSoftestRadius = 160, kSoftestScale = 0.125;
+// Where the blurs come in is not a straight line on the Music app's player but a curve that dips in the middle: over A Sky
+// Full of Stars' animated cover its blur starts about 5% of the screen higher at the sides than in the middle, under the
+// title. Each copy's mask is a circle's edge through its start in the middle and kBlurArc higher at the screen's sides
+// (a radial gradient whose center lies above), not a horizontal band; below where it is whole it is whole all across.
+static const CGFloat kBlurArc = 44;
 // The Music app's player (MediaCoreUI's NowPlayingArtworkMotionReplicatorLayer, iOS 27.2.1) draws below such a cover the
 // playing clip itself, mirrored at the cover's bottom edge and stretched kMirrorStretch times down (its replica's
 // transform: translate 3h, scale -2), live, so a flash in the clip's foot runs on down to the bottom of the screen. Its
@@ -245,6 +250,11 @@ enum { kAdjustSteps = 10 };
 // the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
 // the deepening stand aside wherever it shows, and only the dim's top band stays.
 static const CGFloat kAdjustSaturation = 2.4;
+// The saturation is part of the adjustment's matrix, so it comes in with it: none where the adjustment starts, whole at the
+// foot. Each mirrored copy holds the mirror twice, plain and saturated, the saturated one masked along the adjustment's
+// curve, so the two mix to a saturation from 1 to kAdjustSaturation down the screen. Saturated whole from the cover's
+// edge, the mirror came out bluer and lighter than the Music app's under the title and the controls (A Sky Full of Stars:
+// 80 against 62 of 255 in blue), and alike only at the foot.
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -674,18 +684,35 @@ static CALayer *softPicture(NSMutableArray *pictures, NSMutableArray *clips) {
     return picture;
 }
 
+// `mask` comes in from `from` to `to` (points down a layer `width` by `total`) in the middle, kBlurArc higher at the sides.
+static void arcRamp(CAGradientLayer *mask, CGFloat width, CGFloat total, CGFloat from, CGFloat to) {
+    CGFloat half = width / 2, radius = (half * half + kBlurArc * kBlurArc) / (2 * kBlurArc), outer = radius + MAX(1, to - from);
+    if (width <= 0 || total <= 0) return;
+    mask.type = kCAGradientLayerRadial;
+    mask.startPoint = CGPointMake(0.5, (from - radius) / total);
+    mask.endPoint = CGPointMake(0.5 + outer / width, (from - radius + outer) / total);
+    mask.locations = @[@(radius / outer), @1];
+}
+
 // A blurred copy of the cover, masked in (see kSoftFrom); `mirrored` adds the cover flipped below its bottom edge.
 static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutableArray *pictures, NSMutableArray *clips) {
     CALayer *copy = [CALayer layer];
     copy.hidden = YES;
     [copy addSublayer:softPicture(pictures, clips)];
     if (mirrored) {
-        CALayer *mirror = softPicture(pictures, clips);
-        mirror.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+        // Plain, then saturated over it along the adjustment (kAdjustSaturation).
+        CALayer *plain = softPicture(pictures, clips);
+        plain.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+        [copy addSublayer:plain];
         CAFilter *saturate = [NSClassFromString(@"CAFilter") filterWithType:@"colorSaturate"];
-        [saturate setValue:@(kAdjustSaturation) forKey:@"inputAmount"];
-        if (saturate) mirror.filters = @[saturate];
-        [copy addSublayer:mirror];
+        if (saturate) {
+            CALayer *mirror = softPicture(pictures, clips);
+            mirror.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+            [saturate setValue:@(kAdjustSaturation) forKey:@"inputAmount"];
+            mirror.filters = @[saturate];
+            mirror.mask = [CAGradientLayer layer];
+            [copy addSublayer:mirror];
+        }
     }
     CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
     if (blur) {
@@ -924,17 +951,33 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     }
     for (CALayer *picture in _softPictures) {
         picture.bounds = cover;
-        // The mirror is the second of each mirrored copy's: flipped about the cover's bottom edge and stretched down.
+        // The mirrors follow each mirrored copy's picture: flipped about the cover's bottom edge and stretched down.
         CALayer *copy = picture.superlayer;
         BOOL mirror = (copy == _softer || copy == _softest) && picture != copy.sublayers.firstObject;
         picture.position = CGPointMake(width / 2, mirror ? height * (1 + kMirrorStretch / 2) : height / 2);
         ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
     }
     NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
-    ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
-    ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
     CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, adjustFrom = screen * kAdjustFrom;
-    ((CAGradientLayer *)_softest.mask).locations = @[at(height), at(height + MAX(0, screen - height) * kSoftestWhole)];
+    arcRamp((CAGradientLayer *)_soft.mask, width, total, height * kSoftFrom, height * kSoftWhole);
+    arcRamp((CAGradientLayer *)_softer.mask, width, total, height * kSofterFrom, height * kSofterWhole);
+    arcRamp((CAGradientLayer *)_softest.mask, width, total, height, height + MAX(0, screen - height) * kSoftestWhole);
+    // The saturated mirrors' masks, in their own (flipped, stretched) coordinates: a point y of the picture is drawn at
+    // height + kMirrorStretch * (height - y) down the screen, where the adjustment has its strength.
+    for (CALayer *picture in _softPictures) {
+        CAGradientLayer *mask = (CAGradientLayer *)picture.mask;
+        if (!mask || height <= 0) continue;
+        mask.frame = picture.bounds;
+        NSMutableArray *colors = [NSMutableArray array], *stops = [NSMutableArray array];
+        for (int j = 0; j <= kAdjustSteps; j++) {
+            CGFloat y = height * j / kAdjustSteps, down = height + kMirrorStretch * (height - y);
+            CGFloat share = MIN(1, MAX(0, (down - adjustFrom) / MAX(1, screen - adjustFrom)));
+            [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:pow(share, kAdjustEase)].CGColor];
+            [stops addObject:@((CGFloat)j / kAdjustSteps)];
+        }
+        mask.colors = colors;
+        mask.locations = stops;
+    }
     NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
     for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
     for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {

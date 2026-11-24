@@ -4,15 +4,15 @@
 #import "SGRFluidGPU.h"
 #import "SGRTokens.h"
 
-// The copies, laid out as the Music app's player lays its own: in a square as wide as the visible rect's longer side,
-// centered on it (its half-side is the unit below), each copy a square of the cover `side` units across, centered
-// `x`, `y` units from the middle (y up), and turning about the square's middle, not its own, once in `turn` seconds,
-// counterclockwise. The first turns where it is; the second circles at its offset; the third circles with the first's
-// turn and its own added (once in 120 s and once in 90 s). Each is opaque and drawn over the one before.
-static const struct { CGFloat side, x, y; CFTimeInterval turn; } kCopy[] = {
-    {1.4, 0, 0, 120},
-    {0.7, -0.25, 0.15, 70},
-    {0.7, 0.7, 0.7, 1 / (1 / 120.0 + 1 / 90.0)},
+// The copies, laid out as the Music app's player lays its own: the unit is half the visible rect's longer side (its
+// height on a phone), measured from its middle with y up. Each copy is a square of the cover `side` units across,
+// centered `x`, `y` units from the middle, turning clockwise about its own center once in `turn` seconds; a copy with
+// an `orbit` is also carried clockwise about the middle once in that many seconds (the third rides the first's turn).
+// Each is opaque and drawn over the one before.
+static const struct { CGFloat side, x, y; CFTimeInterval turn, orbit; } kCopy[] = {
+    {1.4, 0, 0, 120, 0},
+    {0.7, -0.25, 0.15, 70, 0},
+    {0.7, 0.7, 0.7, 90, 120},
 };
 enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 // The smaller copies' edges are feathered over this share of their side, so they run into the copy under them as the
@@ -228,7 +228,7 @@ static CGImageRef featherMask(void) {
 }
 
 @implementation SGRFluidLayer {
-    CALayer *_orbits[kCopies];   // each copy's turn about the square's middle
+    CALayer *_orbits[kCopies];   // each copy's journey about the middle, for those with an orbit
     CALayer *_copies[kCopies];
     CAGradientLayer *_shade;
     CGFloat _lowerLight;   // how light the shown cover's lower part is, 0 to 1 (blurred())
@@ -476,21 +476,25 @@ static CGImageRef featherMask(void) {
     _rate = SGRFluidValue(SGRFluidSpeed) / 100.0;
     CAFrameRateRange rate = CAFrameRateRangeMake(15, 60, 30);
     for (int i = 0; i < kCopies; i++) {
-        CFTimeInterval length = kCopy[i].turn;
-        // The turn's offset carries the angle it stopped at, so the resting angle goes back to none.
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        _orbits[i].transform = CATransform3DIdentity;
-        [CATransaction commit];
-        // Counterclockwise on screen, where y runs down.
-        CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-        turn.byValue = @(-2 * M_PI);
-        turn.duration = length / _rate;
-        turn.repeatCount = HUGE_VALF;
-        turn.additive = YES;
-        turn.timeOffset = fmod(_elapsed, length) / _rate;
-        turn.preferredFrameRateRange = rate;
-        [_orbits[i] addAnimation:turn forKey:@"turn"];
+        CALayer *layers[2] = {_copies[i], _orbits[i]};
+        CFTimeInterval lengths[2] = {kCopy[i].turn, kCopy[i].orbit};
+        for (int k = 0; k < 2; k++) {
+            if (lengths[k] <= 0) continue;
+            // The turn's offset carries the angle it stopped at, so the resting angle goes back to none.
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            layers[k].transform = CATransform3DIdentity;
+            [CATransaction commit];
+            // Clockwise on screen, where y runs down.
+            CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+            turn.byValue = @(2 * M_PI);
+            turn.duration = lengths[k] / _rate;
+            turn.repeatCount = HUGE_VALF;
+            turn.additive = YES;
+            turn.timeOffset = fmod(_elapsed, lengths[k]) / _rate;
+            turn.preferredFrameRateRange = rate;
+            [layers[k] addAnimation:turn forKey:@"turn"];
+        }
     }
 }
 
@@ -503,10 +507,14 @@ static CGImageRef featherMask(void) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     for (int i = 0; i < kCopies; i++) {
-        CFTimeInterval length = kCopy[i].turn;
-        CGFloat angle = -2 * M_PI * fmod(_elapsed, length) / length;
-        [_orbits[i] removeAnimationForKey:@"turn"];
-        _orbits[i].transform = CATransform3DMakeRotation(angle, 0, 0, 1);
+        CALayer *layers[2] = {_copies[i], _orbits[i]};
+        CFTimeInterval lengths[2] = {kCopy[i].turn, kCopy[i].orbit};
+        for (int k = 0; k < 2; k++) {
+            if (lengths[k] <= 0) continue;
+            CGFloat angle = 2 * M_PI * fmod(_elapsed, lengths[k]) / lengths[k];
+            [layers[k] removeAnimationForKey:@"turn"];
+            layers[k].transform = CATransform3DMakeRotation(angle, 0, 0, 1);
+        }
     }
     [CATransaction commit];
 }

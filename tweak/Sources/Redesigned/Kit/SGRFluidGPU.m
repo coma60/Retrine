@@ -31,9 +31,9 @@ static const float kBlurPoints = 160;
 static const float kHistoryWeight[4] = {0.1f, 0.2f, 0.3f, 0.4f};
 static const float kPeakFall[3] = {1.0f / 50, 1.0f / 100, 1.0f / 1000};
 static const float kContrastPerBass = 0.076f, kSaturationPerTreble = 0.166f, kGrowth = 0.33f, kGrowthMiddle = 0.1f;
-// Its clock and settling count frames, not seconds: each of its frames is 1/60 s (1/600 under Reduce Motion), and it
-// draws at the screen's most frames a second, so on a 120 Hz screen it turns and breathes at twice real time. Going
-// from held to flowing takes 2/60 s of its clock per frame over 0.8 s, eased (0.42, 0, 0.58, 1).
+// Its clock and settling count frames, not seconds: each of its frames is 1/60 s (1/600 under Reduce Motion), at 60
+// frames a second on a phone (its app does not opt in to more), so real time. Going from held to flowing takes 2/60 s
+// of its clock per frame over 0.8 s, eased (0.42, 0, 0.58, 1).
 static const double kFrameClock = 1.0 / 60, kFrameClockReduced = 1.0 / 600, kSettleClock = 0.8;
 static const float kHeldZoom = 1.25f;
 static const double kBreathPeriod = 3.5;
@@ -153,7 +153,9 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    float2 p = mix(held, bent, u.playing);\n"
 "    V v;\n"
 "    v.position = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);\n"
-"    v.uv = uv;\n"
+// Upside down: the Music app's display mesh gives each point the picture's texel at the same grid place, with the grid's
+// y running up the screen and the picture's down, so its backdrop shows the cover's foot at the top.
+"    v.uv = float2(uv.x, 2.0 * middle.y - uv.y);\n"
 "    return v;\n"
 "}\n"
 "static float3 decodeSRGB(float3 c) { return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045); }\n"
@@ -331,7 +333,9 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     _gain = 1;
     _blur = 1;
     _progress = 1;
-    _framesPerSecond = MAX(30, UIScreen.mainScreen.maximumFramesPerSecond);
+    // Its view asks for the screen's most, but the Music app's Info.plist lacks CADisableMinimumFrameDurationOnPhone, so a
+    // phone holds it to 60: its clock runs at real time.
+    _framesPerSecond = MIN(60, MAX(30, UIScreen.mainScreen.maximumFramesPerSecond));
     for (int i = 0; i < 4; i++) _seed[i] = (float)(arc4random_uniform(62832) / 10000.0);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;

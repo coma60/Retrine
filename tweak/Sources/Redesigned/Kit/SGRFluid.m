@@ -21,8 +21,10 @@ static const CGFloat kCopyFeather = 0.22;
 // Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
 static const CGFloat kHeldZoom = 1.25;
 static const CFTimeInterval kSettle = 0.8;
-// Its blur's standard deviation, in points on screen.
-static const CGFloat kBackdropSigma = 160;
+// Its blur's standard deviation, in points on screen, and the radius Core Image takes for it on the copies' cover: with
+// the radius at the standard deviation, colors stood apart 1.3 to 2.3 times as much as the Music app's over two of three
+// covers, and at 1.8 times it (the earlier blur) about as much or less, so it is 1.4 times it.
+static const CGFloat kBackdropSigma = 160, kBlurRadiusPerSigma = 1.4;
 // The blurred cover is small: it is drawn larger than the screen, so detail is lost anyway. The Blur setting scales
 // kBackdropSigma (the standard 24 is the Music app's), worked out as a radius on this cover in setArtwork:. Core
 // Image works here on encoded values,
@@ -35,8 +37,10 @@ static const CGFloat kBlurSide = 128;
 // so the ceiling is higher and the shade does the darkening: none down to kShadeFrom of the visible rect, then along
 // x^kShadeEase (x the way from there to the bottom) to its peak. The peak follows how light the lower part of the
 // blurred cover is: kShadeLeast over a dark cover (nothing to hold back), kShadeMost over one at the ceiling, so the
-// text's contrast holds whatever the cover (4.5:1 at the title and the times, more below).
-static const CGFloat kShadeFrom = 0.40, kShadeEase = 1.75, kShadeLeast = 0.30, kShadeMost = 0.62;
+// text's contrast holds whatever the cover (4.5:1 at the title and the times, more below). The peak over a light cover
+// was 0.62; beside the Music app over Fuel's orange its foot stood at 45, 27, 17 where 0.62 took Retrine's to 28, 18,
+// 16, so it is 0.48 (the player's ink brightens over a light backdrop, SGRBackdropInk.h).
+static const CGFloat kShadeFrom = 0.40, kShadeEase = 1.75, kShadeLeast = 0.30, kShadeMost = 0.48;
 enum { kShadeSteps = 6 };
 // The share of the blurred cover (from its top) that counts as its lower part, for the shade's peak.
 static const CGFloat kLowerFrom = 0.5;
@@ -452,7 +456,7 @@ static CGImageRef featherMask(void) {
     CGFloat longer = MAX(visible.size.width, visible.size.height);
     if (longer < 1) longer = MAX(UIScreen.mainScreen.bounds.size.width, UIScreen.mainScreen.bounds.size.height);
     CGFloat points = kBackdropSigma * SGRFluidValue(SGRFluidBlur) / SGRFluidLimitsOf(SGRFluidBlur).standard;
-    CGFloat radius = points * kBlurSide / (kCopy[0].side * longer), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
+    CGFloat radius = kBlurRadiusPerSigma * points * kBlurSide / (kCopy[0].side * longer), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
     CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

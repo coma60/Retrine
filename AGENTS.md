@@ -80,9 +80,6 @@ Rules:
   valid), confirm it with `rclone check <ipa> dropbox:Vitrine/ --one-way`, and give the `rclone link` URL with `dl=0`
   changed to `dl=1`. Then delete that IPA from `out/` (leave `out/extension/`, the extension build cache). Never
   print `rclone config` output or the config file: it holds the Dropbox tokens.
-- Matching the Music app's player (backdrop, animated cover, ink, layout types): read
-  `docs/apple-music-reference.md` first. It holds what was traced from the iOS 27.2.1 firmware, so there is no need
-  to extract the firmware again.
 - Look at Spotify's views through recorded trees (`make session` records clean ones into
   `trees/clean/`) before hooking anything. Prove every class and selector against the tree or the binary.
 - Device log: `make log` (`[spotifyglass]` lines).

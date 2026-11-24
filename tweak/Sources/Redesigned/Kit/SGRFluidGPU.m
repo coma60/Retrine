@@ -14,13 +14,18 @@ static const double kDrawFramesPerSecond = 30;
 // In the shader's order and layout (a float4 first, so both sides pad the same way).
 typedef struct {
     simd_float4 visible;   // the visible rect as shares of the layer: x, y, width, height
+    simd_float4 seed;      // the phases of this layer's own bend (kBend), picked once when it is made
     simd_float2 aspect;    // the visible rect's sides as shares of its longer side
     float time;            // the flow's clock, in seconds at the standard speed
     float warp;            // the Warp setting as a factor
     float progress;        // how far the new cover has run in, 0 to 1
     float flows;           // 1 while it runs in flowing, 0 while it fades
     float grain;           // the noise's spread, peak to peak, in eight-bit steps (grainSteps)
+    float playing;         // 0 held still (the picture shown a quarter larger, flat), 1 flowing (bent and breathing)
 } Uniforms;
+
+// How long the picture takes to go from held to flowing and back (eased in and out), as the Music app's does.
+static const CFTimeInterval kSettle = 0.8;
 
 // The noise's spread at the standard Grain, the dither against banding the shader always had (half a step either
 // way), and at the setting's most, a grain that shows over the blurred cover. Between none and the standard it
@@ -34,12 +39,16 @@ static float grainSteps(float factor) {
     return kGrainStandardSteps + (MIN(factor, most) - 1) / (most - 1) * (kGrainMostSteps - kGrainStandardSteps);
 }
 
-// ZOOM: the visible rect's longer side reads this share of the cover, about what the Light renderer's copies,
-// twice the screen's size and more, show of theirs.
+// The Music app's backdrop, worked out from what its player draws: three copies of the blurred cover, the turns and
+// places of SGRFluid.m's kCopy (unit: half the visible rect's longer side, y down; clockwise), each opaque and laid over
+// the last with a feathered edge where the Music app blurs the whole; then the picture shown through a bend. Flowing,
+// the bend breathes between none and its full reach once in 2 pi * 3.5 s; held still, the picture is flat and a
+// quarter larger. The bend is Retrine's own: a push out from the middle and two slow waves, at phases picked per layer.
 static NSString *const kShader = @"#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"#define ZOOM 0.55\n"
-"struct U { float4 visible; float2 aspect; float time; float warp; float progress; float flows; float grain; };\n"
+"#define TAU 6.2831853\n"
+"#define FEATHER 0.44\n"
+"struct U { float4 visible; float4 seed; float2 aspect; float time; float warp; float progress; float flows; float grain; float playing; };\n"
 "struct V { float4 position [[position]]; float2 uv; };\n"
 // One triangle past the corners covers the drawable; uv runs 0 to 1 down and across it.
 "vertex V fluidVertex(uint id [[vertex_id]]) {\n"
@@ -63,28 +72,51 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    return g0.y * (g0.x * t.sample(s, float2(h0.x, h0.y)) + g1.x * t.sample(s, float2(h1.x, h0.y)))\n"
 "         + g1.y * (g0.x * t.sample(s, float2(h0.x, h1.y)) + g1.x * t.sample(s, float2(h1.x, h1.y)));\n"
 "}\n"
-// Where a point of the screen reads the cover at time t: three bends along a slowly changing field, each
-// taking the last one's result, then a slow turn of the whole. Warp scales the bends.
-"static float2 flowAt(float2 q, float t, float w) {\n"
-"    q += w * 0.16 * float2(sin(q.y * 2.3 + t * 0.31), sin(q.x * 2.1 - t * 0.27 + 1.3));\n"
-"    q += w * 0.10 * float2(sin(q.y * 3.7 - t * 0.23 + 2.1), sin(q.x * 3.3 + t * 0.19 + 0.4));\n"
-"    q += w * 0.06 * float2(sin((q.x + q.y) * 5.1 + t * 0.17), sin((q.x - q.y) * 4.7 - t * 0.21 + 3.0));\n"
-"    float a = t * 0.04, c = cos(a), s = sin(a);\n"
-"    return float2(c * q.x - s * q.y, s * q.x + c * q.y);\n"
+"static float2 turned(float2 v, float a) {\n"
+"    float c = cos(a), s = sin(a);\n"
+"    return float2(c * v.x - s * v.y, s * v.x + c * v.y);\n"
+"}\n"
+// How far the bend carries a point of the screen at its full reach.
+"static float2 bendAt(float2 q, float4 seed) {\n"
+"    return (q - 0.5) * 0.25\n"
+"         + 0.07 * float2(sin(q.y * 2.3 + seed.x), sin(q.x * 2.1 + seed.y))\n"
+"         + 0.04 * float2(sin((q.x + q.y) * 3.7 + seed.z), sin((q.x - q.y) * 3.3 + seed.w));\n"
+"}\n"
+// One copy: its color and how much of it covers the point c (1 inside, fading to 0 over FEATHER of its half side).
+"static float4 copyAt(texture2d<float> t, sampler s, float2 c, float2 center, float angle, float reach) {\n"
+"    float2 l = turned(c - center, -angle);\n"
+"    float edge = max(abs(l.x), abs(l.y)) / reach;\n"
+"    float3 rgb = smoothRead(t, s, l / (2.0 * reach) + 0.5).rgb;\n"
+"    return float4(rgb, 1.0 - smoothstep(1.0 - FEATHER, 1.0, edge));\n"
+"}\n"
+"static float3 backdrop(texture2d<float> big, texture2d<float> small, sampler s, float2 c, constant U &u) {\n"
+"    float a0 = TAU * u.time / 120.0, a1 = TAU * u.time / 70.0, a2 = TAU * u.time / 90.0;\n"
+"    float3 rgb = smoothRead(big, s, turned(c, -a0) / 2.8 + 0.5).rgb;\n"
+"    float4 one = copyAt(small, s, c, float2(-0.25, -0.15) * u.warp, a1, 0.7);\n"
+"    rgb = mix(rgb, one.rgb, one.a * min(u.warp, 1.0));\n"
+"    float4 two = copyAt(small, s, c, turned(float2(0.7, -0.7) * u.warp, a0), a2, 0.7);\n"
+"    return mix(rgb, two.rgb, two.a * min(u.warp, 1.0));\n"
 "}\n"
 "fragment float4 fluidFragment(V in [[stage_in]], constant U &u [[buffer(0)]],\n"
-"                              texture2d<float> from [[texture(0)]], texture2d<float> to [[texture(1)]],\n"
+"                              texture2d<float> fromBig [[texture(0)]], texture2d<float> fromSmall [[texture(1)]],\n"
+"                              texture2d<float> toBig [[texture(2)]], texture2d<float> toSmall [[texture(3)]],\n"
 "                              sampler s [[sampler(0)]]) {\n"
 "    float2 p = (in.uv - u.visible.xy) / u.visible.zw;\n"
-"    float2 q = (p - 0.5) * u.aspect;\n"
-"    float2 r = flowAt(q, u.time, u.warp);\n"
-// The new cover reaches first where a slow wave is low, and the old one is swept aside as it goes.
-"    float wave = 0.5 + 0.5 * sin(q.x * 3.1 + q.y * 2.3 + sin(q.y * 4.0 + u.time * 0.5));\n"
-"    float m = u.flows > 0.5 ? smoothstep(0.0, 1.0, saturate(u.progress * 1.5 - wave * 0.5)) : u.progress;\n"
-"    float2 bend = 0.22 * u.flows * float2(sin(q.y * 2.9 + 0.7), cos(q.x * 2.6 + 1.9));\n"
-"    float4 a = smoothRead(from, s, (r + bend * u.progress) * ZOOM + 0.5);\n"
-"    float4 b = smoothRead(to, s, (r - bend * (1.0 - u.progress)) * ZOOM + 0.5);\n"
-"    float3 c = mix(a.rgb, b.rgb, m);\n"
+// Where the point reads the picture: flat and a quarter larger held, bent by the breath flowing (the bend's inverse,
+// found in three steps).
+"    float breath = 0.5 + 0.5 * sin(u.time / 3.5);\n"
+"    float2 bent = p;\n"
+"    for (int k = 0; k < 3; k++) bent = p - breath * u.warp * bendAt(bent, u.seed);\n"
+"    float2 q = mix((p - 0.5) / 1.25 + 0.5, bent, u.playing);\n"
+"    float2 c = (q - 0.5) * u.aspect * 2.0;\n"
+"    float3 b = backdrop(toBig, toSmall, s, c, u);\n"
+// The new cover reaches first where a slow wave is low.
+"    if (u.progress < 1.0) {\n"
+"        float2 r = (p - 0.5) * u.aspect;\n"
+"        float wave = 0.5 + 0.5 * sin(r.x * 3.1 + r.y * 2.3 + sin(r.y * 4.0 + u.time * 0.5));\n"
+"        float m = u.flows > 0.5 ? smoothstep(0.0, 1.0, saturate(u.progress * 1.5 - wave * 0.5)) : u.progress;\n"
+"        b = mix(backdrop(fromBig, fromSmall, s, c, u), b, m);\n"
+"    }\n"
 // Noise against the banding a slow gradient shows in eight bits, spread over u.grain steps; past the standard's half
 // step up it only darkens, so the brightness ceiling holds as it did.
 "    uint2 ip = uint2(in.position.xy);\n"
@@ -92,7 +124,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    h = (h ^ (h >> 13)) * 1274126177u;\n"
 "    h ^= h >> 16;\n"
 "    float noise = float(h & 0xffffu) / 65535.0 - 0.5;\n"
-"    return float4(c + min(noise * u.grain, 0.5) / 255.0, 1.0);\n"
+"    return float4(b + min(noise * u.grain, 0.5) / 255.0, 1.0);\n"
 "}\n";
 
 BOOL SGRFluidGPUAvailable(void) {
@@ -192,7 +224,10 @@ static id<MTLTexture> textureOf(id picture) {
 
 @implementation SGRFluidGPULayer {
     id _fromPicture, _toPicture;   // CGImages
-    id<MTLTexture> _from, _to;     // made from them when first drawn
+    id _fromSmall, _toSmall;       // the same blurred for the smaller copies
+    id<MTLTexture> _from, _to, _fromLess, _toLess;   // made from them when first drawn
+    simd_float4 _seed;
+    float _settle;                 // 0 held still, 1 flowing (kSettle, eased when drawn)
     float _progress;               // 1 when nothing runs in
     BOOL _flows;
     CFTimeInterval _length, _last;
@@ -210,6 +245,7 @@ static id<MTLTexture> textureOf(id picture) {
     _warp = 1;
     _grain = 1;
     _progress = 1;
+    for (int i = 0; i < 4; i++) _seed[i] = (float)(arc4random_uniform(62832) / 10000.0);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;
     self.opaque = YES;
@@ -260,11 +296,18 @@ static id<MTLTexture> textureOf(id picture) {
 }
 
 - (void)setPicture:(CGImageRef)picture animated:(BOOL)animated {
+    [self setPicture:picture small:picture animated:animated];
+}
+
+- (void)setPicture:(CGImageRef)picture small:(CGImageRef)small animated:(BOOL)animated {
     if (!picture) return;
+    if (!small) small = picture;
     if (animated && _toPicture && _drewOnce && [self mayDraw]) {
         // One still running in is cut short: the new one runs in over the one it was bringing.
         _fromPicture = _toPicture;
         _from = _to;
+        _fromSmall = _toSmall;
+        _fromLess = _toLess;
         // Held still (paused, Low Power Mode, Reduce Motion) it fades over the Light renderer's time, a few
         // frames, rather than flowing for longer.
         _flows = _moving && !SGRReduceMotion();
@@ -273,10 +316,14 @@ static id<MTLTexture> textureOf(id picture) {
     } else {
         _fromPicture = nil;
         _from = nil;
+        _fromSmall = nil;
+        _fromLess = nil;
         _progress = 1;
     }
     _toPicture = (__bridge id)picture;
     _to = nil;
+    _toSmall = (__bridge id)small;
+    _toLess = nil;
     _dirty = YES;
     [self update];
 }
@@ -346,11 +393,13 @@ static id<MTLTexture> textureOf(id picture) {
         // Nobody can see the rest of this fade. Return on the destination, even if the track hasn't changed.
         _fromPicture = nil;
         _from = nil;
+        _fromSmall = nil;
+        _fromLess = nil;
         _progress = 1;
         _dirty = YES;
     }
     BOOL eligible = _ready && _toPicture && [self mayDraw] && _firstFailures < 3;
-    BOOL wants = eligible && (_moving || _progress < 1);
+    BOOL wants = eligible && (_moving || _progress < 1 || [self settling]);
     if (eligible && !wants && _dirty && self.bounds.size.width >= 1 && self.bounds.size.height >= 1)
         wants = ![self draw] && _misses < 30;
     if (wants && !_link) {
@@ -366,6 +415,11 @@ static id<MTLTexture> textureOf(id picture) {
     }
 }
 
+// Going from held to flowing or back.
+- (BOOL)settling {
+    return _moving ? _settle < 1 : _settle > 0;
+}
+
 - (void)tick:(CADisplayLink *)link {
     if (![self mayDraw]) {
         [self update];
@@ -378,16 +432,19 @@ static id<MTLTexture> textureOf(id picture) {
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
     if (_moving) _time += step * _rate;
+    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * step / kSettle));
     if (_progress < 1) {
         _progress = (float)MIN(1.0, _progress + step / MAX(0.05, _length));
         if (_progress >= 1) {
             _fromPicture = nil;
             _from = nil;
+            _fromSmall = nil;
+            _fromLess = nil;
         }
     }
     _dirty = YES;
     BOOL drew = [self draw];
-    if (_moving || _progress < 1) return;
+    if (_moving || _progress < 1 || [self settling]) return;
     // The last frame of a running-in is tried again for a moment if no drawable was free, rather than left half mixed.
     if (!drew && ++_misses < 30) return;
     [self update];
@@ -400,7 +457,9 @@ static id<MTLTexture> textureOf(id picture) {
     id<CAMetalDrawable> drawable = [self nextDrawable];
     if (!drawable) return NO;
     if (!_to) _to = textureOf(_toPicture);
+    if (!_toLess) _toLess = textureOf(_toSmall) ?: _to;
     if (_fromPicture && !_from) _from = textureOf(_fromPicture);
+    if (_from && !_fromLess) _fromLess = textureOf(_fromSmall) ?: _from;
     if (!_to) return NO;
 
     CGRect visible = CGRectIsEmpty(_visibleRect) ? bounds : _visibleRect;
@@ -416,6 +475,8 @@ static id<MTLTexture> textureOf(id picture) {
         .progress = _from ? _progress : 1,
         .flows = _flows ? 1 : 0,
         .grain = grainSteps(_grain),
+        .seed = _seed,
+        .playing = _settle * _settle * (3 - 2 * _settle),
     };
 
     MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -427,7 +488,9 @@ static id<MTLTexture> textureOf(id picture) {
     [encoder setRenderPipelineState:sPipeline];
     [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
     [encoder setFragmentTexture:_from ?: _to atIndex:0];
-    [encoder setFragmentTexture:_to atIndex:1];
+    [encoder setFragmentTexture:_from ? _fromLess : _toLess atIndex:1];
+    [encoder setFragmentTexture:_to atIndex:2];
+    [encoder setFragmentTexture:_toLess atIndex:3];
     [encoder setFragmentSamplerState:sSampler atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];

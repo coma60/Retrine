@@ -18,10 +18,16 @@ enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 // The smaller copies' edges are feathered over this share of their side, so they run into the copy under them as the
 // Music app's blur of the whole square runs them together.
 static const CGFloat kCopyFeather = 0.22;
-// The blurred cover is small: it is drawn several times the screen's size, so detail is lost anyway. The Blur
-// setting is its radius in steps of 1.25 px, so the standard 24 is 30 px. Core Image works here on encoded values,
+// Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
+static const CGFloat kHeldZoom = 1.25;
+static const CFTimeInterval kSettle = 0.8;
+// Its blur's standard deviation, in points on screen.
+static const CGFloat kBackdropSigma = 160;
+// The blurred cover is small: it is drawn larger than the screen, so detail is lost anyway. The Blur setting scales
+// kBackdropSigma (the standard 24 is the Music app's), worked out as a radius on this cover in setArtwork:. Core
+// Image works here on encoded values,
 // as the Music app's shader does (in linear light even -0.08 turned every channel under about 30% to black, issue #100).
-static const CGFloat kBlurSide = 128, kBlurPerStep = 1.25;
+static const CGFloat kBlurSide = 128;
 // The shade over the bottom of the visible rect, where the controls are. It was flat and light, because the ceiling
 // below kept the whole cover dark (and 0.55 left the lower half of a dark cover black, issue #100). The Music app's
 // player instead keeps the cover's own colors and brightness down to the title and the bar and goes dark only toward
@@ -228,12 +234,14 @@ static CGImageRef featherMask(void) {
 }
 
 @implementation SGRFluidLayer {
+    CALayer *_canvas;   // the copies, shown a quarter larger while held still (kHeldZoom)
     CALayer *_orbits[kCopies];   // each copy's journey about the middle, for those with an orbit
     CALayer *_copies[kCopies];
     CAGradientLayer *_shade;
     CGFloat _lowerLight;   // how light the shown cover's lower part is, 0 to 1 (blurred())
     UIImage *_source;
     UIImage *_blur;   // the last blurred cover shown, handed to Smooth when it comes
+    UIImage *_blurSmall;   // the same blurred for the smaller copies
     NSUInteger _generation;
     BOOL _moving;
     BOOL _turning;   // the copies' turns are running (moving, and Smooth is not showing)
@@ -248,6 +256,9 @@ static CGImageRef featherMask(void) {
     if (!(self = [super init])) return nil;
     self.masksToBounds = YES;
     self.backgroundColor = UIColor.blackColor.CGColor;
+    _canvas = [CALayer layer];
+    _canvas.transform = CATransform3DMakeScale(kHeldZoom, kHeldZoom, 1);
+    [self addSublayer:_canvas];
     for (int i = 0; i < kCopies; i++) {
         _orbits[i] = [CALayer layer];
         _copies[i] = [CALayer layer];
@@ -258,7 +269,7 @@ static CGImageRef featherMask(void) {
             _copies[i].mask = mask;
         }
         [_orbits[i] addSublayer:_copies[i]];
-        [self addSublayer:_orbits[i]];
+        [_canvas addSublayer:_orbits[i]];
     }
     [self applyWarp];
     _shade = [CAGradientLayer layer];
@@ -323,7 +334,7 @@ static CGImageRef featherMask(void) {
         _gpu.held = self.hidden;
         _gpu.moving = _moving;
         [self setNeedsLayout];
-        if (_blur) [_gpu setPicture:_blur.CGImage animated:NO];
+        if (_blur) [_gpu setPicture:_blur.CGImage small:(_blurSmall ?: _blur).CGImage animated:NO];
     } else if (!smooth && _gpu) {
         _gpu.held = YES;
         [_gpu removeFromSuperlayer];
@@ -346,7 +357,7 @@ static CGImageRef featherMask(void) {
 - (void)showCopies {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    for (int i = 0; i < kCopies; i++) _orbits[i].hidden = _gpuShown;
+    _canvas.hidden = _gpuShown;
     [CATransaction commit];
     [self updateCopies];
 }
@@ -397,6 +408,13 @@ static CGImageRef featherMask(void) {
     _shade.locations = at;
     _gpu.frame = bounds;
     _gpu.visibleRect = visible;
+    // Grown about the visible rect's middle.
+    if (bounds.size.width >= 1 && bounds.size.height >= 1) {
+        _canvas.bounds = bounds;
+        _canvas.anchorPoint = CGPointMake((CGRectGetMidX(visible) - bounds.origin.x) / bounds.size.width,
+                                          (CGRectGetMidY(visible) - bounds.origin.y) / bounds.size.height);
+        _canvas.position = CGPointMake(CGRectGetMidX(visible), CGRectGetMidY(visible));
+    }
     if (!CGRectEqualToRect(visible, _laidOutFor) && visible.size.width >= 1) {
         _laidOutFor = visible;
         if (_turning) [self stop];
@@ -419,7 +437,13 @@ static CGImageRef featherMask(void) {
     _source = image;
     NSUInteger generation = ++_generation;
     BOOL contrast = SGRIncreaseContrast();
-    CGFloat radius = kBlurPerStep * SGRFluidValue(SGRFluidBlur), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
+    // The blur in points on screen, as the Music app's (kBackdropSigma at the standard Blur), as a radius on the large
+    // copy's cover: it is kCopy[0].side units across, a unit half the visible rect's longer side.
+    CGRect visible = CGRectIsEmpty(_visibleRect) ? self.bounds : _visibleRect;
+    CGFloat longer = MAX(visible.size.width, visible.size.height);
+    if (longer < 1) longer = MAX(UIScreen.mainScreen.bounds.size.width, UIScreen.mainScreen.bounds.size.height);
+    CGFloat points = kBackdropSigma * SGRFluidValue(SGRFluidBlur) / SGRFluidLimitsOf(SGRFluidBlur).standard;
+    CGFloat radius = points * kBlurSide / (kCopy[0].side * longer), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
     CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -438,6 +462,7 @@ static CGImageRef featherMask(void) {
 
 - (void)show:(UIImage *)blur small:(UIImage *)small lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
     _blur = blur;
+    _blurSmall = small;
     _lowerLight = lowerLight;
     // The shade's peak follows the new cover's lower part, crossfading with the cover.
     [CATransaction begin];
@@ -445,7 +470,7 @@ static CGImageRef featherMask(void) {
     [CATransaction setAnimationDuration:SGRCrossfade];
     [self updateShadeColors];
     [CATransaction commit];
-    [_gpu setPicture:blur.CGImage animated:animated];
+    [_gpu setPicture:blur.CGImage small:small.CGImage animated:animated];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     for (int i = 0; i < kCopies; i++) {
@@ -467,6 +492,13 @@ static CGImageRef featherMask(void) {
     _moving = moving;
     _gpu.moving = moving;
     [self updateCopies];
+    // Flowing at its own size, held a quarter larger, eased over kSettle as the Music app's backdrop goes.
+    CGFloat zoom = moving ? 1 : kHeldZoom;
+    [CATransaction begin];
+    [CATransaction setAnimationDuration:kSettle];
+    [CATransaction setAnimationTimingFunction:[CAMediaTimingFunction functionWithControlPoints:0.42 :0 :0.58 :1]];
+    _canvas.transform = CATransform3DMakeScale(zoom, zoom, 1);
+    [CATransaction commit];
 }
 
 - (void)start {

@@ -2612,15 +2612,21 @@ blurred behind the lyrics as a clip is, under a black scrim of 45 % at the top f
 a later clip replaces it, Black and Your Photo win, and Low Power Mode, Reduce Motion or serious heat keeps the ordinary cover;
 PlayerMotion.x, harness/player/ `still`),
 while Fluid is chosen a Style menu, Light or Smooth (spotifyglass.redesign.fluid.renderer, offered where Metal exists),
-its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*). Light is the three turning
-copies below; Smooth (Redesigned/Kit/SGRFluidGPU.m) draws the same blurred cover on the GPU, bent along a slowly
-changing field at up to 30 Hz and only while it moves or a new cover runs in through the old one (a crossfade under
-Reduce Motion), from a shader compiled at run time. It lies under the copies, which hide only once its first frame
+its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*). Both styles follow the
+Music app's player as read from its backdrop renderer: three opaque copies of the blurred cover in a square as tall as
+the visible rect (the unit half its height), one 1.4 units across turning in place once in 120 s, one 0.7 across at
+(-0.25, 0.15) turning once in 70 s, one 0.7 across at (0.7, 0.7) turning once in 90 s and carried about the middle by
+the first's turn, all clockwise, the smaller ones feathered at the edge where the Music app blurs the whole; the blur
+160 pt (kBackdropSigma) at the standard Blur. Held still (paused) the picture is a quarter larger and flat, eased there
+and back over 0.8 s. Light is those copies as layers; Smooth (Redesigned/Kit/SGRFluidGPU.m) draws the same on the
+GPU and, while flowing, shows them through a bend of Retrine's own (a push out from the middle and two slow waves, at
+phases picked per layer) that breathes from none to its full reach once in 2 pi * 3.5 s, at up to 30 Hz and only while
+it moves, settles or a new cover runs in through the old one (a crossfade under Reduce Motion), from a shader compiled
+at run time. It lies under the copies, which hide only once its first frame
 is drawn, so a failed shader leaves Light; Reset keeps the style. Checked in the simulator with a bare SGRFluidLayer
 (both styles, switched both ways while moving, a cover change mid-flow). The sliders:
 Speed (25-300 %, how fast the three blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
-far from the middle the two smaller copies sit and how much they show, opaque at 100; at none the large copy turns alone), Blur (2-24, the
-radius at 1.25 px a step on the 128 px cover), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
+far from the middle the two smaller copies sit and how much they show, opaque at 100; at none the large copy turns alone), Blur (2-32, 160 pt at the standard 24 and in proportion), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
 light that the luminance ceiling, 0.17 or 0.04 with Increase Contrast, still caps; the shade over the lower part, not the ceiling, keeps the text's 4.5:1: see Backdrop ink) and Grain (0-200 %, 100 standard, shown only while Smooth
 is the style, spotifyglass.redesign.fluid.grain: the noise that breaks up banding, half an eight-bit step either way at 100
 and none at 0, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the

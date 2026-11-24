@@ -1,6 +1,6 @@
-// Fluid artwork drawn on the GPU (SGRFluid.h's Smooth renderer): the same blurred cover the Light renderer turns,
-// flowing instead, its parts drifting past each other along a slowly changing field, and a new cover running in
-// through the old one rather than fading over it.
+// Fluid artwork drawn on the GPU (SGRFluid.h's Smooth renderer): the Light renderer's three turning copies of the
+// blurred cover, shown through a bend that breathes while it flows and flat, a quarter larger, while it is held, and a
+// new cover running in through the old one rather than fading over it.
 //
 // The picture comes in already blurred, saturated and held under the brightness ceiling (SGRFluid.m's blurred()),
 // so the Blur, Saturation and Brightness settings and the contrast with the player's text are the Light renderer's
@@ -27,6 +27,8 @@ BOOL SGRFluidGPUAvailable(void);
 // The blurred cover. Animated, the new one runs in through the shown one (a crossfade under Reduce Motion);
 // otherwise it replaces it at once.
 - (void)setPicture:(CGImageRef)picture animated:(BOOL)animated;
+// The same, with the cover blurred for the smaller copies (twice as far, SGRFluid.m) beside it.
+- (void)setPicture:(CGImageRef)picture small:(CGImageRef)small animated:(BOOL)animated;
 // Flowing, or held still where it is. Off to begin with.
 @property (nonatomic) BOOL moving;
 // Hidden by its owner: nothing is drawn, not even a running transition, until it is NO again.

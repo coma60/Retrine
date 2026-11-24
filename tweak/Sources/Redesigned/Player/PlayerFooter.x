@@ -91,9 +91,8 @@ static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // out. Taken again at each new reading of the backdrop (refreshFooterInk).
 static const CGFloat kFooterInkAdd = 0.46;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
-// Added to the backdrop as the Music app's are (plusL, 0.46): nothing groups the footer's glyphs away from it (the ink
-// tree log on 9.2.0). Plain under Increase Contrast. Plain, they washed the backdrop's hue out (over a blue cover 120,
-// 110, 91 of 255 added to red, green, blue where the Music app adds 116, 119, 118).
+// Drawn plain at the alpha that lands where the Music app's 0.46 added would (SGRInkFor: plusL does not reach the
+// backdrop in Spotify's player); at least the secondary color under Increase Contrast.
 static UIView *footerInked(UIView *view) {
     return [view isKindOfClass:SGRGlyphButton.class] ? ((SGRGlyphButton *)view).glyph : view;
 }
@@ -104,12 +103,9 @@ static void footerFilter(UIView *view, NSString *filter) {
 }
 
 static UIColor *footerRest(UIView *view) {
-    if (!SGRIncreaseContrast()) {
-        footerFilter(view, @"plusL");
-        return [UIColor colorWithWhite:1 alpha:kFooterInkAdd];
-    }
     footerFilter(view, nil);
-    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, CGColorGetAlpha(SGRSecondary().CGColor), kFooterInkAdd)];
+    CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkAdd;
+    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
 }
 
 // Lit, a glyph is the primary color as it is, not light added.

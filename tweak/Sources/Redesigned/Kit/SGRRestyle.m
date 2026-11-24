@@ -972,15 +972,18 @@ BOOL SGRInkIsolated(UIView *view) {
 static void noteInkView(UIView *view);
 
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
-    // A fixed amount of white added to whatever is behind, as on the Music app's player: over a light backdrop the text
-    // is lighter by itself and goes to white. Nothing in the player's tree between the ink and the field groups it (the
-    // ink tree log on 9.2.0: no mask, filter or rasterizing on any of their chains), so plusL always reaches the
-    // backdrop. It is not decided from SGRInkIsolated: while the player opens its container is masked for a moment,
-    // and ink decided then stayed plain until the backdrop's reading next moved.
+    // The Music app adds a fixed amount of white to whatever is behind, so over a light backdrop its text goes to white.
+    // In Spotify's player plusL does not reach the backdrop, although the ink tree log on 9.2.0 shows no mask, filter or
+    // rasterizing between the ink and the field: over a light cover the ink came out as plain white of that alpha (the
+    // times at 0.265 all but vanished over Wish You Were Here's gray). So the ink is drawn plain at the alpha that lands
+    // on the same value over the measured backdrop, alpha / (1 - luma): the Music app's lightness, whatever is behind.
+    // With no reading yet it is the alpha as it is.
     (void)lightAlpha;
     noteInkView(view);
-    if (plusL) *plusL = YES;
-    return [UIColor colorWithWhite:1 alpha:alpha];
+    if (plusL) *plusL = NO;
+    CGFloat light = SGRBackdropLightnessBehind(view);
+    if (light < 0) return [UIColor colorWithWhite:1 alpha:alpha];
+    return [UIColor colorWithWhite:1 alpha:MIN(1, alpha / MAX(1 - light, kInkLeastHeadroom))];
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {

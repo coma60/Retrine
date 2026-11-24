@@ -2788,15 +2788,15 @@ The artist, the times and the audio quality badge are white ADDED to the backdro
 light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a
 reader that draws it 8 by 48 pixels four times a second (once in four in Low Power Mode, never while the player is
 hidden or the app inactive) and keeps each row's mean encoded luma; it is read through the render server
-(drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. SGRInkFor gives a
-fixed alpha added to the backdrop whatever it is (artist 0.46, times 0.265, badge 0.40 ink and 17/255 fill; the
-footer's glyphs at rest 0.46, PlayerFooter.x), as on the Music app's player: over a light backdrop the ink goes to
-white by itself. On 9.2.0 nothing between any of them and the field has a mask, a rasterized layer or a filter (the
-"ink tree" log lines, SGRRestyle.m), so plusL reaches the backdrop. The ink is not decided from SGRInkIsolated: while
-the player opens, its container is masked for a moment, and ink decided then stayed plain. Under Increase Contrast the
-times, the artist and the footer are drawn plain in the label colors. The times (SGRTimeLabelStyle), the artist
-(PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk) and the footer (refreshFooterInk) take
-the ink again at each new reading; the badge uses the times' semibold.
+(drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. The Music app adds a
+fixed alpha of white to the backdrop (artist 0.46, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.46),
+so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the
+"ink tree" log lines (SGRRestyle.m) show no mask, rasterized layer or filter between the ink and the field on 9.2.0:
+added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink
+plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), and the alpha as it is
+with no reading yet. Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
+times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk)
+and the footer (refreshFooterInk) take the ink again at each new reading; the badge uses the times' semibold.
 
 The Fluid field's lower part follows the Music app's player (Mr. Blue Sky cover, measured: ochre at the title, olive at
 the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before), and the

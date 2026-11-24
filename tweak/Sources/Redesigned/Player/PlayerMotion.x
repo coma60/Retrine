@@ -200,9 +200,9 @@ static const BOOL kSeamBlur = NO;
 // cover goes soft from well above its bottom edge (over the title), more the further down, and goes on below its edge
 // as itself blurred and mirrored, so the colors under the title are the cover's own and move with it. Two blurred
 // copies of the same picture (the poster, and the playing clip over it) stand for that: a light blur coming in from
-// kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, from
-// kSofterFrom to kSofterWhole and on down to the bottom (kMirrorStretch). Radii in points; each copy is rendered at
-// its scale, as it is blurred anyway.
+// kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, over a
+// band from just above that edge on down to the bottom (kSofterRadius, kMirrorStretch). Radii in points; each copy is
+// rendered at its scale, as it is blurred anyway.
 // Against the Music app's player over two animated covers (402 by 874 pt, the same frames), the cover lost its detail
 // about 24 pt (0.045 of its height) higher than the Music app's, which stays sharp to 0.84 and is soft by 0.92: both
 // masks start that much lower. The mirror held 90 pt and fading over 150 more stood as the cover's own shapes, light
@@ -214,21 +214,22 @@ static const BOOL kSeamBlur = NO;
 // Against the Music app's again over a light collage and a dark blue cover, 0.80 lost the detail 10 pt too soon
 // (three fifths of the Music app's 30 pt above the cover's bottom): 0.81 and 0.88.
 static const CGFloat kSoftFrom = 0.81, kSoftWhole = 0.91, kSoftRadius = 8, kSoftScale = 0.5;
-static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50, kSofterScale = 0.25;
-// Below the cover's edge the Music app's blur keeps growing: its blur over the mirror is a variable blur whose mask is
-// clear at the top of its region and whole about 60% of the way down, so the mirror ends as little more than a color
-// per row. Measured on its player against Retrine's over Rich Man's and Mr. Blue Sky's animated covers (3x, 874 pt),
-// the bottom fifth of the screen varied across a row by 1 to 2 levels of 255 where the mirror under one radius-50 blur
-// varied by 5 to 11, and a light in the clip's top showed at the foot. A third copy, mirrored the same way and blurred
-// kSoftestRadius, comes in over the strong one from the cover's edge and is whole kSoftestWhole of the way from there to
-// the foot of the screen.
-static const CGFloat kSoftestWhole = 0.6, kSoftestRadius = 160, kSoftestScale = 0.125;
-// The Music app's player (MediaCoreUI's NowPlayingArtworkMotionReplicatorLayer, iOS 27.2.1) draws below such a cover the
-// playing clip itself, mirrored at the cover's bottom edge and stretched kMirrorStretch times down (its replica's
-// transform: translate 3h, scale -2), live, so a flash in the clip's foot runs on down to the bottom of the screen. Its
-// blur there is a variable blur of radius 50 (kSofterRadius). The mirror is whole from the cover's edge to the bottom
-// and stands over the still veil, which shows only until the clip draws.
-static const CGFloat kMirrorStretch = 2;
+static const CGFloat kSofterRadius = 40, kSofterScale = 0.5;
+// The strong copy follows the Music app's phone layout for a tall cover (MediaCoreUI's
+// FullBleedArtworkEffect.SingleOverlayEffect, iOS 27.2.1): a blur of radius 40 at half scale (kSofterRadius), over a
+// band at the bottom of the screen that starts a little above the cover's bottom edge. The band's height is
+// k * (screen - top - cover + kSofterBandLift), top being round(kSofterTopUnit * screen aspect / kSofterAspect) and k
+// (screen / kSofterRefHeight)^kSofterHeightPower held to kSofterKLeast...kSofterKMost; on a 402 by 874 pt screen under a
+// 3:4 cover it starts 48 pt above the cover's edge. Its mask is clear at the band's top and whole kSofterRamp of the way
+// down (an ease-in), and whole from there to the foot.
+static const CGFloat kSofterTopUnit = 85, kSofterAspect = 19.5 / 9, kSofterBandLift = 128, kSofterRefHeight = 844;
+static const CGFloat kSofterHeightPower = 0.35, kSofterKLeast = 0.8, kSofterKMost = 1.2, kSofterRamp = 0.1;
+// The Music app's player draws below such a cover the playing clip itself, mirrored at the cover's bottom edge, live, so
+// a flash in the clip's foot runs on down under the blur. In its phone layout (NowPlayingArtworkMirrorReplicatorLayer,
+// iOS 27.2.1) the mirror is flipped, not stretched: its replica's transform is translate(h) scale(1, -1)
+// translate(-h). (Its other layout, NowPlayingArtworkMotionReplicatorLayer, stretches it twice down.) The mirror is
+// whole from the cover's edge to the bottom and stands over the still veil, which shows only until the clip draws.
+static const CGFloat kMirrorStretch = 1;
 // Over it the Music app's color adjustment (NowPlayingArtworkBackgroundEffect.ColorAdjustmentsLayer): a gradient whose
 // alpha takes each color toward kAdjustKeep of itself plus kAdjustLift of white (its dimming matrix, 0.3 c + 0.0651),
 // from none at kAdjustFrom of the screen to whole at its foot, along x^kAdjustEase (x the share of the way from there
@@ -584,7 +585,6 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
     CALayer *_soft, *_softer;   // the cover blurred a little, and a lot and mirrored below its edge (kSoftFrom)
-    CALayer *_softest;   // mirrored too and blurred more, coming in below the cover's edge (kSoftestWhole)
     CAGradientLayer *_adjust, *_adjustLift;   // the Music app's color adjustment over the mirror (kAdjustKeep)
     NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
     NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
@@ -736,12 +736,15 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     NSMutableArray *softPictures = [NSMutableArray array], *softClips = [NSMutableArray array];
     _soft = softCopy(kSoftRadius, kSoftScale, NO, softPictures, softClips);
     _softer = softCopy(kSofterRadius, kSofterScale, YES, softPictures, softClips);
-    _softest = softCopy(kSoftestRadius, kSoftestScale, YES, softPictures, softClips);
+    // Its band's mask (kSofterRamp): the ease-in's values at the layout's five stops.
+    NSMutableArray *softerMask = [NSMutableArray array];
+    for (NSNumber *alpha in @[@0, @0.093, @0.315, @0.622, @1])
+        [softerMask addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:alpha.doubleValue].CGColor];
+    ((CAGradientLayer *)_softer.mask).colors = softerMask;
     _softPictures = softPictures;
     _softClips = softClips;
     [_picture.layer addSublayer:_soft];
     [_picture.layer addSublayer:_softer];
-    [_picture.layer addSublayer:_softest];
     _adjust = [CAGradientLayer layer];
     _adjust.colors = adjustColors(0, 1 - kAdjustKeep);
     _adjust.hidden = YES;
@@ -910,7 +913,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 // inside the layout's transaction.
 - (void)layoutSoftFor:(BOOL)shorter width:(CGFloat)width height:(CGFloat)height total:(CGFloat)total {
     BOOL shown = shorter && !_inCover && height > 0;
-    _soft.hidden = _softer.hidden = _softest.hidden = !shown;
+    _soft.hidden = _softer.hidden = !shown;
     BOOL adjusted = shown && !_lyricsUp;
     if (_adjust.hidden == adjusted) {
         _adjust.hidden = _adjustLift.hidden = !adjusted;
@@ -918,23 +921,27 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     }
     if (!shown) return;
     CGRect cover = CGRectMake(0, 0, width, height);
-    for (CALayer *copy in @[_soft, _softer, _softest]) {
+    for (CALayer *copy in @[_soft, _softer]) {
         copy.frame = CGRectMake(0, 0, width, total);
         copy.mask.frame = copy.bounds;
     }
     for (CALayer *picture in _softPictures) {
         picture.bounds = cover;
-        // The mirror is the second of each mirrored copy's: flipped about the cover's bottom edge and stretched down.
-        CALayer *copy = picture.superlayer;
-        BOOL mirror = (copy == _softer || copy == _softest) && picture != copy.sublayers.firstObject;
+        // The mirror is the second of the strong copy's: flipped about the cover's bottom edge and stretched down.
+        BOOL mirror = picture.superlayer == _softer && picture != _softer.sublayers.firstObject;
         picture.position = CGPointMake(width / 2, mirror ? height * (1 + kMirrorStretch / 2) : height / 2);
         ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
     }
     NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
     ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
-    ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
+    CGFloat screenHigh = _screenHeight > 0 ? MIN(_screenHeight, total) : total;
+    CGFloat top = round(kSofterTopUnit * (screenHigh / width) / kSofterAspect);
+    CGFloat k = MIN(kSofterKMost, MAX(kSofterKLeast, pow(screenHigh / kSofterRefHeight, kSofterHeightPower)));
+    CGFloat band = MAX(0, round(k * (screenHigh - top - height + kSofterBandLift))), bandFrom = screenHigh - band;
+    // The ease-in (0.42, 0, 1, 1) at a quarter, half and three quarters of the ramp.
+    ((CAGradientLayer *)_softer.mask).locations = @[at(bandFrom), at(bandFrom + band * kSofterRamp * 0.25),
+        at(bandFrom + band * kSofterRamp * 0.5), at(bandFrom + band * kSofterRamp * 0.75), at(bandFrom + band * kSofterRamp)];
     CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, adjustFrom = screen * kAdjustFrom;
-    ((CAGradientLayer *)_softest.mask).locations = @[at(height), at(height + MAX(0, screen - height) * kSoftestWhole)];
     NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
     for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
     for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
@@ -1050,7 +1057,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     if (_inCover) {
         // The cover's own picture: nothing over it to keep readable, and nothing under it to fade into.
         _still.mask = nil;
-        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _softest.hidden = _adjust.hidden = _adjustLift.hidden = YES;
+        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _adjust.hidden = _adjustLift.hidden = YES;
         return;
     }
     [self measure:file poster:poster];

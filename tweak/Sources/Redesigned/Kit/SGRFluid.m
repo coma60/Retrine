@@ -29,7 +29,8 @@ static const CFTimeInterval kSettle = 0.8;
 // but against a simulation of the Music app's own pipeline (the copies, blur and color table as read from it) over
 // three covers at many moments of the turn, its own 160 pt came nearest, and 1.8 times washed out the red a mostly
 // black cover's banner gives the top of the screen.
-static const CGFloat kBackdropSigma = 160;
+// Fitted with the rest below (kBackdropTuned): 262 pt.
+static const CGFloat kBackdropSigma = 262;
 // The blurred cover is small: it is drawn larger than the screen, so detail is lost anyway. The Blur setting scales
 // kBackdropSigma (the standard 24 is the Music app's), worked out as a radius on this cover in setArtwork:. Core
 // Image works here on encoded values,
@@ -45,7 +46,8 @@ static const CGFloat kBlurSide = 128;
 // text's contrast holds whatever the cover (4.5:1 at the title and the times, more below). The peak over a light cover
 // was 0.62; beside the Music app over Fuel's orange its foot stood at 45, 27, 17 where 0.62 took Retrine's to 28, 18,
 // 16, so it is 0.48 (the player's ink brightens over a light backdrop, SGRBackdropInk.h).
-static const CGFloat kShadeFrom = 0.40, kShadeEase = 1.75, kShadeLeast = 0.30, kShadeMost = 0.48;
+// Fitted (kBackdropTuned): the shade starts near the top and is 0.52 to 0.47 at the foot.
+static const CGFloat kShadeFrom = 0.02, kShadeEase = 1.9, kShadeLeast = 0.52, kShadeMost = 0.47;
 enum { kShadeSteps = 6 };
 // The share of the blurred cover (from its top) that counts as its lower part, for the shade's peak.
 static const CGFloat kLowerFrom = 0.5;
@@ -58,7 +60,12 @@ static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
 // blurred, mixed toward white by kBackdropWhite and passed through a color grade (backdropGrade),
 // which leaves grays nearly as they are and pulls strong reds and blues in. The Saturation slider scales kBackdropSaturation against
 // its standard; the Brightness slider scales the result's linear light.
-static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropWhite = 0.1;
+// kBackdropTuned: these, the blur (kBackdropSigma), the shade (kShade*), kBackdropDepth and kBackdropLoudness were
+// fitted together to the Music app's player: Retrine's Light backdrop simulated over four covers (a mostly black, an
+// orange, a teal and a red and yellow one) at the moments of its turn that matched each best, by a downhill search
+// over all ten at once. 6.1 of 255 off on average before, 5.1 after, checked on moments the fit had not seen; the
+// simulation matches Retrine's own screenshots to 2 to 4, so closer than that cannot be told apart.
+static const CGFloat kBackdropBlack = 0.526, kBackdropSaturation = 2.52, kBackdropWhite = 0.112;
 // The Music app also raises the contrast about middle gray (1 + 0.076 a) and the saturation (+ 0.166 a) by how loud the
 // music is (a, 0 to 1). Retrine does not listen to it here and takes this steady level for music playing: measured
 // against its player over three covers, Retrine's darkest channel stood 8 to 10 of 255 higher without it.
@@ -66,8 +73,8 @@ static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropW
 // channel stood where its does and the lowest higher: an orange's blue 5 to 17 of 255 over (Fuel, November Rain), a
 // teal's red 7 over. Taking the lowest down by this share of the spread brought the four from 6.4 of 255 off on
 // average to 5.3 (simulated), its look though not a stage read from it.
-static const CGFloat kBackdropDepth = 0.12;
-static const CGFloat kBackdropLoudness = 0.8, kBackdropContrastPerLoudness = 0.076, kBackdropSaturationPerLoudness = 0.166;
+static const CGFloat kBackdropDepth = 0.20;
+static const CGFloat kBackdropLoudness = 0.06, kBackdropContrastPerLoudness = 0.076, kBackdropSaturationPerLoudness = 0.166;
 
 // Retrine's grade for the backdrop, on an encoded color `e` (0 to 1), made to look like the Music app's. What its color
 // table does, read off its output: greens, yellows, cyans and magentas pass nearly untouched, while a color whose red

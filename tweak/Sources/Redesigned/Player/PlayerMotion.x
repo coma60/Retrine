@@ -227,6 +227,11 @@ static const CGFloat kMirrorStretch = 2;
 // kAdjustShare of the screen (its length, width * 1.2296 * aspect * 9 / 19.5, on a phone taller than 700 pt). Its
 // saturation (2.4 in the same matrix) is left out, so the mirror keeps the clip's own colors.
 static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.2, kAdjustShare = 1.2296 * 9 / 19.5;
+// The same matrix saturates by kAdjustSaturation (CAColorMatrixMakeSaturation 2.4). Saturation and the dimming commute
+// (the lift is gray), so the mirror is saturated before it is dimmed, and its blur carries the change smoothly across
+// the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
+// the deepening stand aside wherever it shows, and only the dim's top band stays.
+static const CGFloat kAdjustSaturation = 2.4;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -584,6 +589,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     CAGradientLayer *_scrim;   // a still's only: black from the top fading out under the header's controls
     NSMutableData *_luminances;   // of the frames measured so far
     BOOL _lyricsUp;
+    BOOL _dimTopOnly;   // the dim's colors are the band's only (dimColors)
     NSUInteger _blurTurn;   // counts the lyrics' turns, so a fade cut short leaves the filter to the turn after it
     UIVisualEffectView *_seamBlur;
     CGFloat _aspect;
@@ -598,8 +604,9 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
 // The dim's stops, top to bottom (15 of them; SGRPlayerMotionView's layout puts each at its place): the very top
 // (whole), the end of the band over the status bar (kDimBandShare), kDimSteps down the fade to nothing, where the
 // lower half starts (nothing), and kRampSteps down it to the whole dim at the foot of the screen. `whole` (the
-// lyrics, which run down the whole screen) is black at every stop.
-static NSArray *dimColors(BOOL whole) {
+// lyrics, which run down the whole screen) is black at every stop; `topOnly` (under the color adjustment,
+// kAdjustSaturation) keeps the band and leaves out the ramp.
+static NSArray *dimColors(BOOL whole, BOOL topOnly) {
     NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + kDimSteps + kRampSteps];
     void (^add)(CGFloat) = ^(CGFloat alpha) {
         [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:whole ? 1 : alpha].CGColor];
@@ -608,7 +615,7 @@ static NSArray *dimColors(BOOL whole) {
     add(kDimBandShare);
     for (int i = 1; i <= kDimSteps; i++) add(kDimBandShare * pow(1 - (CGFloat)i / kDimSteps, kDimCurve));
     add(0);
-    for (int j = 1; j <= kRampSteps; j++) add(pow((CGFloat)j / kRampSteps, kDimEase));
+    for (int j = 1; j <= kRampSteps; j++) add(topOnly ? 0 : pow((CGFloat)j / kRampSteps, kDimEase));
     return colors;
 }
 
@@ -653,6 +660,9 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     if (mirrored) {
         CALayer *mirror = softPicture(pictures, clips);
         mirror.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+        CAFilter *saturate = [NSClassFromString(@"CAFilter") filterWithType:@"colorSaturate"];
+        [saturate setValue:@(kAdjustSaturation) forKey:@"inputAmount"];
+        if (saturate) mirror.filters = @[saturate];
         [copy addSublayer:mirror];
     }
     CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
@@ -718,7 +728,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     _adjustLift.hidden = YES;
     [_picture.layer addSublayer:_adjustLift];
     _dim = [CAGradientLayer layer];
-    _dim.colors = dimColors(NO);
+    _dim.colors = dimColors(NO, NO);
     _dim.opacity = kDimLeast;
     [_picture.layer addSublayer:_dim];
     _deepen = [CAGradientLayer layer];
@@ -868,7 +878,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 // Lighter under the veil (kDeepenVeiled), except behind the lyrics and under Increase Contrast.
 - (void)updateDeepen {
     BOOL veiled = !_veil.hidden && !_lyricsUp && !UIAccessibilityDarkerSystemColorsEnabled();
-    float opacity = (float)(veiled ? kDeepenVeiled : kDeepenBottom);
+    float opacity = (float)([self adjusted] ? 0 : veiled ? kDeepenVeiled : kDeepenBottom);
     if (_deepen.opacity != opacity) _deepen.opacity = opacity;
 }
 
@@ -920,7 +930,13 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 
 // The dim and the deepening over the veil now (kVeilFootLuma).
 - (SGRVeilShade)veilShadeNow {
+    if ([self adjusted]) return (SGRVeilShade){0, 0, _rampFrom, _rampTo, NO};   // the ramps stand aside there
     return (SGRVeilShade){_dim.opacity, _deepen.opacity, _rampFrom, _rampTo, _lyricsUp};
+}
+
+// Whether the Music app's color adjustment is over the lower half (kAdjustSaturation).
+- (BOOL)adjusted {
+    return !_adjust.hidden && !_lyricsUp;
 }
 
 // The veil's picture again when the dim or the deepening over it changed since it was drawn.
@@ -1176,6 +1192,14 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     // lyrics' own.
     if (!_lyricsUp && !contrast) dim *= kDimSoften;
     _dim.opacity = (float)dim;
+    // Behind the lyrics their own colors stand (setBlurred:animated:).
+    if (!_lyricsUp) {
+        BOOL topOnly = [self adjusted];
+        if (topOnly != _dimTopOnly) {
+            _dimTopOnly = topOnly;
+            _dim.colors = dimColors(NO, topOnly);
+        }
+    }
     [self updateDeepen];
     // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
     CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
@@ -1239,7 +1263,8 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     [CATransaction begin];
     [CATransaction setDisableActions:!animated];
     [CATransaction setAnimationDuration:SGRCrossfade];
-    _dim.colors = dimColors(blurred);
+    _dim.colors = dimColors(blurred, NO);
+    _dimTopOnly = NO;
     [self updateDim];
     if (layer.filters) {
         __weak SGRPlayerMotionView *weakSelf = self;

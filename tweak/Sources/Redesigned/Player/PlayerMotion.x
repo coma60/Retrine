@@ -201,8 +201,8 @@ static const BOOL kSeamBlur = NO;
 // as itself blurred and mirrored, so the colors under the title are the cover's own and move with it. Two blurred
 // copies of the same picture (the poster, and the playing clip over it) stand for that: a light blur coming in from
 // kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, from
-// kSofterFrom to kSofterWhole, held kSofterReach points below the edge and gone into the veil kSofterFade points
-// further down. Radii in points; each copy is rendered at its scale, as it is blurred anyway.
+// kSofterFrom to kSofterWhole and on down to the bottom (kMirrorStretch). Radii in points; each copy is rendered at
+// its scale, as it is blurred anyway.
 // Against the Music app's player over two animated covers (402 by 874 pt, the same frames), the cover lost its detail
 // about 24 pt (0.045 of its height) higher than the Music app's, which stays sharp to 0.84 and is soft by 0.92: both
 // masks start that much lower. The mirror held 90 pt and fading over 150 more stood as the cover's own shapes, light
@@ -214,8 +214,19 @@ static const BOOL kSeamBlur = NO;
 // Against the Music app's again over a light collage and a dark blue cover, 0.80 lost the detail 10 pt too soon
 // (three fifths of the Music app's 30 pt above the cover's bottom): 0.81 and 0.88.
 static const CGFloat kSoftFrom = 0.81, kSoftWhole = 0.91, kSoftRadius = 8, kSoftScale = 0.5;
-static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 32, kSofterScale = 0.25;
-static const CGFloat kSofterReach = 0, kSofterFade = 70;
+static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50, kSofterScale = 0.25;
+// The Music app's player (MediaCoreUI's NowPlayingArtworkMotionReplicatorLayer, iOS 27.2.1) draws below such a cover the
+// playing clip itself, mirrored at the cover's bottom edge and stretched kMirrorStretch times down (its replica's
+// transform: translate 3h, scale -2), live, so a flash in the clip's foot runs on down to the bottom of the screen. Its
+// blur there is a variable blur of radius 50 (kSofterRadius). The mirror is whole from the cover's edge to the bottom
+// and stands over the still veil, which shows only until the clip draws.
+static const CGFloat kMirrorStretch = 2;
+// Over it the Music app's color adjustment (NowPlayingArtworkBackgroundEffect.ColorAdjustmentsLayer): a gradient whose
+// alpha takes each color toward kAdjustKeep of itself plus kAdjustLift of white (its dimming matrix, 0.3 c + 0.0651),
+// from none kAdjustFrom of the way down its region to whole at the region's foot. The region is the bottom
+// kAdjustShare of the screen (its length, width * 1.2296 * aspect * 9 / 19.5, on a phone taller than 700 pt). Its
+// saturation (2.4 in the same matrix) is left out, so the mirror keeps the clip's own colors.
+static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.2, kAdjustShare = 1.2296 * 9 / 19.5;
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -555,6 +566,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
     CALayer *_soft, *_softer;   // the cover blurred a little, and a lot and mirrored below its edge (kSoftFrom)
+    CAGradientLayer *_adjust, *_adjustLift;   // the Music app's color adjustment over the mirror (kAdjustKeep)
     NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
     NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
     CAGradientLayer *_foot;   // the colors of the poster's last rows, from side to side, from the seam down
@@ -640,7 +652,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     [copy addSublayer:softPicture(pictures, clips)];
     if (mirrored) {
         CALayer *mirror = softPicture(pictures, clips);
-        mirror.transform = CATransform3DMakeScale(1, -1, 1);
+        mirror.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
         [copy addSublayer:mirror];
     }
     CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
@@ -653,9 +665,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
         copy.shouldRasterize = YES;
     }
     CAGradientLayer *mask = [CAGradientLayer layer];
-    mask.colors = mirrored ? @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor,
-                               (id)UIColor.clearColor.CGColor]
-                           : @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
+    mask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
     copy.mask = mask;
     return copy;
 }
@@ -698,6 +708,15 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     _softClips = softClips;
     [_picture.layer addSublayer:_soft];
     [_picture.layer addSublayer:_softer];
+    _adjust = [CAGradientLayer layer];
+    _adjust.colors = @[(id)UIColor.clearColor.CGColor, (id)[UIColor colorWithWhite:0 alpha:1 - kAdjustKeep].CGColor];
+    _adjust.hidden = YES;
+    [_picture.layer addSublayer:_adjust];
+    _adjustLift = [CAGradientLayer layer];
+    _adjustLift.colors = @[(id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:kAdjustLift].CGColor];
+    _adjustLift.compositingFilter = @"plusL";
+    _adjustLift.hidden = YES;
+    [_picture.layer addSublayer:_adjustLift];
     _dim = [CAGradientLayer layer];
     _dim.colors = dimColors(NO);
     _dim.opacity = kDimLeast;
@@ -858,6 +877,11 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 - (void)layoutSoftFor:(BOOL)shorter width:(CGFloat)width height:(CGFloat)height total:(CGFloat)total {
     BOOL shown = shorter && !_inCover && height > 0;
     _soft.hidden = _softer.hidden = !shown;
+    BOOL adjusted = shown && !_lyricsUp;
+    if (_adjust.hidden == adjusted) {
+        _adjust.hidden = _adjustLift.hidden = !adjusted;
+        [self updateDim];   // the lift gives way to the adjustment's (kAdjustLift)
+    }
     if (!shown) return;
     CGRect cover = CGRectMake(0, 0, width, height);
     for (CALayer *copy in @[_soft, _softer]) {
@@ -866,15 +890,20 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     }
     for (CALayer *picture in _softPictures) {
         picture.bounds = cover;
-        // The mirror is the second of the strong copy's: flipped about the cover's bottom edge.
+        // The mirror is the second of the strong copy's: flipped about the cover's bottom edge and stretched down.
         BOOL mirror = picture.superlayer == _softer && picture != _softer.sublayers.firstObject;
-        picture.position = CGPointMake(width / 2, mirror ? height * 1.5 : height / 2);
+        picture.position = CGPointMake(width / 2, mirror ? height * (1 + kMirrorStretch / 2) : height / 2);
         ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
     }
     NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
     ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
-    ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole),
-                                                    at(height + kSofterReach), at(height + kSofterReach + kSofterFade)];
+    ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
+    CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, region = screen * kAdjustShare;
+    NSArray *adjustAt = @[at(screen - region * (1 - kAdjustFrom)), at(screen)];
+    for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
+        layer.frame = CGRectMake(0, 0, width, total);
+        layer.locations = adjustAt;
+    }
 }
 
 // The veil's picture again from the foot's colors now, for the layout it was last placed in.
@@ -978,7 +1007,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     if (_inCover) {
         // The cover's own picture: nothing over it to keep readable, and nothing under it to fade into.
         _still.mask = nil;
-        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = YES;
+        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _adjust.hidden = _adjustLift.hidden = YES;
         return;
     }
     [self measure:file poster:poster];
@@ -1150,7 +1179,8 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     [self updateDeepen];
     // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
     CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
-    _lift.opacity = _lyricsUp ? 0 : (float)(kLiftFoot * share);
+    // Under the color adjustment its own lift (kAdjustLift) stands for this one.
+    _lift.opacity = _lyricsUp || !_adjust.hidden ? 0 : (float)(kLiftFoot * share);
     [self redrawVeilIfShaded];
     _scrim.opacity = (float)(contrast ? kStillScrimTop * SGRPlayerClipDim(1, YES, NO) / SGRPlayerClipDim(1, NO, NO) : kStillScrimTop);
 }
@@ -1186,6 +1216,8 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     // Asked again on every footer layout pass: the same state again would restart the fade.
     if (blurred == _lyricsUp) return;
     _lyricsUp = blurred;
+    // Behind the lyrics the whole clip is blurred and dimmed instead (the dim's lyrics share).
+    _adjust.hidden = _adjustLift.hidden = _softer.hidden || blurred;
     NSUInteger turn = ++_blurTurn;
     CALayer *layer = _picture.layer;
     if (blurred && !layer.filters && !SGRReduceTransparency()) {

@@ -147,15 +147,16 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGRect extent = input.extent;
     // The Music app's copy treatment before its blur: toward black, contrast about middle gray, then saturation about
     // the luma, clamped as its 8-bit texture holds it. One matrix and a bias: each output channel is
-    // contrast * keep * (s * own + (1 - s) * luma) + (1 - contrast) / 2 (the saturation leaves a gray as it is).
+    // spread * keep * (s * own + (1 - s) * luma) + (1 - spread) / 2, spread the contrast (the saturation leaves a gray
+    // as it is).
     CGFloat s = (kBackdropSaturation + kBackdropSaturationPerLoudness * kBackdropLoudness) * saturation
               / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
-    CGFloat contrast = 1 + kBackdropContrastPerLoudness * kBackdropLoudness;
-    CGFloat keep = 1 - kBackdropBlack, luma[3] = {0.2126, 0.7152, 0.0722}, bias = (1 - contrast) / 2;
+    CGFloat spread = 1 + kBackdropContrastPerLoudness * kBackdropLoudness;
+    CGFloat keep = 1 - kBackdropBlack, luma[3] = {0.2126, 0.7152, 0.0722}, bias = (1 - spread) / 2;
     CIVector *rows[3];
     for (int c = 0; c < 3; c++) {
         CGFloat m[3];
-        for (int k = 0; k < 3; k++) m[k] = contrast * keep * ((1 - s) * luma[k] + (c == k ? s : 0));
+        for (int k = 0; k < 3; k++) m[k] = spread * keep * ((1 - s) * luma[k] + (c == k ? s : 0));
         rows[c] = [CIVector vectorWithX:m[0] Y:m[1] Z:m[2] W:0];
     }
     CIImage *output = [[[[input imageByApplyingFilter:@"CIColorMatrix" withInputParameters:@{

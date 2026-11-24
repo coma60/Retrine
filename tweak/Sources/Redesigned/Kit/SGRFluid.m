@@ -240,6 +240,44 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     return result;
 }
 
+// The cover upright at 256 px a side, its colors as they are: what the GPU renderer's copies are drawn from.
+static UIImage *upright(UIImage *image) {
+    if (!image) return nil;
+    enum { kSide = 256 };
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef bitmap = CGBitmapContextCreate(NULL, kSide, kSide, 8, kSide * 4, space,
+                                                kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (!bitmap) return nil;
+    UIGraphicsPushContext(bitmap);
+    CGContextTranslateCTM(bitmap, 0, kSide);
+    CGContextScaleCTM(bitmap, 1, -1);
+    [image drawInRect:CGRectMake(0, 0, kSide, kSide)];
+    UIGraphicsPopContext();
+    CGImageRef cg = CGBitmapContextCreateImage(bitmap);
+    CGContextRelease(bitmap);
+    UIImage *result = cg ? [UIImage imageWithCGImage:cg] : nil;
+    if (cg) CGImageRelease(cg);
+    return result;
+}
+
+NSData *SGRFluidGradeTable(int side) {
+    if (side < 2) return nil;
+    NSMutableData *data = [NSMutableData dataWithLength:(NSUInteger)side * side * side * 4];
+    unsigned char *p = data.mutableBytes;
+    for (int b = 0; b < side; b++) {
+        for (int g = 0; g < side; g++) {
+            for (int r = 0; r < side; r++) {
+                CGFloat e[3] = {(r + 0.5) / side, (g + 0.5) / side, (b + 0.5) / side};
+                backdropGrade(e);
+                for (int c = 0; c < 3; c++) *p++ = (unsigned char)lround(255 * e[c]);
+                *p++ = 255;
+            }
+        }
+    }
+    return data;
+}
+
 @implementation SGRFluidLayer {
     CALayer *_canvas;   // the copies, shown a quarter larger while held still (kHeldZoom)
     CALayer *_orbits[kCopies];   // each copy's journey about the middle, for those with an orbit
@@ -249,6 +287,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     UIImage *_source;
     UIImage *_blur;   // the last blurred cover shown, handed to Smooth when it comes
     UIImage *_blurSmall;   // the same blurred for the smaller copies
+    UIImage *_cover;       // the cover as the GPU renderer takes it (upright, 256 px)
     NSUInteger _generation;
     BOOL _moving;
     BOOL _turning;   // the copies' turns are running (moving, and Smooth is not showing)
@@ -297,7 +336,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
 }
 
 - (void)contrastChanged {
-    dispatch_async(dispatch_get_main_queue(), ^{ [self reblur]; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self->_gpu.contrast = SGRIncreaseContrast();
+        [self reblur];
+    });
 }
 
 // The same cover blurred again, for a new Blur, Saturation, Brightness or contrast.
@@ -340,9 +382,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
 
 #pragma mark - the renderer
 
-// Smooth made and laid under the copies, or taken away and the copies shown again, as chosen.
+// The GPU renderer (the Music app's pipeline, SGRFluidGPU.h) made and laid under the copies wherever Metal exists; the
+// copies (Light) show only until its first frame, or for good where it cannot draw.
 - (void)applyRenderer {
-    BOOL smooth = SGRFluidRendererChosen() == SGRFluidRendererSmooth && SGRFluidGPUAvailable();
+    BOOL smooth = SGRFluidGPUAvailable();
     if (smooth && !_gpu) {
         _gpu = [SGRFluidGPULayer layer];
         [self insertSublayer:_gpu atIndex:0];
@@ -352,7 +395,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         _gpu.held = self.hidden;
         _gpu.moving = _moving;
         [self setNeedsLayout];
-        if (_blur) [_gpu setPicture:_blur.CGImage small:(_blurSmall ?: _blur).CGImage animated:NO];
+        if (_cover) [_gpu setCover:_cover.CGImage animated:NO];
     } else if (!smooth && _gpu) {
         _gpu.held = YES;
         [_gpu removeFromSuperlayer];
@@ -363,6 +406,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     _gpu.rate = (float)(SGRFluidValue(SGRFluidSpeed) / 100.0);
     _gpu.warp = (float)_warp;
     _gpu.grain = (float)(SGRFluidValue(SGRFluidGrain) / 100.0);
+    _gpu.saturation = (float)(SGRFluidValue(SGRFluidSaturation) / (CGFloat)SGRFluidLimitsOf(SGRFluidSaturation).standard);
+    _gpu.gain = (float)(SGRFluidValue(SGRFluidBrightness) / 100.0);
+    _gpu.blur = (float)(SGRFluidValue(SGRFluidBlur) / (CGFloat)SGRFluidLimitsOf(SGRFluidBlur).standard);
+    _gpu.contrast = SGRIncreaseContrast();
 }
 
 - (void)gpuDrew:(SGRFluidGPULayer *)gpu {
@@ -376,6 +423,8 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _canvas.hidden = _gpuShown;
+    // The Music app has no shade over its backdrop; the GPU renderer is drawn as its is.
+    _shade.hidden = _gpuShown;
     [CATransaction commit];
     [self updateCopies];
 }
@@ -471,9 +520,14 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         UIImage *small = blurred(image, contrast, radius * kCopy[0].side / kCopy[1].side, saturation, gain, &ignored);
         // Light's copies: the same treatment unblurred, as the canvas blurs them together.
         UIImage *sharp = blurred(image, contrast, 0, saturation, gain, &ignored);
+        UIImage *cover = upright(image);
         dispatch_async(dispatch_get_main_queue(), ^{
             SGRFluidLayer *layer = weakSelf;
             if (!blur || !layer || generation != layer->_generation) return;
+            if (cover) {
+                layer->_cover = cover;
+                [layer->_gpu setCover:cover.CGImage animated:animated];
+            }
             [layer show:blur small:small ?: blur sharp:sharp ?: blur lowerLight:lowerLight animated:animated];
         });
     });
@@ -489,7 +543,6 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [CATransaction setAnimationDuration:SGRCrossfade];
     [self updateShadeColors];
     [CATransaction commit];
-    [_gpu setPicture:blur.CGImage small:small.CGImage animated:animated];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     for (int i = 0; i < kCopies; i++) {

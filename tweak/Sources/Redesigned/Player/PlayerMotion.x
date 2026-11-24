@@ -228,29 +228,27 @@ static const CGFloat kSoftestWhole = 0.6, kSoftestRadius = 160, kSoftestScale = 
 // title. Each copy's mask is a circle's edge through its start in the middle and kBlurArc higher at the screen's sides
 // (a radial gradient whose center lies above), not a horizontal band; below where it is whole it is whole all across.
 static const CGFloat kBlurArc = 44;
-// The Music app's player (MediaCoreUI's NowPlayingArtworkMotionReplicatorLayer, iOS 27.2.1) draws below such a cover the
-// playing clip itself, mirrored at the cover's bottom edge and stretched kMirrorStretch times down (its replica's
-// transform: translate 3h, scale -2), live, so a flash in the clip's foot runs on down to the bottom of the screen. Its
-// blur there is a variable blur of radius 50 (kSofterRadius). The mirror is whole from the cover's edge to the bottom
-// and stands over the still veil, which shows only until the clip draws.
+// Below such a cover, as on the Music app's player, the playing clip itself is drawn mirrored at the cover's bottom edge
+// and stretched kMirrorStretch times down, live, so a flash in the clip's foot runs on down to the bottom of the screen,
+// under a blur of radius kSofterRadius. The mirror is whole from the cover's edge to the bottom and stands over the
+// still veil, which shows only until the clip draws.
 static const CGFloat kMirrorStretch = 2;
-// Over it the Music app's color adjustment (NowPlayingArtworkBackgroundEffect.ColorAdjustmentsLayer): a gradient whose
-// alpha takes each color toward kAdjustKeep of itself plus kAdjustLift of white (its dimming matrix, 0.3 c + 0.0651),
+// Over it a color adjustment chosen to match the Music app's: a gradient whose alpha takes each color toward kAdjustKeep
+// of itself plus kAdjustLift of white,
 // from none at kAdjustFrom of the screen to whole at its foot, along x^kAdjustEase (x the share of the way from there
 // to the foot). Measured on the Music app's player over Wish You Were Here's animated cover, whose white margins show
 // the adjustment alone (3x, 874 pt): white starts to darken at a quarter of the screen and goes on smoothly, 0.82 of
 // itself at the title, 0.39 at the foot, which that curve meets within a hundredth all the way down. Started at
-// the bottom 0.5675 of the screen and 0.2 into it (the region the Music app's layer is framed to), and drawn along a
-// line, it left the screen white down to below the title, which vanished in it. Its saturation (2.4 in the same
+// the bottom 0.5675 of the screen and 0.2 into it, and drawn along a line, it left the screen white down to below the title, which vanished in it. Its saturation (2.4 in the same
 // matrix) is left out, so the mirror keeps the clip's own colors.
 static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.25, kAdjustEase = 1.52;
 enum { kAdjustSteps = 10 };
-// The same matrix saturates by kAdjustSaturation (CAColorMatrixMakeSaturation 2.4). Saturation and the dimming commute
+// The adjustment also saturates, by kAdjustSaturation. Saturation and the dimming commute
 // (the lift is gray), so the mirror is saturated before it is dimmed, and its blur carries the change smoothly across
 // the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
 // the deepening stand aside wherever it shows, and only the dim's top band stays.
 static const CGFloat kAdjustSaturation = 2.4;
-// The saturation is part of the adjustment's matrix, so it comes in with it: none where the adjustment starts, whole at the
+// The saturation comes in with the adjustment: none where the adjustment starts, whole at the
 // foot. Each mirrored copy holds the mirror twice, plain and saturated, the saturated one masked along the adjustment's
 // curve, so the two mix to a saturation from 1 to kAdjustSaturation down the screen. Saturated whole from the cover's
 // edge, the mirror came out bluer and lighter than the Music app's under the title and the controls (A Sky Full of Stars:

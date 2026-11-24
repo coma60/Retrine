@@ -35,11 +35,9 @@ static const CGFloat kLowerFrom = 0.5;
 // white text at about 8.8:1 on the brightest. kCeiling is only the scale of the shade's peak (lowerLight): a lower part
 // at this linear luminance takes kShadeMost.
 static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
-// The Music app's player behind a still cover (MediaCoreUI's Backdrop.CompositeRenderer, iOS 27.2.1), on encoded sRGB
-// values (its texture loads with SRGB off): each copy of the cover is mixed toward black by kBackdropBlack (its
-// blackScrimAlpha in dark mode, 0.35 in light; each further copy adds 0.0075, left out here), its saturation is scaled
-// by kBackdropSaturation about its Rec. 709 luma (the compact layout's standard; the wide one takes 2.9), the result is
-// blurred, mixed toward white by kBackdropWhite (whiteScrimAlpha) and passed through a color grade (backdropGrade),
+// Chosen to match the Music app's player behind a still cover, on encoded sRGB values: the cover is mixed toward black
+// by kBackdropBlack, its saturation is scaled by kBackdropSaturation about its Rec. 709 luma, the result is
+// blurred, mixed toward white by kBackdropWhite and passed through a color grade (backdropGrade),
 // which leaves grays nearly as they are and pulls strong reds and blues in. The Saturation slider scales kBackdropSaturation against
 // its standard; the Brightness slider scales the result's linear light.
 static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropWhite = 0.1;

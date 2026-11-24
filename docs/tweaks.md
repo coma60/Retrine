@@ -2793,8 +2793,7 @@ label's ink: as the Music app's, a fixed alpha added to whatever is behind (it c
 wherever plusL can add to the backdrop; only where it cannot (below) is it raised from 0.50 luma to the ceiling (0.85) at
 0.75 and drawn plain. A label under an ancestor with a
 mask, a rasterized layer or a filter is drawn into a group of its own where plusL adds to nothing; SGRInkIsolated finds
-that, and SGRInkUnderlay then lays the backdrop under it inside that group, as the Music app does (MediaCoreUI's
-BackdropLayerView): a CABackdropLayer just above the field captures it under a group name (captureOnly, drawing
+that, and SGRInkUnderlay then lays the backdrop under it inside that group, as the Music app's player looks: a CABackdropLayer just above the field captures it under a group name (captureOnly, drawing
 nothing), and one of the same name at the bottom of the label's superview draws the captured backdrop there, so plusL
 adds to the real backdrop and keeps its hue. Only where that cannot be done (the label's own layer is the group, or its
 superview paints a background) is the ink a plain white of the alpha that lands on the same value over the measured

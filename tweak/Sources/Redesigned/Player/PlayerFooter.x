@@ -93,7 +93,7 @@ static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // color's 0.65 stood 140 of 255 above it where the Music app's glyphs stand 116 to 122.
 static const CGFloat kFooterInkAdd = 0.46, kFooterInkFloor = 0.55;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
-// Now added as the Music app adds them (its footer's VibrancyModifier, a blend mode): plusL over the backdrop, laid under
+// Now added as the Music app's are: plusL over the backdrop, laid under
 // them where they sit in a group of their own (SGRInkUnderlay). Plain, they washed the backdrop's hue out (over a blue
 // cover 120, 110, 91 of 255 added to red, green, blue where the Music app adds 116, 119, 118).
 static UIView *footerInked(UIView *view) {

@@ -965,12 +965,10 @@ CGFloat SGRBackdropLightnessBehind(UIView *view) {
     return sum / weights;
 }
 
-// What the Music app does about plusL in a group of its own (MediaCoreUI's BackdropLayerView, iOS 27.2.1): a backdrop layer
-// behind the whole player captures what is drawn there under a group name, and wherever its text sits in a group of its
-// own (a mask, a filter) another backdrop layer of the same name lies right behind it, inside that group, and draws the
-// captured backdrop there, so the text's plusL adds to the real backdrop's pixels and not to the group's clear. Here the
-// capture lies just above the field (placeInkCapture, captureOnly: it draws nothing) and the copy at the bottom of the
-// ink's superview (SGRInkUnderlay). Without them that text came out as a plain white of the same lightness, which washes
+// plusL in a group of its own (under a mask or a filter) adds to the group's clear, not to the backdrop. A backdrop layer
+// captures the field under a group name, and another of the same name lies right behind the ink, inside that group, and
+// draws the captured backdrop there, so plusL adds to the real backdrop's pixels. The capture lies just above the field
+// (placeInkCapture, captureOnly: it draws nothing) and the copy at the bottom of the ink's superview (SGRInkUnderlay). Without them that text came out as a plain white of the same lightness, which washes
 // the backdrop's hue out (measured over a blue cover: 125, 104, 78 of 255 added to red, green, blue where the Music app
 // adds 119, 121, 105).
 static NSString *const kInkBackdropGroup = @"spotifyglass.redesign.inkBackdrop";
@@ -1039,9 +1037,9 @@ BOOL SGRInkIsolated(UIView *view) {
 }
 
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
-    // The Music app adds a fixed amount of white whatever is behind (its ContrastSensitiveShapeStyle picks between two
-    // styles on Increase Contrast alone): over a light backdrop the text is lighter by itself, and the backdrop is kept
-    // dark enough to read it. So wherever plusL can add to the backdrop, directly or over the copy laid under it, the
+    // As on the Music app's player, a fixed amount of white is added whatever is behind (it changes with Increase
+    // Contrast alone): over a light backdrop the text is lighter by itself, and the backdrop is kept dark enough to read
+    // it. So wherever plusL can add to the backdrop, directly or over the copy laid under it, the
     // ink is that fixed alpha; only where it cannot is it raised over a light backdrop and drawn plain.
     BOOL isolated = SGRInkIsolated(view) && !SGRInkUnderlay(view);
     if (!isolated || UIAccessibilityDarkerSystemColorsEnabled()) {

@@ -2,6 +2,7 @@
 #import "Core/SGCore.h"
 #import "SGRFluid.h"
 #import "SGRFluidGPU.h"
+#import "SGRBackdropLUT.h"
 #import "SGRTokens.h"
 
 // Each copy: its side as a share of the visible rect's longer side, its center as shares of that rect, and
@@ -14,9 +15,8 @@ static const struct { CGFloat side, x, y; CFTimeInterval turn; } kCopy[] = {
 };
 enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 // The blurred cover is small: it is drawn several times the screen's size, so detail is lost anyway. The Blur
-// setting is its radius in steps of 1.25 px, so the standard 24 is 30 px (see kBaseGain). No brightness
-// offset: Core Image works in linear light, where even -0.08 turned every channel under about 30% to black
-// (issue #100), leaving dark covers black and the rest a single saturated channel. The ceiling below darkens.
+// setting is its radius in steps of 1.25 px, so the standard 24 is 30 px. Core Image works here on encoded values,
+// as the Music app's shader does (in linear light even -0.08 turned every channel under about 30% to black, issue #100).
 static const CGFloat kBlurSide = 128, kBlurPerStep = 1.25;
 // The upper three copies' opacity at full Warp.
 static const float kOverOpacity = 0.7;
@@ -32,68 +32,38 @@ static const CGFloat kShadeFrom = 0.40, kShadeEase = 1.75, kShadeLeast = 0.30, k
 enum { kShadeSteps = 6 };
 // The share of the blurred cover (from its top) that counts as its lower part, for the shade's peak.
 static const CGFloat kLowerFrom = 0.5;
-// Each blurred pixel's linear luminance is capped here (kCeilingContrast with Increase Contrast): 0.17 keeps white
-// text at 4.7:1 on the brightest pixel before any shade, where 0.07 held every cover far darker than the Music app's.
+// With Increase Contrast each blurred pixel's linear luminance is capped at kCeilingContrast, which keeps the player's
+// white text at about 8.8:1 on the brightest. kCeiling is only the scale of the shade's peak (lowerLight): a lower part
+// at this linear luminance takes kShadeMost.
 static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
-// The Music app's player behind a still cover: the cover blurred until only its broad colors are left, at its own
-// saturation, about a third as light (linear) as the cover's mean. Measured over a black cover with a red and gold
-// emblem and a blue and teal painting (3x, 874 pt), its background above the title stood at 44,34,32 and 55,75,88
-// of 255, where the 10 px blur and 150% saturation stood at 96,79,70 (the emblem's gold, drawn twice the screen's
-// size) and 52,96,108 (the waves' teal). Modelled from the same covers: a 30 px blur (Blur 24), 110% saturation and
-// this gain on linear light, times the Brightness setting, give 42,32,27 and 56,70,84.
-static const CGFloat kBaseGain = 0.35;
-// A dark cover is not darkened with the rest: the Music app's player lifts it. Over a near-black cover (mean 22 of
-// 255) its background stood at 31,33,33 above the title, where the gain left 10. Its background is about 0.55 of the
-// cover's encoded value with a floor near 30 of 255: the shown luminance is kept at least this much (linear, 30 of
-// 255) by a soft maximum, (shown^kFloorSoft + kFloor^kFloorSoft)^(1/kFloorSoft), which leaves the lighter covers
-// within a few levels (the red and gold emblem's 37 comes to 38), in the cover's own hue, a black pixel taking gray.
-static const CGFloat kFloor = 0.0127, kFloorSoft = 4;
-// The Music app holds its background near one saturation whatever the cover: measured in its lower half (HLS, encoded
-// values) over a painting of blue, teal, beige and green it stood at 0.31 to 0.41, where the blur averaged the colors to a
-// gray of 0.13 to 0.18, and over an almost wholly red cover at 0.39 to 0.43, where the field stood at 0.60 to 0.73. Each
-// pixel's saturation is drawn toward kSatTarget along s' = kSatTarget * (s / kSatTarget)^kSatPull (0.13 to 0.30, 0.65 to
-// 0.45), its hue and lightness kept; a gray pixel stays gray. kSatTarget is the Saturation slider's standard: the slider
-// scales the target with it (0% gray, 250% about 0.9), so it still makes the field grayer or more vivid.
-static const CGFloat kSatTarget = 0.4, kSatPull = 0.25;
-static const CGFloat kSatSpreadFrom = 0.015, kSatSpreadTo = 0.05;
+// The Music app's player behind a still cover (MediaCoreUI's Backdrop.CompositeRenderer, iOS 27.2.1), on encoded sRGB
+// values (its texture loads with SRGB off): each copy of the cover is mixed toward black by kBackdropBlack (its
+// blackScrimAlpha in dark mode, 0.35 in light; each further copy adds 0.0075, left out here), its saturation is scaled
+// by kBackdropSaturation about its Rec. 709 luma (the compact layout's standard; the wide one takes 2.9), the result is
+// blurred, mixed toward white by kBackdropWhite (whiteScrimAlpha) and passed through its color table (SGRBackdropLUT.h),
+// which leaves grays as they are and pulls strong colors in. The Saturation slider scales kBackdropSaturation against
+// its standard; the Brightness slider scales the result's linear light.
+static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropWhite = 0.1;
 
-static CGFloat spreadWeight(CGFloat spread) {
-    CGFloat u = MIN(1, MAX(0, (spread - kSatSpreadFrom) / (kSatSpreadTo - kSatSpreadFrom)));
-    return u * u * (3 - 2 * u);
-}
-
-// A warm field is not colored up: over a black cover with a red and gold emblem (field 45,34,30, HLS 0.20, hue 18) and
-// a beige and orange painting (79,66,56, 0.17, hue 27) the Music app's background held the field's own saturation
-// (44,35,33 at 0.14, 82,68,56 at 0.19), where the pull raised both to about 0.33; the blue painting's field (hue 200)
-// is raised whole. Raising fades in with the hue's distance from kSatWarmHue, from kSatWarmFrom to kSatWarmTo degrees.
-static const CGFloat kSatWarmHue = 25, kSatWarmFrom = 40, kSatWarmTo = 80;
-
-static CGFloat hueWeight(const CGFloat e[3], CGFloat most, CGFloat spread) {
-    CGFloat hue;
-    if (most == e[0]) hue = fmod((e[1] - e[2]) / spread + 6, 6);
-    else if (most == e[1]) hue = (e[2] - e[0]) / spread + 2;
-    else hue = (e[0] - e[1]) / spread + 4;
-    CGFloat away = fabs(hue * 60 - kSatWarmHue);
-    away = MIN(away, 360 - away);
-    CGFloat u = MIN(1, MAX(0, (away - kSatWarmFrom) / (kSatWarmTo - kSatWarmFrom)));
-    return u * u * (3 - 2 * u);
-}
-
-// HLS saturation of the encoded color `e` (0 to 1) drawn toward `target`, lightness and hue kept.
-static void pullSaturation(CGFloat e[3], CGFloat target) {
-    CGFloat most = MAX(e[0], MAX(e[1], e[2])), least = MIN(e[0], MIN(e[1], e[2]));
-    CGFloat light = (most + least) / 2, spread = most - least;
-    if (spread < 1e-4 || light <= 0 || light >= 1) return;
-    CGFloat sat = light <= 0.5 ? spread / (most + least) : spread / (2 - most - least);
-    CGFloat want = target <= 0 ? 0 : MIN(1, target * pow(sat / target, kSatPull));
-    // A near-gray is not colored up: a black cover's faint tint (21,23,22 of 255, a spread of 2) was pulled to a dark
-    // green, where the Music app's background stays the gray 31,33,33. Raising saturation fades in with the color's
-    // spread from kSatSpreadFrom to kSatSpreadTo (the gray painting's field, 54,64,70, a spread of 16, is raised whole).
-    if (want > sat) want = sat + (want - sat) * spreadWeight(spread) * hueWeight(e, most, spread);
-    // The same hue at the new saturation: each channel keeps its place between the least and the most.
-    CGFloat newSpread = want * (light <= 0.5 ? 2 * light : 2 - 2 * light);
-    CGFloat newLeast = light - newSpread / 2;
-    for (int c = 0; c < 3; c++) e[c] = MIN(1, MAX(0, newLeast + (e[c] - least) / spread * newSpread));
+// The color table at an encoded color `e` (0 to 1), trilinear.
+static void backdropTable(CGFloat e[3]) {
+    const int last = kSGRBackdropLUTSide - 1;
+    CGFloat u[3];
+    int lo[3];
+    for (int c = 0; c < 3; c++) {
+        CGFloat v = MIN(1, MAX(0, e[c])) * last;
+        lo[c] = MIN(last - 1, (int)floor(v));
+        u[c] = v - lo[c];
+    }
+    for (int k = 0; k < 3; k++) {
+        CGFloat sum = 0;
+        for (int corner = 0; corner < 8; corner++) {
+            int dr = corner & 1, dg = (corner >> 1) & 1, db = (corner >> 2) & 1;
+            CGFloat w = (dr ? u[0] : 1 - u[0]) * (dg ? u[1] : 1 - u[1]) * (db ? u[2] : 1 - u[2]);
+            sum += w * kSGRBackdropLUT[lo[2] + db][lo[1] + dg][lo[0] + dr][k];
+        }
+        e[k] = sum / 255.0;
+    }
 }
 
 NSNotificationName const SGRFluidSettingsDidChangeNotification = @"spotifyglass.redesign.fluidSettingsDidChange";
@@ -142,7 +112,7 @@ NSArray<NSString *> *SGRFluidRendererNames(void) {
     return @[SGL(@"settings.player.fluid.renderer.light", @"Light"), SGL(@"settings.player.fluid.renderer.smooth", @"Smooth")];
 }
 
-// `gain` is the Brightness setting as a factor on linear light, applied under the ceiling below.
+// `saturation` is the Saturation setting as a factor (1.1 its standard), `gain` the Brightness setting's on linear light.
 static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat saturation, CGFloat gain, CGFloat *lowerLight) {
     CGImageRef source = image.CGImage;
     if (!source) return nil;
@@ -150,19 +120,29 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGFloat scale = kBlurSide / MAX(input.extent.size.width, input.extent.size.height);
     input = [input imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
     CGRect extent = input.extent;
-    CIImage *output = [[[input imageByClampingToExtent]
-        imageByApplyingFilter:@"CIGaussianBlur" withInputParameters:@{kCIInputRadiusKey: @(radius)}]
-        imageByApplyingFilter:@"CIColorControls" withInputParameters:@{kCIInputSaturationKey: @(saturation)}];
+    // The Music app's copy treatment before its blur: toward black, then saturation about the luma, clamped as its
+    // 8-bit texture holds it. One matrix: each output channel is keep * (s * own + (1 - s) * luma).
+    CGFloat s = kBackdropSaturation * saturation / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
+    CGFloat keep = 1 - kBackdropBlack, luma[3] = {0.2126, 0.7152, 0.0722};
+    CIVector *rows[3];
+    for (int c = 0; c < 3; c++) {
+        CGFloat m[3];
+        for (int k = 0; k < 3; k++) m[k] = keep * ((1 - s) * luma[k] + (c == k ? s : 0));
+        rows[c] = [CIVector vectorWithX:m[0] Y:m[1] Z:m[2] W:0];
+    }
+    CIImage *output = [[[[input imageByApplyingFilter:@"CIColorMatrix" withInputParameters:@{
+            @"inputRVector": rows[0], @"inputGVector": rows[1], @"inputBVector": rows[2]}]
+        imageByApplyingFilter:@"CIColorClamp" withInputParameters:@{}] imageByClampingToExtent]
+        imageByApplyingFilter:@"CIGaussianBlur" withInputParameters:@{kCIInputRadiusKey: @(radius)}];
     static CIContext *context;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ context = [CIContext contextWithOptions:nil]; });
+    dispatch_once(&once, ^{
+        CGColorSpaceRef encoded = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        context = [CIContext contextWithOptions:@{kCIContextWorkingColorSpace: (__bridge id)encoded}];
+        CGColorSpaceRelease(encoded);
+    });
     CGImageRef cg = [context createCGImage:[output imageByCroppingToRect:extent] fromRect:extent];
     if (!cg) return nil;
-    // Each blurred pixel is capped at a linear luminance (0.04 with Increase Contrast) that keeps the player's
-    // white text at about 8.8:1 and its 65% white at about 4.7:1 on the brightest; an average alone would leave
-    // a bright patch of a cover behind the text. The Brightness gain scales the capped pixel, so below 100 it
-    // darkens every cover alike (applied before the cap, a bright cover stayed at the ceiling whatever the
-    // setting); above 100 it lifts the darker pixels, and the ceiling still holds the bright ones.
     size_t width = CGImageGetWidth(cg), height = CGImageGetHeight(cg);
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef bitmap = CGBitmapContextCreate(NULL, width, height, 8, width * 4, space,
@@ -172,35 +152,31 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGContextDrawImage(bitmap, CGRectMake(0, 0, width, height), cg);
     CGImageRelease(cg);
     unsigned char *pixels = CGBitmapContextGetData(bitmap);
-    CGFloat ceiling = contrast ? kCeilingContrast : kCeiling, lowerSum = 0;
-    // The Saturation slider against its standard moves the saturation the field is held near (kSatTarget).
-    CGFloat satTarget = kSatTarget * saturation / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
+    CGFloat lowerSum = 0;
     size_t lowerCount = 0, lowerRow = (size_t)floor(height * kLowerFrom);
     for (size_t i = 0; i < width * height; i++) {
         unsigned char *p = pixels + i * 4;
+        // After the blur: toward white, then the color table.
+        CGFloat e[3];
+        for (int c = 0; c < 3; c++) e[c] = p[c] / 255.0 * (1 - kBackdropWhite) + kBackdropWhite;
+        backdropTable(e);
+        // The Brightness setting on linear light, and with Increase Contrast the cap.
         CGFloat rgb[3];
         for (int c = 0; c < 3; c++) {
-            CGFloat v = p[c] / 255.0;
-            rgb[c] = v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
+            CGFloat v = e[c];
+            rgb[c] = (v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)) * gain;
         }
         CGFloat light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-        CGFloat cap = MIN(gain * (light > ceiling ? ceiling / light : 1), ceiling / light);
-        // The floor (kFloor), never over the ceiling; a pixel with no light to scale takes the floor's gray.
-        CGFloat shown = MIN(ceiling, light * cap), floored = MIN(ceiling, pow(pow(shown, kFloorSoft) + pow(kFloor, kFloorSoft), 1 / kFloorSoft));
-        BOOL gray = light < 1e-5;
-        if (!gray) cap = floored / light;
-        if (i / width >= lowerRow) { lowerSum += floored; lowerCount++; }
-        CGFloat encoded[3];
+        CGFloat cap = contrast && light > kCeilingContrast ? kCeilingContrast / light : 1;
+        if (i / width >= lowerRow) { lowerSum += light * cap; lowerCount++; }
         for (int c = 0; c < 3; c++) {
-            CGFloat v = MIN(1, gray ? floored : rgb[c] * cap);
-            encoded[c] = v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055;
+            CGFloat v = MIN(1, rgb[c] * cap);
+            p[c] = floor(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055));
         }
-        pullSaturation(encoded, satTarget);
-        for (int c = 0; c < 3; c++) p[c] = floor(255 * encoded[c]);
         p[3] = 255;
     }
-    // 0 for a black lower part, 1 for one at the ceiling.
-    if (lowerLight) *lowerLight = lowerCount ? MIN(1, lowerSum / lowerCount / ceiling) : 0;
+    // 0 for a black lower part, 1 for one at kCeiling or lighter.
+    if (lowerLight) *lowerLight = lowerCount ? MIN(1, lowerSum / lowerCount / kCeiling) : 0;
     cg = CGBitmapContextCreateImage(bitmap);
     UIImage *result = cg ? [UIImage imageWithCGImage:cg] : nil;
     if (cg) CGImageRelease(cg);
@@ -391,7 +367,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     NSUInteger generation = ++_generation;
     BOOL contrast = SGRIncreaseContrast();
     CGFloat radius = kBlurPerStep * SGRFluidValue(SGRFluidBlur), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
-    CGFloat gain = kBaseGain * SGRFluidValue(SGRFluidBrightness) / 100.0;
+    CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         CGFloat lowerLight = 0;

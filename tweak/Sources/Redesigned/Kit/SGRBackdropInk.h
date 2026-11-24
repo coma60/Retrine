@@ -24,6 +24,10 @@ void SGRBackdropInkSetSource(UIView *source);
 CGFloat SGRBackdropLightnessBehind(UIView *view);
 // Whether plusL on `view` composites against nothing: a mask, a rasterized layer or a filter above it.
 BOOL SGRInkIsolated(UIView *view);
+// Lays the backdrop under `view` inside the group it is drawn in, as the Music app does, so plusL on it adds to the real
+// backdrop there (SGRRestyle.m, kInkBackdropGroup). NO where that cannot be done: the group is the view's own, or its
+// superview paints a background the copy would cover.
+BOOL SGRInkUnderlay(UIView *view);
 // The ink for `view`: white at `alpha` over a dark backdrop, more over a light one up to `lightAlpha`. `plusL` says
 // whether the view's layer is to carry the plusL filter (YES) or the color is already the plain one (NO).
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL);

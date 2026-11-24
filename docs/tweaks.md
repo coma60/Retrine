@@ -2792,10 +2792,15 @@ hidden or the app inactive) and keeps each row's mean encoded luma; it is read t
 label's ink from the rows behind it: its legacy alpha below 0.50 luma, the ceiling (0.85) from 0.75, smoothly
 between, and the legacy alpha unchanged with no reading yet or under Increase Contrast. A label under an ancestor with a
 mask, a rasterized layer or a filter is drawn into a group of its own where plusL adds to nothing; SGRInkIsolated finds
-that and the ink is then a plain white of the alpha that lands on the same value over the measured backdrop
-(alpha / (1 - luma)). The times (SGRTimeLabelStyle), the artist (PlayerTitle.x) and the badge
-(PlayerControls.x, SGAudioQualitySetRedesignedInk) take the ink again at each new reading. The badge and the times
-share one alpha (0.40, 0.85 light), and the badge uses the times' semibold.
+that, and SGRInkUnderlay then lays the backdrop under it inside that group, as the Music app does (MediaCoreUI's
+BackdropLayerView): a CABackdropLayer just above the field captures it under a group name (captureOnly, drawing
+nothing), and one of the same name at the bottom of the label's superview draws the captured backdrop there, so plusL
+adds to the real backdrop and keeps its hue. Only where that cannot be done (the label's own layer is the group, or its
+superview paints a background) is the ink a plain white of the alpha that lands on the same value over the measured
+backdrop (alpha / (1 - luma)), which washes the hue out. The times (SGRTimeLabelStyle, 0.265), the artist
+(PlayerTitle.x, 0.46), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk: 0.40 ink, 17/255 fill) and the
+footer's glyphs at rest (PlayerFooter.x, 0.46) take the ink again at each new reading. Not run on a device or simulator
+yet: checked by reading the code paths only.
 
 The Fluid field's lower part follows the Music app's player (Mr. Blue Sky cover, measured: ochre at the title, olive at
 the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before), and the

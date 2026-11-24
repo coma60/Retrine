@@ -177,8 +177,10 @@ static void setShownFont(UILabel *self, SEL _cmd, UIFont *font) {
 // plain where plusL cannot see the backdrop. The title as Spotify paints it.
 // Compared with the Music app's player at 3x over a dark blue and a pink animated cover, 0.44 drew the artist 70 to 90
 // of 255 above its backdrop where the Music app's stands 125 to 160 above it (near white with the backdrop's tint), so
-// it adds 0.62, drawn plain as 0.62 / (1 - the backdrop's lightness) where plusL cannot see it.
-static const CGFloat kArtistInk = 0.62, kArtistInkLight = 0.9;
+// it was lifted to 0.62. That was plusL in a group of its own, which adds to nothing: with the backdrop laid under it
+// (SGRInkUnderlay) it adds to the real backdrop and takes the Music app's own 0.46 again (106 to 118 of 255 above a
+// blue and an orange backdrop, the same in each channel).
+static const CGFloat kArtistInk = 0.46, kArtistInkLight = 0.9;
 static void setShownColor(UILabel *self, SEL _cmd, UIColor *color) {
     BOOL title = isTitle(self), contrast = UIAccessibilityDarkerSystemColorsEnabled(), plusL = YES;
     UIColor *ink = title ? color : (contrast ? SGRSecondary() : SGRInkFor(self, kArtistInk, kArtistInkLight, &plusL));

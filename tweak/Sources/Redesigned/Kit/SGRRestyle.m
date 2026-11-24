@@ -903,7 +903,10 @@ static void inkTick(void) {
     readField();
 }
 
+static void scheduleInkTree(void);
+
 void SGRBackdropInkSetSource(UIView *source) {
+    if (source) scheduleInkTree();
     if (source == sg_inkSource && (sg_inkTimer.valid || !source)) return;
     sg_inkSource = source;
     sg_inkHave = NO;
@@ -969,7 +972,10 @@ BOOL SGRInkIsolated(UIView *view) {
     return NO;
 }
 
+static void noteInkView(UIView *view);
+
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
+    noteInkView(view);
     CGFloat light = SGRBackdropLightnessBehind(view);
     if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) {
         if (plusL) *plusL = YES;
@@ -985,10 +991,119 @@ UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL)
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {
+    noteInkView(view);
     CGFloat light = SGRBackdropLightnessBehind(view);
     if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) return floorAlpha;
     CGFloat plain = MIN(1, add / MAX(1 - light, kInkLeastHeadroom));
     return MIN(1, MAX(floorAlpha, round(plain / 0.05) * 0.05));
+}
+
+#pragma mark - ink tree (diagnostics)
+
+// What the ink sits in, logged a second and a half after the player's field is laid out (at most every 20 s, 6 times a
+// launch, so a static and an animated cover can both be caught): for each inked view, its chain
+// of superviews up to the window (each one's place among its siblings, layer class, mask, filters, compositing filter,
+// background and opacity), and the siblings along the field's own chain. It decides where a backdrop capture would have
+// to lie to hold everything the ink is read against. Logging only: nothing is changed.
+static NSHashTable<UIView *> *sg_inkViews;
+
+static void noteInkView(UIView *view) {
+    if (!view) return;
+    if (!sg_inkViews) sg_inkViews = [NSHashTable weakObjectsHashTable];
+    [sg_inkViews addObject:view];
+}
+
+static NSString *shortClass(id object) {
+    NSString *name = NSStringFromClass([object class]);
+    return name.length > 72 ? [NSString stringWithFormat:@"...%@", [name substringFromIndex:name.length - 72]] : name;
+}
+
+static NSString *layerTraits(UIView *view) {
+    CALayer *layer = view.layer;
+    NSMutableString *traits = [NSMutableString stringWithFormat:@"%@ %@ a=%.2f", shortClass(view),
+                               NSStringFromCGRect(view.frame), view.alpha];
+    if (view.hidden) [traits appendString:@" hidden"];
+    if (![layer isMemberOfClass:CALayer.class]) [traits appendFormat:@" layer=%@", shortClass(layer)];
+    if (layer.mask) [traits appendFormat:@" mask=%@", shortClass(layer.mask)];
+    if (view.maskView) [traits appendFormat:@" maskView=%@", shortClass(view.maskView)];
+    if (layer.filters.count) {
+        NSMutableArray *names = [NSMutableArray array];
+        for (id filter in layer.filters) {
+            id name = [filter respondsToSelector:NSSelectorFromString(@"name")] ? [filter valueForKey:@"name"] : nil;
+            [names addObject:name ?: shortClass(filter)];
+        }
+        [traits appendFormat:@" filters=%@", [names componentsJoinedByString:@","]];
+    }
+    if (layer.compositingFilter) [traits appendFormat:@" comp=%@", layer.compositingFilter];
+    if (layer.shouldRasterize) [traits appendString:@" raster"];
+    if (layer.cornerRadius > 0) [traits appendFormat:@" r=%.0f", layer.cornerRadius];
+    if (view.clipsToBounds) [traits appendString:@" clips"];
+    if (view.backgroundColor) {
+        CGFloat white = 0, alpha = 0;
+        [view.backgroundColor getWhite:&white alpha:&alpha];
+        if (alpha > 0) [traits appendFormat:@" bg=%.2f/%.2f", white, alpha];
+    }
+    if (layer.sublayers.count > view.subviews.count) {
+        NSMutableArray *own = [NSMutableArray array];
+        for (CALayer *sub in layer.sublayers) {
+            if ([sub.delegate isKindOfClass:UIView.class]) continue;
+            [own addObject:[NSString stringWithFormat:@"%@%@%@", shortClass(sub), sub.hidden ? @"(hidden)" : @"",
+                            sub.compositingFilter ? [NSString stringWithFormat:@"(%@)", sub.compositingFilter] : @""]];
+            if (own.count >= 6) break;
+        }
+        if (own.count) [traits appendFormat:@" layers=[%@]", [own componentsJoinedByString:@", "]];
+    }
+    return traits;
+}
+
+static NSString *inkChain(UIView *view, UIView *stop) {
+    NSMutableString *text = [NSMutableString string];
+    int depth = 0;
+    for (UIView *v = view; v && depth < 24; v = v.superview, depth++) {
+        UIView *up = v.superview;
+        NSUInteger at = up ? [up.subviews indexOfObjectIdenticalTo:v] : 0;
+        [text appendFormat:@"  %d [%lu/%lu] %@%@\n", depth, (unsigned long)at, (unsigned long)up.subviews.count, layerTraits(v),
+                           v == stop ? @"  <- field" : @""];
+    }
+    return text;
+}
+
+static void logInkTree(void) {
+    UIView *field = sg_inkSource;
+    if (!field.window) return;
+    NSMutableString *text = [NSMutableString string];
+    [text appendString:@"field chain (siblings in order, back to front)\n"];
+    int depth = 0;
+    for (UIView *v = field; v && depth < 24; v = v.superview, depth++) {
+        UIView *up = v.superview;
+        if (!up) break;
+        NSUInteger at = [up.subviews indexOfObjectIdenticalTo:v];
+        [text appendFormat:@" %d %@ at %lu of %lu in %@\n", depth, shortClass(v), (unsigned long)at, (unsigned long)up.subviews.count, layerTraits(up)];
+        NSUInteger shown = 0;
+        for (UIView *sibling in up.subviews) {
+            if (shown++ >= 10) { [text appendString:@"    ...\n"]; break; }
+            [text appendFormat:@"    %@%@\n", sibling == v ? @"* " : @"", layerTraits(sibling)];
+        }
+    }
+    [text appendString:@"field's own\n"];
+    for (UIView *sub in field.subviews) [text appendFormat:@"    %@\n", layerTraits(sub)];
+    for (UIView *view in sg_inkViews.allObjects) {
+        if (view.window != field.window) continue;
+        NSString *what = [view isKindOfClass:UILabel.class] ? [NSString stringWithFormat:@"%@ %.0fpt", shortClass(view), ((UILabel *)view).font.pointSize] : shortClass(view);
+        [text appendFormat:@"ink %@ in field %@\n", what, NSStringFromCGRect([view convertRect:view.bounds toView:field])];
+        [text appendString:inkChain(view, field)];
+    }
+    SGLogLong(@"ink tree", text);
+}
+
+static void scheduleInkTree(void) {
+    static NSUInteger logged;
+    static CFTimeInterval last;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (logged >= 6 || (logged && now - last < 20)) return;
+    logged++;
+    last = now;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ logInkTree(); });
 }
 
 void SGRBackdropInkObserve(UIView *view, void (^changed)(void)) {

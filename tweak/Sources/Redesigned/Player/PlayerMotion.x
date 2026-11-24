@@ -215,6 +215,14 @@ static const BOOL kSeamBlur = NO;
 // (three fifths of the Music app's 30 pt above the cover's bottom): 0.81 and 0.88.
 static const CGFloat kSoftFrom = 0.81, kSoftWhole = 0.91, kSoftRadius = 8, kSoftScale = 0.5;
 static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50, kSofterScale = 0.25;
+// Below the cover's edge the Music app's blur keeps growing: its blur over the mirror is a variable blur whose mask is
+// clear at the top of its region and whole about 60% of the way down, so the mirror ends as little more than a color
+// per row. Measured on its player against Retrine's over Rich Man's and Mr. Blue Sky's animated covers (3x, 874 pt),
+// the bottom fifth of the screen varied across a row by 1 to 2 levels of 255 where the mirror under one radius-50 blur
+// varied by 5 to 11, and a light in the clip's top showed at the foot. A third copy, mirrored the same way and blurred
+// kSoftestRadius, comes in over the strong one from the cover's edge and is whole kSoftestWhole of the way from there to
+// the foot of the screen.
+static const CGFloat kSoftestWhole = 0.6, kSoftestRadius = 160, kSoftestScale = 0.125;
 // The Music app's player (MediaCoreUI's NowPlayingArtworkMotionReplicatorLayer, iOS 27.2.1) draws below such a cover the
 // playing clip itself, mirrored at the cover's bottom edge and stretched kMirrorStretch times down (its replica's
 // transform: translate 3h, scale -2), live, so a flash in the clip's foot runs on down to the bottom of the screen. Its
@@ -576,6 +584,7 @@ static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFlo
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
     CALayer *_soft, *_softer;   // the cover blurred a little, and a lot and mirrored below its edge (kSoftFrom)
+    CALayer *_softest;   // mirrored too and blurred more, coming in below the cover's edge (kSoftestWhole)
     CAGradientLayer *_adjust, *_adjustLift;   // the Music app's color adjustment over the mirror (kAdjustKeep)
     NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
     NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
@@ -727,10 +736,12 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     NSMutableArray *softPictures = [NSMutableArray array], *softClips = [NSMutableArray array];
     _soft = softCopy(kSoftRadius, kSoftScale, NO, softPictures, softClips);
     _softer = softCopy(kSofterRadius, kSofterScale, YES, softPictures, softClips);
+    _softest = softCopy(kSoftestRadius, kSoftestScale, YES, softPictures, softClips);
     _softPictures = softPictures;
     _softClips = softClips;
     [_picture.layer addSublayer:_soft];
     [_picture.layer addSublayer:_softer];
+    [_picture.layer addSublayer:_softest];
     _adjust = [CAGradientLayer layer];
     _adjust.colors = adjustColors(0, 1 - kAdjustKeep);
     _adjust.hidden = YES;
@@ -899,7 +910,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
 // inside the layout's transaction.
 - (void)layoutSoftFor:(BOOL)shorter width:(CGFloat)width height:(CGFloat)height total:(CGFloat)total {
     BOOL shown = shorter && !_inCover && height > 0;
-    _soft.hidden = _softer.hidden = !shown;
+    _soft.hidden = _softer.hidden = _softest.hidden = !shown;
     BOOL adjusted = shown && !_lyricsUp;
     if (_adjust.hidden == adjusted) {
         _adjust.hidden = _adjustLift.hidden = !adjusted;
@@ -907,14 +918,15 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     }
     if (!shown) return;
     CGRect cover = CGRectMake(0, 0, width, height);
-    for (CALayer *copy in @[_soft, _softer]) {
+    for (CALayer *copy in @[_soft, _softer, _softest]) {
         copy.frame = CGRectMake(0, 0, width, total);
         copy.mask.frame = copy.bounds;
     }
     for (CALayer *picture in _softPictures) {
         picture.bounds = cover;
-        // The mirror is the second of the strong copy's: flipped about the cover's bottom edge and stretched down.
-        BOOL mirror = picture.superlayer == _softer && picture != _softer.sublayers.firstObject;
+        // The mirror is the second of each mirrored copy's: flipped about the cover's bottom edge and stretched down.
+        CALayer *copy = picture.superlayer;
+        BOOL mirror = (copy == _softer || copy == _softest) && picture != copy.sublayers.firstObject;
         picture.position = CGPointMake(width / 2, mirror ? height * (1 + kMirrorStretch / 2) : height / 2);
         ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
     }
@@ -922,6 +934,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
     ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
     CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, adjustFrom = screen * kAdjustFrom;
+    ((CAGradientLayer *)_softest.mask).locations = @[at(height), at(height + MAX(0, screen - height) * kSoftestWhole)];
     NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
     for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
     for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
@@ -1037,7 +1050,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     if (_inCover) {
         // The cover's own picture: nothing over it to keep readable, and nothing under it to fade into.
         _still.mask = nil;
-        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _adjust.hidden = _adjustLift.hidden = YES;
+        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _softest.hidden = _adjust.hidden = _adjustLift.hidden = YES;
         return;
     }
     [self measure:file poster:poster];

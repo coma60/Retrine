@@ -86,16 +86,32 @@ static char kConnectKey, kShareKey, kTrimmerKey, kSharedByKey, kQueueKey, kQueue
 static char kQueueGlyphKey;
 static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // The glyphs at rest are white ADDED to the backdrop in the Music app's footer (measured 0.46 over a dark blue, a dark
-// pink and a white cover: 115 to 122 of 255 above it, saturating at white over a light one). Plain white 0.65 is the
-// same over a dark backdrop; over a lighter one the alpha rises to what SGRInkPlainAlpha works out, so they do not sink
-// into it. Taken again at each new reading of the backdrop (refreshFooterInk).
-// The floor is what 0.46 added over the dark foot of the screen (about 0.16 light) comes to drawn plain: the secondary
-// color's 0.65 stood 140 of 255 above it where the Music app's glyphs stand 116 to 122.
-static const CGFloat kFooterInkAdd = 0.46, kFooterInkFloor = 0.55;
+// pink and a white cover: 115 to 122 of 255 above it, saturating at white over a light one). Under Increase Contrast
+// they are drawn plain, at least the secondary color, rising over a lighter backdrop to what SGRInkPlainAlpha works
+// out. Taken again at each new reading of the backdrop (refreshFooterInk).
+static const CGFloat kFooterInkAdd = 0.46;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
+// Drawn plain at the alpha that lands where the Music app's 0.46 added would (SGRInkFor: plusL does not reach the
+// backdrop in Spotify's player); at least the secondary color under Increase Contrast.
+static UIView *footerInked(UIView *view) {
+    return [view isKindOfClass:SGRGlyphButton.class] ? ((SGRGlyphButton *)view).glyph : view;
+}
+
+static void footerFilter(UIView *view, NSString *filter) {
+    CALayer *layer = footerInked(view).layer;
+    if (![layer.compositingFilter isEqual:filter]) layer.compositingFilter = filter;
+}
+
 static UIColor *footerRest(UIView *view) {
-    CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkFloor;
+    footerFilter(view, nil);
+    CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkAdd;
     return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
+}
+
+// Lit, a glyph is the primary color as it is, not light added.
+static UIColor *footerLit(UIView *view) {
+    footerFilter(view, nil);
+    return SGRPrimary();
 }
 
 // The row's own glyph buttons in the row's weight (the Kit's are regular).
@@ -165,6 +181,8 @@ static void paintEncore(SGRGlyphButton *button) {
     SPTEncoreIconView *encore = objc_getAssociatedObject(button, &kEncoreGlyphKey);
     UIColor *color = button.glyph.tintColor;
     if (encore && ![encore.foregroundColor isEqual:color]) encore.foregroundColor = color;
+    id filter = button.glyph.layer.compositingFilter;
+    if (encore && ![encore.layer.compositingFilter isEqual:filter]) encore.layer.compositingFilter = filter;
 }
 
 // The rest color again on every glyph that wears it: Lyrics while it is off, Queue while it is not shown, the stand-ins.
@@ -221,7 +239,7 @@ static void markQueueGlyph(void) {
     SGRGlyphButton *queue = sg_queueGlyph;
     if (!queue) return;
     BOOL shown = SGRPlayerQueueSideShown();
-    UIColor *tint = shown ? SGRPrimary() : footerRest(queue);
+    UIColor *tint = shown ? footerLit(queue) : footerRest(queue);
     if (![queue.glyph.tintColor isEqual:tint]) queue.glyph.tintColor = tint;
     queue.accessibilityTraits = UIAccessibilityTraitButton | (shown ? UIAccessibilityTraitSelected : 0);
     paintEncore(queue);
@@ -243,7 +261,7 @@ void SGRPlayerLyricsChanged(void) {
     [glyph.glyph setSymbol:open ? kLyricsSymbolOpen : kLyricsSymbol animated:animated];
     void (^mark)(void) = ^{
         glyph.enabled = enabled;
-        glyph.glyph.tintColor = open ? SGRPrimary() : footerRest(glyph);
+        glyph.glyph.tintColor = open ? footerLit(glyph) : footerRest(glyph);
         paintEncore(glyph);
     };
     if (animated) SGRAnimate(SGRMotionFade, mark, nil);
@@ -294,7 +312,7 @@ static SGRGlyphView *standIn(UIView *drawn, NSString *symbol) {
         glyph = [[SGRGlyphView alloc] initWithSymbol:symbol pointSize:kLyricsGlyphSize weight:kFooterGlyphWeight];
         glyph.userInteractionEnabled = NO;
         glyph.isAccessibilityElement = NO;
-        glyph.tintColor = footerRest(drawn);   // at rest, as the Lyrics glyph while it is off
+        glyph.tintColor = footerRest(glyph);   // at rest, as the Lyrics glyph while it is off
         if (!sg_standIns) sg_standIns = [NSHashTable weakObjectsHashTable];
         [sg_standIns addObject:glyph];
         // Kept centered when Spotify resizes the view between the footer's passes (a new Connect image of another size).

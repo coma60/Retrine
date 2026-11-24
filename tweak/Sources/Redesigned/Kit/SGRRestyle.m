@@ -341,11 +341,10 @@ static const CGFloat kTimeFontSize = 12, kTimeFontMost = 18;
 // with the backdrop: measured on its player over a light, a mid and a dark cover, its digits stand 67 of 255 above
 // the backdrop each time (0.265), where Spotify's own #B3B3B3 peaked at 179 whatever stood behind. More opaque and
 // plainly composited under Increase Contrast.
-// The ink the audio quality badge shares (AudioQuality.x: its text and glyph), so the two read alike: SGRBackdropInk.h
-// raises it toward kTimeInkLightAlpha over a light backdrop, and draws it plain where plusL cannot see the backdrop.
-// Against the Music app's player over a dark blue and a pink animated cover (3x) the times stood a fifth dimmer than
-// its own at 0.40, so they take 0.48.
-static const CGFloat kTimeInkAlpha = 0.48, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
+// Against the Music app's player over a dark blue and a pink animated cover (3x) they stood a fifth dimmer than its own
+// and were lifted to 0.48; that was ink drawn plain, decided while the opening player's container was masked and kept
+// (SGRInkFor). Added to the backdrop they are back at 0.265.
+static const CGFloat kTimeInkAlpha = 0.265, kTimeInkContrastAlpha = 0.7, kTimeInkLightAlpha = 0.85;
 static char kTimeStyleKey, kTimeLitKey;
 
 static UIFont *timeFont(void) {
@@ -813,8 +812,6 @@ enum { kInkColumns = 16, kInkRows = 48 };
 static const NSTimeInterval kInkEvery = 0.25;
 // A reading is reported when a row moved this much (of 1).
 static const CGFloat kInkReportDelta = 0.02;
-// The ink starts to rise where the backdrop is this light (encoded luma) and has risen whole at the second.
-static const CGFloat kInkLightFrom = 0.50, kInkLightTo = 0.75;
 // Never divide by less than this headroom when drawing plusL's result as a normal white.
 static const CGFloat kInkLeastHeadroom = 0.05;
 
@@ -975,19 +972,20 @@ BOOL SGRInkIsolated(UIView *view) {
 static void noteInkView(UIView *view);
 
 UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL) {
+    // The Music app adds a fixed amount of white to whatever is behind, so over a light backdrop its text goes to white.
+    // In Spotify's player plusL does not reach the backdrop, although the ink tree log on 9.2.0 shows no mask, filter or
+    // rasterizing between the ink and the field: over a light cover the ink came out as plain white of that alpha (the
+    // times at 0.265 all but vanished over Wish You Were Here's gray). So the ink is drawn plain at the alpha that lands
+    // on the same value over the measured backdrop, alpha / (1 - luma): the Music app's lightness, whatever is behind.
+    // With no reading yet it is the alpha as it is. Measured side by side with the Music app over Wish You Were Here's
+    // light gray and a blue cover: its artist, times, badge text and footer glyphs stand a fixed 123, 68, 108 and 118
+    // of 255 above the backdrop, to white over the light one, where these drawn as plain white stood 28, 24, 33 and 73.
+    (void)lightAlpha;
     noteInkView(view);
+    if (plusL) *plusL = NO;
     CGFloat light = SGRBackdropLightnessBehind(view);
-    if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) {
-        if (plusL) *plusL = YES;
-        return [UIColor colorWithWhite:1 alpha:alpha];
-    }
-    CGFloat t = MAX(0, MIN(1, (light - kInkLightFrom) / (kInkLightTo - kInkLightFrom)));
-    t = t * t * (3 - 2 * t);
-    CGFloat shown = alpha + (MAX(alpha, lightAlpha) - alpha) * t;
-    BOOL isolated = SGRInkIsolated(view);
-    if (isolated) shown = MIN(1, shown / MAX(1 - light, kInkLeastHeadroom));
-    if (plusL) *plusL = !isolated;
-    return [UIColor colorWithWhite:1 alpha:shown];
+    if (light < 0) return [UIColor colorWithWhite:1 alpha:alpha];
+    return [UIColor colorWithWhite:1 alpha:MIN(1, alpha / MAX(1 - light, kInkLeastHeadroom))];
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {

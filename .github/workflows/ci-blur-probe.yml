@@ -1,0 +1,54 @@
+name: Core Image blur probe
+
+# Measures what CIGaussianBlur's inputRadius comes to as a Gaussian's standard deviation, with the context
+# SGRFluid.m's blurred() uses (sRGB working space, software renderer), so the Fluid backdrop's blur can be set in
+# points (kBlurRadiusPerSigma). Started by hand; it only prints numbers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Measure
+        shell: bash
+        run: |
+          cat > probe.swift <<'SWIFT'
+          import CoreImage
+          import Foundation
+
+          // A white half and a black half; a Gaussian blur turns the edge into its cumulative curve, which crosses
+          // 15.87 % and 84.13 % one standard deviation either side of the edge.
+          let side = 1024
+          let space = CGColorSpace(name: CGColorSpace.sRGB)!
+          for software in [true, false] {
+              let context = CIContext(options: [.workingColorSpace: space, .useSoftwareRenderer: software])
+              for radius in [4.0, 8.0, 16.0, 32.0, 64.0] {
+                  let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: side / 2, height: side))
+                  let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: side / 2, y: 0, width: side / 2, height: side))
+                  let input = white.composited(over: black).clampedToExtent()
+                  let blurred = input.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
+                  let extent = CGRect(x: 0, y: 0, width: side, height: side)
+                  var row = [Float](repeating: 0, count: side * 4)
+                  context.render(blurred, toBitmap: &row, rowBytes: side * 16,
+                                 bounds: CGRect(x: 0, y: side / 2, width: side, height: 1), format: .RGBAf, colorSpace: space)
+                  _ = extent
+                  let values = (0..<side).map { Double(row[$0 * 4]) }
+                  func crossing(_ level: Double) -> Double {
+                      for x in 1..<side where values[x - 1] < level && values[x] >= level {
+                          return Double(x - 1) + (level - values[x - 1]) / (values[x] - values[x - 1])
+                      }
+                      return .nan
+                  }
+                  let sigma = (crossing(0.8413) - crossing(0.1587)) / 2
+                  print(String(format: "software %@ radius %5.1f -> sigma %7.3f (radius / sigma %.3f)",
+                               software ? "yes" : "no ", radius, sigma, radius / sigma))
+              }
+          }
+          SWIFT
+          swiftc -O probe.swift -o probe
+          ./probe

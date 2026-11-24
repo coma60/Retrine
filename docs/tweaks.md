@@ -2616,8 +2616,9 @@ its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesig
 Music app's player as read from its backdrop renderer: three opaque copies of the blurred cover in a square as tall as
 the visible rect (the unit half its height), one 1.4 units across turning in place once in 120 s, one 0.7 across at
 (-0.25, 0.15) turning once in 70 s, one 0.7 across at (0.7, 0.7) turning once in 90 s and carried about the middle by
-the first's turn, all clockwise, the smaller ones feathered at the edge where the Music app blurs the whole; the blur
-160 pt (kBackdropSigma) at the standard Blur. Held still (paused) the picture is a quarter larger and flat, eased there
+the first's turn, all clockwise; the blur 160 pt (kBackdropSigma) at the standard Blur. Light lays the copies over
+each other sharp and blurs the whole once, as the Music app does (a canvas drawn at an eighth of the screen's scale
+under a Core Animation blur); Smooth blurs each copy's cover and feathers the smaller ones' edges. Held still (paused) the picture is a quarter larger and flat, eased there
 and back over 0.8 s. Light is those copies as layers; Smooth (Redesigned/Kit/SGRFluidGPU.m) draws the same on the
 GPU and, while flowing, shows them through a bend of Retrine's own (a push out from the middle and two slow waves, at
 phases picked per layer) that breathes from none to its full reach once in 2 pi * 3.5 s, at up to 30 Hz and only while

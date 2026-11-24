@@ -4,6 +4,10 @@
 #import "SGRFluidGPU.h"
 #import "SGRTokens.h"
 
+@interface CAFilter : NSObject
++ (instancetype)filterWithType:(NSString *)type;
+@end
+
 // The copies, laid out as the Music app's player lays its own: the unit is half the visible rect's longer side (its
 // height on a phone), measured from its middle with y up. Each copy is a square of the cover `side` units across,
 // centered `x`, `y` units from the middle, turning clockwise about its own center once in `turn` seconds; a copy with
@@ -15,11 +19,10 @@ static const struct { CGFloat side, x, y; CFTimeInterval turn, orbit; } kCopy[] 
     {0.7, 0.7, 0.7, 90, 120},
 };
 enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
-// The smaller copies' edges are feathered over this share of their side, so they run into the copy under them as the
-// Music app's blur of the whole square runs them together.
-static const CGFloat kCopyFeather = 0.22;
 // Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
 static const CGFloat kHeldZoom = 1.25;
+// The scale Light's canvas is drawn at before its blur.
+static const CGFloat kCanvasScale = 0.125;
 static const CFTimeInterval kSettle = 0.8;
 // Its blur's standard deviation, in points on screen. Core Image's radius is the standard deviation itself (measured,
 // .github/workflows/ci-blur-probe.yml: 1.00 at 4 to 64 px). Fitted to a few screenshots, 1.8 times it looked nearer,
@@ -222,32 +225,6 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     return result;
 }
 
-// A square that is opaque in the middle and fades to clear over kCopyFeather of its side at each edge (smoothstep),
-// the mask of the smaller copies.
-static CGImageRef featherMask(void) {
-    static CGImageRef mask;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        enum { kSide = 64 };
-        CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
-        CGContextRef bitmap = CGBitmapContextCreate(NULL, kSide, kSide, 8, kSide, gray, (CGBitmapInfo)kCGImageAlphaOnly);
-        CGColorSpaceRelease(gray);
-        if (!bitmap) return;
-        unsigned char *pixels = CGBitmapContextGetData(bitmap);
-        for (int y = 0; y < kSide; y++) {
-            for (int x = 0; x < kSide; x++) {
-                CGFloat u = (x + 0.5) / kSide, v = (y + 0.5) / kSide;
-                CGFloat edge = MIN(MIN(u, 1 - u), MIN(v, 1 - v)) / kCopyFeather;
-                CGFloat t = MAX(0, MIN(1, edge));
-                pixels[y * kSide + x] = (unsigned char)round(255 * t * t * (3 - 2 * t));
-            }
-        }
-        mask = CGBitmapContextCreateImage(bitmap);
-        CGContextRelease(bitmap);
-    });
-    return mask;
-}
-
 @implementation SGRFluidLayer {
     CALayer *_canvas;   // the copies, shown a quarter larger while held still (kHeldZoom)
     CALayer *_orbits[kCopies];   // each copy's journey about the middle, for those with an orbit
@@ -273,16 +250,17 @@ static CGImageRef featherMask(void) {
     self.backgroundColor = UIColor.blackColor.CGColor;
     _canvas = [CALayer layer];
     _canvas.transform = CATransform3DMakeScale(kHeldZoom, kHeldZoom, 1);
+    // As the Music app does, the copies are laid over each other sharp and the whole is blurred once (a blur of each
+    // copy's own cover drew a mostly black cover's banner out of the top of the screen). Drawn at an eighth of the
+    // screen's scale, which a blur this wide does not show.
+    _canvas.rasterizationScale = kCanvasScale;
+    _canvas.shouldRasterize = YES;
+    [self applyCanvasBlur];
     [self addSublayer:_canvas];
     for (int i = 0; i < kCopies; i++) {
         _orbits[i] = [CALayer layer];
         _copies[i] = [CALayer layer];
         _copies[i].contentsGravity = kCAGravityResizeAspectFill;
-        if (i > 0) {
-            CALayer *mask = [CALayer layer];
-            mask.contents = (__bridge id)featherMask();
-            _copies[i].mask = mask;
-        }
         [_orbits[i] addSublayer:_copies[i]];
         [_canvas addSublayer:_orbits[i]];
     }
@@ -314,6 +292,15 @@ static CGImageRef featherMask(void) {
     [self setArtwork:source animated:NO];
 }
 
+// The canvas's blur, kBackdropSigma at the standard Blur and in proportion (Core Animation's radius is in points).
+- (void)applyCanvasBlur {
+    CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
+    if (!blur) return;
+    [blur setValue:@(kBackdropSigma * SGRFluidValue(SGRFluidBlur) / SGRFluidLimitsOf(SGRFluidBlur).standard) forKey:@"inputRadius"];
+    [blur setValue:@YES forKey:@"inputNormalizeEdges"];
+    _canvas.filters = @[blur];
+}
+
 // Warp is how far from the middle the smaller copies sit, and how much they show (opaque at the standard 100 %): at
 // none, the large copy turns alone, a still picture turning, with nothing to flow through it.
 - (void)applyWarp {
@@ -328,6 +315,7 @@ static CGImageRef featherMask(void) {
     // Restarted at the new speed from the angle each copy is at, and laid out again for the new warp.
     if (_turning) [self stop];
     [self applyWarp];
+    [self applyCanvasBlur];
     _laidOutFor = CGRectNull;
     [self setNeedsLayout];
     [self applyRenderer];
@@ -440,7 +428,6 @@ static CGImageRef featherMask(void) {
             _orbits[i].position = CGPointMake(CGRectGetMidX(visible), CGRectGetMidY(visible));
             _copies[i].bounds = CGRectMake(0, 0, side, side);
             _copies[i].position = CGPointMake(half * (1 + kCopy[i].x * _warp), half * (1 - kCopy[i].y * _warp));
-            _copies[i].mask.frame = _copies[i].bounds;
         }
         [self updateCopies];
     }
@@ -467,15 +454,17 @@ static CGImageRef featherMask(void) {
         // The smaller copies are half the large one's size, so their cover is blurred twice as far for the same blur
         // on screen, as the Music app blurs the whole square at once.
         UIImage *small = blurred(image, contrast, radius * kCopy[0].side / kCopy[1].side, saturation, gain, &ignored);
+        // Light's copies: the same treatment unblurred, as the canvas blurs them together.
+        UIImage *sharp = blurred(image, contrast, 0, saturation, gain, &ignored);
         dispatch_async(dispatch_get_main_queue(), ^{
             SGRFluidLayer *layer = weakSelf;
             if (!blur || !layer || generation != layer->_generation) return;
-            [layer show:blur small:small ?: blur lowerLight:lowerLight animated:animated];
+            [layer show:blur small:small ?: blur sharp:sharp ?: blur lowerLight:lowerLight animated:animated];
         });
     });
 }
 
-- (void)show:(UIImage *)blur small:(UIImage *)small lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
+- (void)show:(UIImage *)blur small:(UIImage *)small sharp:(UIImage *)sharp lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
     _blur = blur;
     _blurSmall = small;
     _lowerLight = lowerLight;
@@ -495,7 +484,7 @@ static CGImageRef featherMask(void) {
             fade.duration = SGRCrossfade;
             [_copies[i] addAnimation:fade forKey:@"contents"];
         }
-        _copies[i].contents = (__bridge id)(i == 0 ? blur : small).CGImage;
+        _copies[i].contents = (__bridge id)sharp.CGImage;
     }
     [CATransaction commit];
 }

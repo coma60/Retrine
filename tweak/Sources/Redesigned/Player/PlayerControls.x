@@ -1150,15 +1150,16 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
 static char kDurationHostKey;
 
 
-// The badge's text and glyph inked as the times are (SGRBackdropInk.h): brighter over a light backdrop. Its fill stays
-// as it is, so the badge itself does not whiten. Taken again at each new reading of the backdrop.
+// The badge's text, glyph and fill inked as the times are (SGRBackdropInk.h): each stands the same step above the
+// backdrop whatever it is. Measured beside the Music app over a 184 of 255 gray, its box stood at 203 to 205 (+19) where
+// a fixed 17/255 fill stood at 189 (+5) and the box all but vanished. Taken again at each new reading of the backdrop.
 static const CGFloat kBadgeLightInk = 0.6;
 static void inkBadge(UIView *host) {
     UIView *badge = SGAudioQualityShownBadge(host);
     if (!badge) return;
     BOOL plusL = YES;
     CGFloat ink = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL).CGColor);
-    CGFloat fill = SGAudioQualityStandardFill();
+    CGFloat fill = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardFill(), 0, &plusL).CGColor);
     SGAudioQualitySetRedesignedInk(host, ink, fill, plusL);
 }
 

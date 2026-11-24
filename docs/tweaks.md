@@ -2795,7 +2795,7 @@ so over a light backdrop its ink goes to white. In Spotify's player plusL does n
 added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink
 plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), up to white over a light
 backdrop as the Music app's goes (measured side by side over a light gray and a blue cover), and the alpha as it is with
-no reading yet. The badge's fill stays at 17/255, so the badge itself does not whiten. Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
+no reading yet. The badge's fill (17/255) is drawn the same way, so its box stays as visible over a light backdrop as the Music app's (+19 of 255 over a 184 gray). Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
 times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk)
 and the footer (refreshFooterInk) take the ink again at each new reading; the badge uses the times' semibold.
 

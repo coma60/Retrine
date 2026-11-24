@@ -1150,8 +1150,8 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
 static char kDurationHostKey;
 
 
-// The badge's ink as the times' (SGRBackdropInk.h): the same alphas, raised the same way over a light backdrop, and
-// plain where plusL cannot see the backdrop. Taken again at each new reading of it.
+// The badge's ink (SGRBackdropInk.h): white added to the backdrop at its own alphas, as the times are. Taken again at
+// each new reading of it.
 static const CGFloat kBadgeLightInk = 0.85, kBadgeLightFill = 0.14;
 static void inkBadge(UIView *host) {
     UIView *badge = SGAudioQualityShownBadge(host);

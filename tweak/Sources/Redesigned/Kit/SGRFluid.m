@@ -21,12 +21,12 @@ static const CGFloat kCopyFeather = 0.22;
 // Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
 static const CGFloat kHeldZoom = 1.25;
 static const CFTimeInterval kSettle = 0.8;
-// Its blur's standard deviation, in points on screen, and how much more Retrine blurs to look like it. Core Image's
-// radius is the standard deviation itself (measured, .github/workflows/ci-blur-probe.yml: 1.00 at 4 to 64 px), yet at
-// 160 pt the colors stood apart 1.3 to 2.3 times as much as the Music app's over two of three covers; its quarter-size
-// picture and the bend it is shown through soften it further. Simulated over three covers at many moments of the
-// turn, 1.8 times came nearest its player.
-static const CGFloat kBackdropSigma = 160, kBlurRadiusPerSigma = 1.8;
+// Its blur's standard deviation, in points on screen. Core Image's radius is the standard deviation itself (measured,
+// .github/workflows/ci-blur-probe.yml: 1.00 at 4 to 64 px). Fitted to a few screenshots, 1.8 times it looked nearer,
+// but against a simulation of the Music app's own pipeline (the copies, blur and color table as read from it) over
+// three covers at many moments of the turn, its own 160 pt came nearest, and 1.8 times washed out the red a mostly
+// black cover's banner gives the top of the screen.
+static const CGFloat kBackdropSigma = 160;
 // The blurred cover is small: it is drawn larger than the screen, so detail is lost anyway. The Blur setting scales
 // kBackdropSigma (the standard 24 is the Music app's), worked out as a radius on this cover in setArtwork:. Core
 // Image works here on encoded values,
@@ -60,10 +60,6 @@ static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropW
 // music is (a, 0 to 1). Retrine does not listen to it here and takes this steady level for music playing: measured
 // against its player over three covers, Retrine's darkest channel stood 8 to 10 of 255 higher without it.
 static const CGFloat kBackdropLoudness = 0.8, kBackdropContrastPerLoudness = 0.076, kBackdropSaturationPerLoudness = 0.166;
-// A last lift of the saturation about the luma, on linear light, which leaves the brightness as it is: Retrine's backdrop
-// simulated over three covers at many moments of its turn and set against the Music app's player came nearest with it
-// (5.7 of 255 off on average where it was 6.4).
-static const CGFloat kBackdropFinish = 1.15;
 
 // Retrine's grade for the backdrop, on an encoded color `e` (0 to 1), made to look like the Music app's. What its color
 // table does, read off its output: greens, yellows, cyans and magentas pass nearly untouched, while a color whose red
@@ -209,7 +205,6 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
             rgb[c] = (v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)) * gain;
         }
         CGFloat light = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-        for (int c = 0; c < 3; c++) rgb[c] = MAX(0, light + kBackdropFinish * (rgb[c] - light));
         CGFloat cap = contrast && light > kCeilingContrast ? kCeilingContrast / light : 1;
         if (i / width >= lowerRow) { lowerSum += light * cap; lowerCount++; }
         for (int c = 0; c < 3; c++) {
@@ -463,7 +458,7 @@ static CGImageRef featherMask(void) {
     CGFloat longer = MAX(visible.size.width, visible.size.height);
     if (longer < 1) longer = MAX(UIScreen.mainScreen.bounds.size.width, UIScreen.mainScreen.bounds.size.height);
     CGFloat points = kBackdropSigma * SGRFluidValue(SGRFluidBlur) / SGRFluidLimitsOf(SGRFluidBlur).standard;
-    CGFloat radius = kBlurRadiusPerSigma * points * kBlurSide / (kCopy[0].side * longer), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
+    CGFloat radius = points * kBlurSide / (kCopy[0].side * longer), saturation = SGRFluidValue(SGRFluidSaturation) / 100.0;
     CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

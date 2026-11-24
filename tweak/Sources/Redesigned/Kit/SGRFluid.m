@@ -50,6 +50,10 @@ static const CGFloat kCeiling = 0.17, kCeilingContrast = 0.04;
 // which leaves grays nearly as they are and pulls strong reds and blues in. The Saturation slider scales kBackdropSaturation against
 // its standard; the Brightness slider scales the result's linear light.
 static const CGFloat kBackdropBlack = 0.5, kBackdropSaturation = 2.4, kBackdropWhite = 0.1;
+// The Music app also raises the contrast about middle gray (1 + 0.076 a) and the saturation (+ 0.166 a) by how loud the
+// music is (a, 0 to 1). Retrine does not listen to it here and takes this steady level for music playing: measured
+// against its player over three covers, Retrine's darkest channel stood 8 to 10 of 255 higher without it.
+static const CGFloat kBackdropLoudness = 0.8, kBackdropContrastPerLoudness = 0.076, kBackdropSaturationPerLoudness = 0.166;
 
 // Retrine's grade for the backdrop, on an encoded color `e` (0 to 1), made to look like the Music app's. What its color
 // table does, read off its output: greens, yellows, cyans and magentas pass nearly untouched, while a color whose red
@@ -141,18 +145,22 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGFloat scale = kBlurSide / MAX(input.extent.size.width, input.extent.size.height);
     input = [input imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
     CGRect extent = input.extent;
-    // The Music app's copy treatment before its blur: toward black, then saturation about the luma, clamped as its
-    // 8-bit texture holds it. One matrix: each output channel is keep * (s * own + (1 - s) * luma).
-    CGFloat s = kBackdropSaturation * saturation / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
-    CGFloat keep = 1 - kBackdropBlack, luma[3] = {0.2126, 0.7152, 0.0722};
+    // The Music app's copy treatment before its blur: toward black, contrast about middle gray, then saturation about
+    // the luma, clamped as its 8-bit texture holds it. One matrix and a bias: each output channel is
+    // contrast * keep * (s * own + (1 - s) * luma) + (1 - contrast) / 2 (the saturation leaves a gray as it is).
+    CGFloat s = (kBackdropSaturation + kBackdropSaturationPerLoudness * kBackdropLoudness) * saturation
+              / (SGRFluidLimitsOf(SGRFluidSaturation).standard / 100.0);
+    CGFloat contrast = 1 + kBackdropContrastPerLoudness * kBackdropLoudness;
+    CGFloat keep = 1 - kBackdropBlack, luma[3] = {0.2126, 0.7152, 0.0722}, bias = (1 - contrast) / 2;
     CIVector *rows[3];
     for (int c = 0; c < 3; c++) {
         CGFloat m[3];
-        for (int k = 0; k < 3; k++) m[k] = keep * ((1 - s) * luma[k] + (c == k ? s : 0));
+        for (int k = 0; k < 3; k++) m[k] = contrast * keep * ((1 - s) * luma[k] + (c == k ? s : 0));
         rows[c] = [CIVector vectorWithX:m[0] Y:m[1] Z:m[2] W:0];
     }
     CIImage *output = [[[[input imageByApplyingFilter:@"CIColorMatrix" withInputParameters:@{
-            @"inputRVector": rows[0], @"inputGVector": rows[1], @"inputBVector": rows[2]}]
+            @"inputRVector": rows[0], @"inputGVector": rows[1], @"inputBVector": rows[2],
+            @"inputBiasVector": [CIVector vectorWithX:bias Y:bias Z:bias W:0]}]
         imageByApplyingFilter:@"CIColorClamp" withInputParameters:@{}] imageByClampingToExtent]
         imageByApplyingFilter:@"CIGaussianBlur" withInputParameters:@{kCIInputRadiusKey: @(radius)}];
     static CIContext *context;

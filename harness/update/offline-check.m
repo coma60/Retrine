@@ -28,6 +28,9 @@ int main(void) {
         HARNESS_CHECK(SGUpdateVersion() == nil);
         stored(@[], NO);
         HARNESS_CHECK(SGUpdateVersion() == nil);
+        NSData *tags = [@"[{\"tag_name\":\"v1.0\"},{\"tag_name\":\"v2\"},{\"tag_name\":\"v1.0.0\"}]" dataUsingEncoding:NSUTF8StringEncoding];
+        NSArray *versions = [SGUpdateReleasesFrom(tags) valueForKey:@"version"];
+        HARNESS_CHECK(([versions isEqual:@[@"2", @"1.0", @"1.0.0"]]));
         NSLog(@"[harness] offline update selection PASS");
     }
     return 0;

@@ -21,6 +21,7 @@
 static BOOL sg_old;
 static NSDictionary *sg_installInfo;
 void CheckSponsorBlockScreens(UIWindow *window);
+void CheckKeptCleanup(UIWindow *window);
 
 @interface NSBundle (SGInstallFixture)
 - (id)sg_installObjectForInfoDictionaryKey:(NSString *)key;
@@ -116,6 +117,10 @@ static int checkInstallWarnings(void) {
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = home;
     [self.window makeKeyAndVisible];
+    if ([arguments containsObject:@"kept-cleanup"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ CheckKeptCleanup(self.window); });
+        return;
+    }
     if ([arguments containsObject:@"sponsorblock-check"]) {
         dispatch_async(dispatch_get_main_queue(), ^{ CheckSponsorBlockScreens(self.window); });
         return;

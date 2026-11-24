@@ -84,6 +84,10 @@ static void checkByteTrim(NSURL *pinned) {
 static void checkIdleLaunchTrim(NSURL *folder) {
     NSFileManager *fm = NSFileManager.defaultManager;
     CHECK([fm createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSURL *abandoned = [SGMotionMadeFile(@"interrupted") URLByAppendingPathExtension:@"partial"];
+    NSURL *foreign = [folder URLByAppendingPathComponent:@"foreign.mp4.partial"];
+    CHECK([fm createFileAtPath:abandoned.path contents:nil attributes:nil]);
+    CHECK([fm createFileAtPath:foreign.path contents:nil attributes:nil]);
     NSMutableArray<NSURL *> *clips = [NSMutableArray array];
     for (unsigned i = 0; i < 11; i++) {
         NSURL *clip = [folder URLByAppendingPathComponent:[NSString stringWithFormat:@"%040x.mp4", i]];
@@ -97,6 +101,8 @@ static void checkIdleLaunchTrim(NSURL *folder) {
     watch = YES;
     waitFor(^BOOL { return access(clips.firstObject.fileSystemRepresentation, F_OK) == -1 && errno == ENOENT; });
     watch = NO;
+    CHECK(![fm fileExistsAtPath:abandoned.path] && [fm fileExistsAtPath:foreign.path]);
+    CHECK([fm removeItemAtURL:foreign error:nil]);
     for (NSUInteger i = 1; i < clips.count; i++) CHECK([fm removeItemAtURL:clips[i] error:nil]);
 }
 

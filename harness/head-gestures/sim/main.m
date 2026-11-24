@@ -480,6 +480,25 @@ static Step waitFor(double seconds) {
             [self tapRow:2 section:2];
             check([[self rowAt:2 section:2].value() isEqualToString:@"Listening…"], [NSString stringWithFormat:@"Try it listens: %@", [self rowAt:2 section:2].value()]);
             doubleNod(0.35, 0.4);
+            [sg_motionQueue waitUntilAllOperationsAreFinished]; // detection queued its result behind this main-thread step
+            [self.page viewWillDisappear:NO];
+            check(![self rowAt:2 section:2].value().length, @"leaving clears the pending Try");
+            return YES;
+        },
+        ^BOOL {
+            check(!sg_calls.count, @"a detection delivered after leaving cannot run the configured Like");
+            [self.page viewWillAppear:NO];
+            [self tapRow:2 section:2];
+            shake(0.21, 2.5);
+            [sg_motionQueue waitUntilAllOperationsAreFinished];
+            [self.page viewWillDisappear:NO];
+            [self.page viewWillAppear:NO];
+            [self tapRow:2 section:2];
+            return YES;
+        },
+        ^BOOL {
+            check([[self rowAt:2 section:2].value() isEqualToString:@"Listening…"], @"a late detection cannot finish another Try");
+            doubleNod(0.35, 0.4);
             return YES;
         },
         until(^BOOL { return ![[self rowAt:2 section:2].value() isEqualToString:@"Listening…"]; }),
@@ -729,6 +748,7 @@ static Step waitFor(double seconds) {
             return YES;
         },
         until(^BOOL { return self.teach.viewIfLoaded.window != nil; }),
+        ^BOOL { [self.teach viewDidAppear:NO]; return YES; }, // replaces a listener whose nil callback is queued
         waitFor(0.5),
         ^BOOL { [self teachButton:@"primaryButton"]; return YES; },
         until(^BOOL { return [[self teachCount] isEqualToString:@"3 of 5"]; }),

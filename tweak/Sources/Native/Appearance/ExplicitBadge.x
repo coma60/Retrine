@@ -71,6 +71,10 @@ void SGRefreshExplicitBadges(void) {
 
 %hook CALayer
 - (void)setMask:(CALayer *)mask {
+    if (!NSThread.isMainThread) {
+        %orig;
+        return;
+    }
     id delegate = enabled && !applying ? self.delegate : nil;
     if (delegate && [delegate isKindOfClass:UIView.class] && ((UIView *)delegate).layer == self && explicitBadge(delegate)) {
         objc_setAssociatedObject(delegate, &originalMaskKey, mask ?: NSNull.null, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

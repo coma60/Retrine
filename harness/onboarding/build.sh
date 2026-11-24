@@ -14,7 +14,7 @@ ALLOW_UPSTREAM=1 ../../scripts/whats-new.sh "$VERSION" ../../CHANGELOG.md "$OUT/
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 xcrun -sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-arc -g -O0 \
     -I"$SRC" -I"$SRC/App/Onboarding" -isysroot "$SDK" -Wno-deprecated-declarations -DSG_VERSION="\"$VERSION\"" \
-    main.m sponsorblock-check.m "$SRC"/App/Onboarding/Tour.m "$OUT"/onboarding/WhatsNew.m "$SRC"/App/Onboarding/Environment.m \
+    main.m sponsorblock-check.m cleanup-check.m "$SRC"/App/Onboarding/Tour.m "$OUT"/onboarding/WhatsNew.m "$SRC"/App/Onboarding/Environment.m \
     "$SRC"/App/About/Update.m \
     "$SRC"/Shared/SponsorBlock/SponsorBlockSettings.m "$SRC"/Shared/SponsorBlock/SponsorBlockPrefs.m \
     "$SRC"/Shared/SponsorBlock/SponsorBlockModel.m \

@@ -31,6 +31,7 @@ static NSDictionary *storedDefaults(void) {
 
 static UIAlertController *showAlert(UIViewController *presenter, NSString *title, NSString *message, UIAlertAction *confirm, void (^cancelled)(void)) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    SGPresentDark(alert);
     if (confirm) [alert addAction:confirm];
     [alert addAction:[UIAlertAction actionWithTitle:confirm ? SGL(@"common.cancel", @"Cancel") : SGL(@"common.ok", @"OK") style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
         if (cancelled) cancelled();
@@ -53,11 +54,14 @@ void SGExportSettings(void) {
         @"spotify": [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown",
         @"settings": exportSettings(storedDefaults()),
     };
-    NSData *data = [NSJSONSerialization dataWithJSONObject:file options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
+    NSError *error = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:file options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:&error];
     NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"spotifyglass-settings.json"]];
-    [data writeToURL:url atomically:YES];
-
     UIViewController *top = SGTopController();
+    if (!data || ![data writeToURL:url options:NSDataWritingAtomic error:&error]) {
+        showAlert(top, SGL(@"settings.mod.export_settings.title", @"Export settings"), error.localizedDescription, nil, nil);
+        return;
+    }
     UIActivityViewController *sheet = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
     sheet.popoverPresentationController.sourceView = top.view;
     [top presentViewController:sheet animated:YES completion:nil];

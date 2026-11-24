@@ -73,6 +73,7 @@ typedef NS_ENUM(NSInteger, SGTTMLPart) {
 };
 
 @interface SGTTMLReader : NSObject <NSXMLParserDelegate>
+@property (nonatomic) BOOL exhausted;
 @property (nonatomic, strong) NSMutableArray<SGKaraokeLine *> *lines;
 @property (nonatomic, strong) NSMutableArray *keys;   // each line's itunes:key, NSNull where it has none
 // By language, in the order the document lists them, then by the key of the line.
@@ -91,7 +92,7 @@ typedef NS_ENUM(NSInteger, SGTTMLPart) {
     NSMutableString *_plain;                     // every character of the line, for a line-timed <p>
     NSMutableString *_word;                      // the characters of the span being read
     NSInteger _wordStart, _wordEnd;
-    NSUInteger _spanDepth, _bgDepth, _wordDepth, _elementDepth;
+    NSUInteger _spanDepth, _bgDepth, _wordDepth, _elementDepth, _elements;
     BOOL _byModel;
 }
 
@@ -123,7 +124,11 @@ typedef NS_ENUM(NSInteger, SGTTMLPart) {
 
 - (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)element namespaceURI:(NSString *)uri
  qualifiedName:(NSString *)qualified attributes:(NSDictionary<NSString *, NSString *> *)attributes {
-    _elementDepth++;
+    if (++_elementDepth > 64 || ++_elements > 65536) {
+        self.exhausted = YES;
+        [parser abortParsing];
+        return;
+    }
     if (_elementDepth == 1 && [element isEqualToString:@"tt"]) {
         for (NSString *name in attributes) {
             if (([name isEqualToString:@"byModel"] || [name hasSuffix:@":byModel"]) &&
@@ -365,7 +370,11 @@ static void addHead(SGTTMLReader *reader) {
 }
 
 NSArray<SGKaraokeLine *> *SGTTMLLines(NSString *xml) {
-    if (![xml isKindOfClass:NSString.class] || !xml.length) return nil;
+    const NSUInteger maxBytes = 4 * 1024 * 1024;
+    if (![xml isKindOfClass:NSString.class] || !xml.length || xml.length > maxBytes ||
+        [xml lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > maxBytes ||
+        [xml rangeOfString:@"<!DOCTYPE" options:NSLiteralSearch].location != NSNotFound ||
+        [xml rangeOfString:@"\0" options:NSLiteralSearch].location != NSNotFound) return nil;
     NSData *data = [xml dataUsingEncoding:NSUTF8StringEncoding];
     if (!data) return nil;
     SGTTMLReader *reader = [SGTTMLReader new];
@@ -374,7 +383,8 @@ NSArray<SGKaraokeLine *> *SGTTMLLines(NSString *xml) {
     // The TTML namespaces carry nothing the reader needs, and the prefixes it matches on
     // ("ttm:agent") only survive while they are left alone.
     parser.shouldProcessNamespaces = NO;
-    if (![parser parse]) return nil;
+    parser.shouldResolveExternalEntities = NO;
+    if (![parser parse] || reader.exhausted) return nil;
     if (!reader.lines.count) return nil;
     SGKaraokeAlignVoices(reader.lines);
     addHead(reader);

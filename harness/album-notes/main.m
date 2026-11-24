@@ -407,9 +407,12 @@ int main(int argc, const char **argv) {
         [footer.contentView addSubview:copyright];
         CHECK(SGRAlbumNotesFooterHeight(footer, 390) > 0);
         CHECK(fixture.stack.arrangedSubviews.count == 2);
-        SGRAlbumNotesForgetFooter(footer);
+        UIView *footerNote = footer.subviews.lastObject;
+        UIView *overlay = [UIView new];
+        [footer addSubview:overlay];
+        CHECK(SGRAlbumNotesFooterHeight(footer, 390) > 0 && footer.subviews.lastObject == overlay);
         copyright.accessibilityIdentifier = @"Album.ConsumptionExperience";
-        CHECK(SGRAlbumNotesFooterHeight(footer, 390) == 0);
+        CHECK(SGRAlbumNotesFooterHeight(footer, 390) == 0 && footerNote.superview == nil);
         placement = 2;
         CHECK(SGRAlbumNotesFooterHeight(footer, 390) == 0);
 

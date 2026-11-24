@@ -274,6 +274,10 @@ uint64_t SGSpeedProbeSilence(uint64_t *host, double *ms, bool *silentNow) {
 // sample time of the output's own, so Spotify's units never see a time twice (an AU renders a time it has
 // seen from cache). With `sounding`, it stops at the first chunk marked silent (SGPlayerPull).
 static OSStatus pullSource(Output *output, AudioUnit source, const AudioTimeStamp *outputTime, UInt32 frames, AudioBufferList *data, UInt32 *sounding, BOOL processing) {
+    if (!frames) {
+        if (sounding) *sounding = 0;
+        return noErr;
+    }
     enum { kMaxBuffers = 8 };
     UInt32 chunk = atomic_load_explicit(&output->chunk, memory_order_relaxed);
     if (data->mNumberBuffers > kMaxBuffers) chunk = frames;

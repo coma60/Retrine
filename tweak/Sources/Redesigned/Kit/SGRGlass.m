@@ -95,14 +95,18 @@ void SGRGlassBacks(UIView *shape, UIControl *control) {
     if ([shape isKindOfClass:SGRGlassShape.class]) ((SGRGlassShape *)shape).backedControl = control;
 }
 
+static UIVisualEffect *shapeEffect(SGRGlassMode mode) {
+    return mode == SGRGlassModeBlur ? [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark] : SGRGlassEffect();
+}
+
 static UIView *newShape(SGRGlassMode mode) {
     UIView *shape;
     switch (mode) {
         case SGRGlassModeGlass:
-            shape = [[SGRGlassShape alloc] initWithEffect:SGRGlassEffect()];
+            shape = [[SGRGlassShape alloc] initWithEffect:shapeEffect(mode)];
             break;
         case SGRGlassModeBlur:
-            shape = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
+            shape = [[UIVisualEffectView alloc] initWithEffect:shapeEffect(mode)];
             break;
         case SGRGlassModeSolid:
             shape = [UIView new];
@@ -192,7 +196,8 @@ UIView *SGRGlassInside(UIView *control, const void *key, CGFloat side) {
 void SGRShowGlass(UIView *shape, BOOL shown) {
     if ([shape isKindOfClass:UIVisualEffectView.class]) {
         UIVisualEffectView *glass = (UIVisualEffectView *)shape;
-        if ((glass.effect != nil) != shown) glass.effect = shown ? SGRGlassEffect() : nil;
+        if ((glass.effect != nil) != shown)
+            glass.effect = shown ? shapeEffect([objc_getAssociatedObject(shape, &kInsideModeKey) integerValue]) : nil;
     } else {
         shape.alpha = shown ? 1 : 0;
     }

@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import "Core/SGPrefs.h"
 #import "Native/Appearance/Appearance.h"
+#import "Native/Appearance/Repaint.h"
 #import "Redesigned/Kit/SGRAccent.h"
 #import "../harness-fail.h"
 #include <stdlib.h>
@@ -49,6 +50,15 @@ static UIView *badge(Class cls, NSString *identifier) {
 - (NSString *)accessibilityIdentifier { self.reads++; return super.accessibilityIdentifier; }
 @end
 
+@interface StandaloneLayer : CALayer
+@end
+@implementation StandaloneLayer
+- (id<CALayerDelegate>)delegate {
+    if (!NSThread.isMainThread) HARNESS_FAIL(@"background layer delegate inspected");
+    return super.delegate;
+}
+@end
+
 static void check(UIWindow *window) {
     @autoreleasepool {
         [NSUserDefaults.standardUserDefaults setVolatileDomain:@{} forName:NSArgumentDomain];
@@ -75,6 +85,27 @@ static void check(UIWindow *window) {
         stored(!SGNativeUI(), !SGRedesignedUI());
         expect(paints(component), @"inactive look's setting cannot hide a badge");
         stored(SGNativeUI(), SGRedesignedUI());
+        if (SGNativeUI()) {
+            sg_homeRoot = page;
+            CGColorRef white = UIColor.whiteColor.CGColor;
+            dispatch_group_t work = dispatch_group_create();
+            dispatch_semaphore_t started = dispatch_semaphore_create(0);
+            dispatch_group_async(work, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                CALayer *layer = [StandaloneLayer layer];
+                for (int i = 0; i < 64; ++i) {
+                    CALayer *mask = [CALayer layer];
+                    layer.mask = mask;
+                    layer.backgroundColor = white;
+                    if (layer.mask != mask || !CGColorEqualToColor(layer.backgroundColor, white))
+                        HARNESS_FAIL(@"background setter did not take effect on return");
+                    if (!i) dispatch_semaphore_signal(started);
+                }
+            });
+            dispatch_semaphore_wait(started, DISPATCH_TIME_FOREVER);
+            for (int i = 0; i < 8; ++i) stored(i % 2, NO);
+            dispatch_group_wait(work, DISPATCH_TIME_FOREVER);
+            sg_homeRoot = nil;
+        }
         [window addSubview:page];
         expect(returning.layer.mask != nil, @"badge detached at enable is masked on unchanged reattachment");
         for (UIView *view in @[component, row]) {

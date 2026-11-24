@@ -18,4 +18,11 @@ static void artTimer(dispatch_source_t source, dispatch_time_t start, uint64_t r
 #define dispatch_time artTime
 #define dispatch_source_set_timer artTimer
 #import "art-dispatch.h"
+#import "Core/SGFileHash.h"
+NSUInteger harnessArtworkHashes;
+static NSString *countArtworkHash(NSData *data) {
+    harnessArtworkHashes++;
+    return SGDataSHA256(data);
+}
+#define SGDataSHA256 countArtworkHash
 #include "LyricsArtwork.m"

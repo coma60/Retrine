@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -38,14 +39,23 @@ type engineDevice interface {
 
 type Engine struct {
 	dev   engineDevice
-	stack *netstack.Net
-	user  []byte
-	pass  []byte
-	port  int
+	stack interface {
+		DialContext(context.Context, string, string) (net.Conn, error)
+		LookupContextHost(context.Context, string) ([]string, error)
+	}
+	user []byte
+	pass []byte
+	port int
 
-	mu       sync.Mutex
-	listener net.Listener
-	clients  map[net.Conn]struct{}
+	mu           sync.Mutex
+	listener     net.Listener
+	anchor       io.Closer
+	rearm        func() (net.Listener, error)
+	clients      map[net.Conn]struct{}
+	deadListener net.Listener
+	wantBind     bool
+	repairCancel context.CancelFunc
+	repairDone   chan struct{}
 
 	dialTimeout  time.Duration
 	stopped      atomic.Bool
@@ -53,6 +63,7 @@ type Engine struct {
 	state        int
 	unavailable  uint8
 	stateChanged func(int)
+	admitted     func() bool
 
 	// Counters. Only counts are kept; hostnames, URLs and addresses are not.
 	total, active, failed, dnsFailed atomic.Int64
@@ -76,10 +87,10 @@ const (
 )
 
 type EngineOptions struct {
-	// Listener, when non-nil, is used as the local proxy socket. Otherwise the
-	// engine listens on 127.0.0.1:Port (Port 0 picks a free port).
-	Listener    net.Listener
-	Port        int
+	// Activate the reserved socket only after bootstrap succeeds. Until then
+	// the OS refuses queued traffic rather than holding clients across retries.
+	Listen      func() (net.Listener, error)
+	Admitted    func() bool
 	DialTimeout time.Duration
 	// SGWGEngineEvent from the shared bridge header. No traffic details.
 	StateChanged func(int)
@@ -89,13 +100,14 @@ type EngineOptions struct {
 }
 
 var (
-	errStackInit    = errors.New("userspace network initialization failed")
-	errWGConfig     = errors.New("WireGuard configuration failed")
-	errWGUp         = errors.New("WireGuard UDP initialization failed")
-	errListen       = errors.New("local proxy initialization failed")
-	errEndpointDNS  = errors.New("WireGuard endpoint hostname could not be resolved")
-	errCredentials  = errors.New("local proxy credentials are required")
-	errNoSuitableEP = errors.New("WireGuard endpoint has no usable address")
+	errStackInit         = errors.New("userspace network initialization failed")
+	errWGConfig          = errors.New("WireGuard configuration failed")
+	errWGUp              = errors.New("WireGuard UDP initialization failed")
+	errListen            = errors.New("local proxy initialization failed")
+	errListenerTemporary = errors.New("local proxy temporarily unavailable")
+	errEndpointDNS       = errors.New("WireGuard endpoint hostname could not be resolved")
+	errCredentials       = errors.New("local proxy credentials are required")
+	errNoSuitableEP      = errors.New("WireGuard endpoint has no usable address")
 )
 
 func defaultResolve(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -127,20 +139,20 @@ func StartEngine(p *Profile, user, pass string, opt EngineOptions) (*Engine, err
 		dev.Close()
 		return nil, errWGUp
 	}
-	listener := opt.Listener
-	if listener == nil {
-		listener, err = net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(opt.Port)))
-		if err != nil {
-			dev.Close()
-			return nil, errListen
+	listener, err := opt.Listen()
+	if err != nil {
+		dev.Close()
+		if retryableListenerError(err) {
+			return nil, errListenerTemporary
 		}
+		return nil, errListen
 	}
 	e := &Engine{
 		dev: dev, stack: stack, user: []byte(user), pass: []byte(pass),
-		listener: listener, clients: map[net.Conn]struct{}{},
+		listener: listener, rearm: opt.Listen, clients: map[net.Conn]struct{}{},
 		dialTimeout: opt.DialTimeout, started: time.Now(), endpointResolvedLocally: local,
 		pendingAuth:  make(chan struct{}, maxUnauthenticatedClients),
-		stateChanged: opt.StateChanged,
+		stateChanged: opt.StateChanged, admitted: opt.Admitted,
 	}
 	if e.dialTimeout <= 0 {
 		e.dialTimeout = 15 * time.Second
@@ -223,11 +235,21 @@ func (e *Engine) Close() {
 	}
 	e.reportState(engineStopped)
 	e.mu.Lock()
+	done := e.repairDone
+	if e.repairCancel != nil {
+		e.repairCancel()
+	}
 	e.listener.Close()
 	for c := range e.clients {
 		c.Close()
 	}
 	e.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+	if e.anchor != nil {
+		e.anchor.Close()
+	}
 	e.dev.Close()
 }
 
@@ -261,13 +283,14 @@ func (e *Engine) acceptLoop(l net.Listener) {
 				time.Sleep(20 * time.Millisecond)
 				continue
 			}
-			// iOS can defunct a listening socket while the app is suspended.
-			// Bind the same port again so existing URLSession proxy settings,
-			// which point at this port, keep working.
-			e.relisten(l)
+			e.listenerFailed(l)
 			return
 		}
 		failures = 0
+		if e.admitted != nil && !e.admitted() {
+			c.Close()
+			continue
+		}
 		select {
 		case e.pendingAuth <- struct{}{}:
 		default:
@@ -290,56 +313,111 @@ func (e *Engine) acceptLoop(l net.Listener) {
 	}
 }
 
-func (e *Engine) relisten(old net.Listener) {
-	for attempt := 0; !e.stopped.Load(); attempt++ {
-		e.mu.Lock()
-		if e.listener != old || e.stopped.Load() {
-			e.mu.Unlock()
-			return
-		}
-		e.setUnavailable(listenerUnavailable, true)
-		old.Close()
-		l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(e.port)))
-		if err == nil {
-			e.listener = l
-			e.relistens.Add(1)
-			e.setUnavailable(listenerUnavailable, false)
-			e.mu.Unlock()
-			go e.acceptLoop(l)
-			return
-		}
-		e.mu.Unlock()
-		delay := time.Duration(attempt+1) * 100 * time.Millisecond
-		if delay > 2*time.Second {
-			delay = 2 * time.Second
-		}
-		time.Sleep(delay)
+func (e *Engine) listenerFailed(l net.Listener) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.listener != l || e.stopped.Load() {
+		return
 	}
+	e.deadListener = l
+	e.setUnavailable(listenerUnavailable, true)
+	e.startRepairLocked()
 }
 
-// Rebind reopens the WireGuard UDP socket (network change or return from
-// suspension) and re-creates the local listener if it no longer accepts.
+// Request only: neither the control queue nor Accept performs socket repair.
 func (e *Engine) Rebind() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.stopped.Load() {
 		return net.ErrClosed
 	}
-	err := e.dev.BindUpdate()
-	if err != nil {
-		e.bindFailures.Add(1)
-	} else {
-		e.bindUpdates.Add(1)
+	e.wantBind = true
+	e.startRepairLocked()
+	return nil
+}
+
+func (e *Engine) startRepairLocked() {
+	if e.repairDone != nil {
+		return
 	}
-	e.setUnavailable(bindUnavailable, err != nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	e.repairCancel, e.repairDone = cancel, done
+	go e.repair(ctx, done)
+}
+
+func (e *Engine) repair(ctx context.Context, done chan struct{}) {
+	bindFailed := false
 	e.mu.Lock()
-	l := e.listener
-	e.mu.Unlock()
-	probe, dialErr := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(e.port)), 500*time.Millisecond)
-	if dialErr != nil {
-		e.relisten(l)
-	} else {
-		probe.Close()
+	for attempt := 0; ctx.Err() == nil; attempt++ {
+		bind := e.wantBind || bindFailed
+		dead := e.deadListener
+		e.mu.Unlock()
+		if bind {
+			bindFailed = e.dev.BindUpdate() != nil
+			// Only requests overlapping this UDP update were reconciled. A
+			// request during subsequent listener work belongs to the next pass.
+			e.mu.Lock()
+			e.wantBind = false
+			e.mu.Unlock()
+			if bindFailed {
+				e.bindFailures.Add(1)
+				e.setUnavailable(bindUnavailable, true)
+			} else {
+				e.bindUpdates.Add(1)
+			}
+			if !bindFailed {
+				e.setUnavailable(bindUnavailable, false)
+			}
+		}
+		if dead != nil && ctx.Err() == nil {
+			dead.Close()
+			replacement, err := e.rearm()
+			if err == nil {
+				e.mu.Lock()
+				if e.stopped.Load() {
+					replacement.Close()
+				} else {
+					e.listener, e.deadListener = replacement, nil
+					e.relistens.Add(1)
+					e.setUnavailable(listenerUnavailable, false)
+					go e.acceptLoop(replacement)
+				}
+				e.mu.Unlock()
+			} else if !retryableListenerError(err) {
+				// A defunct underlying socket cannot be replaced. Park permanently
+				// with the listener failure bit set and the port still reserved.
+				e.mu.Lock()
+				e.deadListener = nil
+				e.mu.Unlock()
+			}
+		}
+		e.mu.Lock()
+		if e.wantBind {
+			attempt = -1
+			continue
+		}
+		if (e.deadListener == nil && !bindFailed) || attempt >= 4 {
+			break
+		}
+		e.mu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-time.After(100 * time.Millisecond << attempt):
+		}
+		e.mu.Lock()
 	}
-	return err
+	e.repairCancel()
+	e.wantBind = false
+	e.repairCancel, e.repairDone = nil, nil
+	close(done)
+	e.mu.Unlock()
+}
+
+func retryableListenerError(err error) bool {
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOMEM) || errors.Is(err, syscall.ENOBUFS) ||
+		errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.ECONNABORTED)
 }
 
 // classify counts the destination family without storing the hostname.
@@ -360,6 +438,9 @@ func hasSuffix(host, domain string) bool {
 }
 
 func (e *Engine) dial(host string, port int) (net.Conn, error) {
+	if e.admitted != nil && !e.admitted() {
+		return nil, net.ErrClosed
+	}
 	e.total.Add(1)
 	if _, err := netip.ParseAddr(host); err == nil {
 		e.ipTargets.Add(1)
@@ -375,8 +456,19 @@ func (e *Engine) dial(host string, port int) (net.Conn, error) {
 	addresses, err := e.destinationAddresses(ctx, host)
 	var c net.Conn
 	if err == nil {
-		for _, address := range addresses {
-			c, err = e.stack.DialContext(ctx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
+		deadline, _ := ctx.Deadline()
+		for i, address := range addresses {
+			if e.admitted != nil && !e.admitted() {
+				return nil, net.ErrClosed
+			}
+			left := time.Until(deadline)
+			if left <= 0 {
+				err = context.DeadlineExceeded
+				break
+			}
+			attempt, stop := context.WithTimeout(ctx, left/time.Duration(len(addresses)-i))
+			c, err = e.stack.DialContext(attempt, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
+			stop()
 			if err == nil {
 				break
 			}
@@ -603,13 +695,19 @@ func (e *Engine) serveCONNECT(c net.Conn, r *bufio.Reader, authenticated func())
 }
 
 type countingWriter struct {
-	w io.Writer
-	n *atomic.Int64
+	dst      io.Writer
+	n        *atomic.Int64
+	progress func()
 }
 
+const streamIdleTimeout = 30 * time.Second
+
 func (cw countingWriter) Write(p []byte) (int, error) {
-	n, err := cw.w.Write(p)
+	n, err := cw.dst.Write(p)
 	cw.n.Add(int64(n))
+	if n > 0 {
+		cw.progress()
+	}
 	return n, err
 }
 
@@ -623,28 +721,45 @@ func (e *Engine) pipe(c net.Conn, r *bufio.Reader, upstream net.Conn) {
 	c.SetDeadline(time.Time{})
 	e.active.Add(1)
 	defer e.active.Add(-1)
-	done := make(chan struct{})
-	go func() {
+	start := time.Now()
+	var last [2]atomic.Int64
+	done := make(chan error, 2)
+	copyStream := func(i int, dst net.Conn, reader io.Reader, counter *atomic.Int64) {
 		// r may already hold bytes the client sent right after the request.
-		io.Copy(countingWriter{upstream, &e.upBytes}, r)
-		if half, ok := upstream.(interface{ CloseWrite() error }); ok {
-			half.CloseWrite()
-		} else {
-			upstream.Close()
+		_, err := io.Copy(countingWriter{dst, counter, func() { last[i].Store(int64(time.Since(start))) }}, reader)
+		if err == nil {
+			if half, ok := dst.(interface{ CloseWrite() error }); ok {
+				err = half.CloseWrite()
+			}
 		}
-		close(done)
-	}()
-	io.Copy(countingWriter{c, &e.downBytes}, upstream)
-	if half, ok := c.(interface{ CloseWrite() error }); ok {
-		half.CloseWrite()
+		done <- err
 	}
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
+	go copyStream(0, upstream, r, &e.upBytes)
+	go copyStream(1, c, upstream, &e.downBytes)
+	timer := time.NewTimer(streamIdleTimeout)
+	defer timer.Stop()
+	for remaining := 2; remaining > 0; {
+		select {
+		case err := <-done:
+			remaining--
+			if err == nil {
+				continue
+			}
+		case <-timer.C:
+			elapsed := time.Since(start)
+			left := streamIdleTimeout + time.Duration(max(last[0].Load(), last[1].Load())) - elapsed
+			if left > 0 {
+				timer.Reset(left)
+				continue
+			}
+		}
+		c.Close()
+		upstream.Close()
+		for range remaining {
+			<-done
+		}
+		return
 	}
-	c.Close()
-	upstream.Close()
-	<-done
 }
 
 // Lookup resolves host through the tunnel's DNS servers (diagnostics only).

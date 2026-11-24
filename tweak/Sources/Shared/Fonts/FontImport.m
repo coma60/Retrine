@@ -64,6 +64,18 @@ static NSString *importedFamily(void) {
     return storedFiles().count ? [NSUserDefaults.standardUserDefaults stringForKey:SGKeyAppFontName] : nil;
 }
 
+// A replacement can reuse every filename and the family name. Identify the files themselves.
+static NSDictionary *importIdentity(void) {
+    NSMutableDictionary *files = [NSMutableDictionary dictionary];
+    for (NSURL *url in storedFiles()) {
+        id identifier;
+        if (![url getResourceValue:&identifier forKey:NSURLFileResourceIdentifierKey error:nil] || !identifier) return nil;
+        files[url] = identifier;
+    }
+    NSString *family = [NSUserDefaults.standardUserDefaults stringForKey:SGKeyAppFontName];
+    return files.count && family.length ? @{@"family":family, @"files":files} : nil;
+}
+
 // A face iOS already carries under the same name (Chalkduster, say) is refused as a duplicate and is there
 // all the same, so what counts is whether the family has faces afterward. Files that are gone are skipped.
 static NSString *registerCustom(void) {
@@ -80,9 +92,21 @@ static NSString *registerCustom(void) {
 
 // What registerCustom answered, published on the main thread by SGRegisterCustomFont or SGRegisterCustomFontAsync.
 static NSString *sg_registeredCustom;
+static NSUInteger sg_importGeneration; // main thread, like the published family
+static BOOL sg_registrationPending;
+
+static dispatch_queue_t registrationQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("spotifyglass.fontImport.registration", DISPATCH_QUEUE_SERIAL); });
+    return queue;
+}
 
 NSString *SGRegisterCustomFont(void) {
-    NSString *family = registerCustom();
+    ++sg_importGeneration;
+    sg_registrationPending = NO;
+    __block NSString *family;
+    dispatch_sync(registrationQueue(), ^{ family = registerCustom(); });
     sg_registeredCustom = family;
     return family;
 }
@@ -91,34 +115,64 @@ NSString *SGRegisteredCustomFont(void) {
     return [sg_registeredCustom isEqualToString:[NSUserDefaults.standardUserDefaults stringForKey:SGKeyAppFontName]] ? sg_registeredCustom : nil;
 }
 
+static void publishCustom(NSString *family) {
+    if (sg_registeredCustom == family || [sg_registeredCustom isEqualToString:family]) return;
+    sg_registeredCustom = family;
+    [NSNotificationCenter.defaultCenter postNotificationName:SGFontLibraryChangedNotification object:nil userInfo:@{@"identifier": @"custom"}];
+}
+
 // registerCustom on a queue of its own, one registration at a time; the answer is published on main.
 void SGRegisterCustomFontAsync(void) {
-    if (SGRegisteredCustomFont()) return;   // the files are registered already
-    static dispatch_queue_t queue;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ queue = dispatch_queue_create("spotifyglass.fontImport.registration", DISPATCH_QUEUE_SERIAL); });
-    dispatch_async(queue, ^{
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ SGRegisterCustomFontAsync(); });
+        return;
+    }
+    if (sg_registrationPending || SGRegisteredCustomFont()) return;
+    sg_registrationPending = YES;
+    NSUInteger generation = sg_importGeneration;
+    dispatch_async(registrationQueue(), ^{
         NSString *family = registerCustom();
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (sg_registeredCustom == family || [sg_registeredCustom isEqualToString:family]) return;
-            sg_registeredCustom = family;
-            [NSNotificationCenter.defaultCenter postNotificationName:SGFontLibraryChangedNotification object:nil userInfo:@{@"identifier": @"custom"}];
+            if (generation != sg_importGeneration) return;
+            sg_registrationPending = NO;
+            publishCustom(family);
         });
     });
 }
 
-// The imported files unregistered and deleted, and the choice forgotten.
-static void removeImported(BOOL resetSelection) {
+// On the registration queue, after any previous use of the files by Core Text.
+static void removeImportedFiles(NSArray<NSURL *> *urls) {
     NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
-    for (NSURL *url in storedFiles()) {
+    for (NSURL *url in urls) {
         CTFontManagerUnregisterFontsForURL((__bridge CFURLRef)url, kCTFontManagerScopeProcess, NULL);
         [NSFileManager.defaultManager removeItemAtURL:url error:nil];
     }
     for (NSString *key in @[SGKeyAppFontFiles, SGKeyAppFontName]) [store removeObjectForKey:key];
-    if (resetSelection && SGAppFontChosen() == SGAppFontCustom) {
-        [store removeObjectForKey:SGKeyAppFont];
+}
+
+static void resetCustomSelection(void) {
+    if (SGAppFontChosen() == SGAppFontCustom) {
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:SGKeyAppFont];
         SGPrefsChanged();
     }
+}
+
+static void removeImported(NSDictionary *target, dispatch_block_t done) {
+    NSUInteger generation = ++sg_importGeneration;
+    sg_registrationPending = YES;
+    dispatch_async(registrationQueue(), ^{
+        BOOL removed = [target isEqual:importIdentity()];
+        if (removed) removeImportedFiles([target[@"files"] allKeys]);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (generation == sg_importGeneration) sg_registrationPending = NO;
+            // A later request may have failed validation without installing anything.
+            if (removed && !importedFamily()) {
+                resetCustomSelection();
+                publishCustom(nil);
+            }
+            done();
+        });
+    });
 }
 
 static void tell(NSString *title, NSString *message) {
@@ -133,7 +187,9 @@ static void tell(NSString *title, NSString *message) {
 static BOOL sg_importing;
 static void import(NSArray<NSURL *> *picked, dispatch_block_t done) {
     NSArray *selection = SGFontSelectionSnapshot();
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSUInteger generation = ++sg_importGeneration;
+    sg_registrationPending = YES;
+    dispatch_async(registrationQueue(), ^{
     NSMutableArray<NSURL *> *scoped = [NSMutableArray array];
     NSMutableArray<NSString *> *families = [NSMutableArray array];
     BOOL fonts = YES;
@@ -156,22 +212,30 @@ static void import(NSArray<NSURL *> *picked, dispatch_block_t done) {
         }
     }
     for (NSURL *url in scoped) [url stopAccessingSecurityScopedResource];
-    // Only the small commit, preferences, registration and presentation return to main.
-    dispatch_async(dispatch_get_main_queue(), ^{
     NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
-    if (family && copied.count == picked.count) {
-        removeImported(NO); // replacing the files is not a user font selection
+    BOOL replacing = family && copied.count == picked.count;
+    NSString *registered = nil;
+    if (replacing) {
+        removeImportedFiles(storedFiles()); // replacing the files is not a user font selection
         for (NSString *file in copied) {
             NSURL *target = [fontFolder() URLByAppendingPathComponent:file];
             [files removeItemAtURL:target error:nil];
             [files moveItemAtURL:[incoming URLByAppendingPathComponent:file] toURL:target error:nil];
         }
-        [files removeItemAtURL:incoming error:nil];
         [store setObject:copied forKey:SGKeyAppFontFiles];
         [store setObject:family forKey:SGKeyAppFontName];
+        registered = registerCustom();
+        if (!registered) removeImportedFiles(storedFiles());
+    }
+    [files removeItemAtURL:incoming error:nil];
+    NSDictionary *installed = registered ? importIdentity() : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (generation == sg_importGeneration) sg_registrationPending = NO;
+        else if (![installed isEqual:importIdentity()]) { done(); return; }
+        if (replacing) publishCustom(registered);
         // Keep the imported family available even during a pending restart, but never change its
         // selection: a reset/restore may have left the same (including unset) preference values.
-        if (SGRegisterCustomFont()) {
+        if (registered) {
             if (SGFontSelectionUnchanged(selection)) {
                 SGSetInt(SGKeyAppFont, SGAppFontCustom);
                 tell(SGL(@"settings.font.imported.alert.title", @"Font imported"), [NSString stringWithFormat:SGL(@"settings.font.imported.alert.message", @"%@ becomes the app's font when Spotify starts again."), family]);
@@ -179,12 +243,11 @@ static void import(NSArray<NSURL *> *picked, dispatch_block_t done) {
             done();
             return;
         }
-    }
-    [files removeItemAtURL:incoming error:nil];
-    if (family && copied.count == picked.count) removeImported(YES);   // copied in but Core Text took none of it
-    SGPresentInformation(SGTopController(), SGL(@"settings.font.failed.alert.title", @"Font not imported"), fonts && !family ? SGL(@"settings.font.failed.multiple_families.alert.message", @"These files are more than one family. Pick the files of one family together.")
+        if (replacing) resetCustomSelection();
+        else SGRegisterCustomFontAsync(); // validation left the old files in place
+        SGPresentInformation(SGTopController(), SGL(@"settings.font.failed.alert.title", @"Font not imported"), fonts && !family ? SGL(@"settings.font.failed.multiple_families.alert.message", @"These files are more than one family. Pick the files of one family together.")
                                                : SGL(@"settings.font.failed.invalid_files.alert.message", @"Choose valid .ttf, .otf, .ttc or .otc font files."));
-    done();
+        done();
     });
     });
 }
@@ -264,6 +327,7 @@ typedef NS_ENUM(NSInteger, SGFontSection) { SGFontBuiltIn, SGFontMore, SGFontFre
 @implementation SGFontPage {
     NSArray<NSString *> *_families;
     NSArray<SGLibraryFont *> *_free;   // the free families on this iPhone
+    NSDictionary *_displayedImport;
     UIView *_footer;
     id _observer;
     BOOL _visible;             // between viewWillAppear: and viewDidDisappear:
@@ -376,6 +440,7 @@ typedef NS_ENUM(NSInteger, SGFontSection) { SGFontBuiltIn, SGFontMore, SGFontFre
     NSString *title, *subtitle = nil;
     UIFont *font;
     BOOL selected;
+    if (path.section == SGFontYours && path.row == 0) _displayedImport = importIdentity();
     if (path.section == SGFontBuiltIn) {
         title = SGAppFontNames()[(NSUInteger)path.row];
         font = builtInFont(path.row, size);
@@ -396,8 +461,8 @@ typedef NS_ENUM(NSInteger, SGFontSection) { SGFontBuiltIn, SGFontMore, SGFontFre
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
         cell.accessibilityTraits = UIAccessibilityTraitButton;
         return cell;
-    } else if (path.row == 0 && importedFamily().length) {
-        title = importedFamily();
+    } else if (path.row == 0 && _displayedImport) {
+        title = _displayedImport[@"family"];
         font = previewFont(self.customFamily, YES, size);
         selected = chosen == SGAppFontCustom;
         if (self.styleCount) subtitle = [NSString stringWithFormat:SGL(@"settings.font.style_count.format", @"%lu style%@"), (unsigned long)self.styleCount, self.styleCount == 1 ? @"" : @"s"];
@@ -446,12 +511,14 @@ typedef NS_ENUM(NSInteger, SGFontSection) { SGFontBuiltIn, SGFontMore, SGFontFre
 
 // Swiping the imported family away deletes its files; Default comes back if it was the choice.
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)table trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)path {
-    if (path.section != SGFontYours || path.row != 0 || !importedFamily().length) return nil;
+    NSDictionary *target = _displayedImport;
+    if (path.section != SGFontYours || path.row != 0 || !target) return nil;
     UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:SGL(@"common.delete", @"Delete")
         handler:^(UIContextualAction *action, UIView *view, void (^done)(BOOL)) {
-            removeImported(YES);
-            [self refresh];
-            done(YES);
+            removeImported(target, ^{
+                [self refresh];
+                done(YES);
+            });
         }];
     delete.image = [UIImage systemImageNamed:@"trash"];
     return [UISwipeActionsConfiguration configurationWithActions:@[delete]];

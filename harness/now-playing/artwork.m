@@ -23,6 +23,7 @@ static NSURL *cacheRoot;
 static BOOL holdLyricsCleanup, cleanupGateTimedOut;
 static dispatch_semaphore_t cleanupEntered, cleanupRelease;
 static NSUInteger completedLyricsCleanups;
+NSNotificationName const SGLyricsAIResultDidChangeNotification = @"spotifyglass.lyricsAIResultDidChange";
 static CGSize lastCoverRequest;
 static NSUInteger nativeAcquisitions;
 static CGRect screenBounds(id self, SEL cmd) { return CGRectMake(0, 0, 32, 48); }
@@ -485,6 +486,8 @@ static void interleavedMode(void) {
 void artworkChecks(void) {
     red = image(UIColor.redColor);
     blue = image(UIColor.blueColor);
+    extern BOOL harnessCoverRevisions(UIImage *, UIImage *);
+    check(harnessCoverRevisions(red, blue), @"stable cover reuses its digest; the pixels identify it across revisions");
     check(lookups == 1, @"lock-screen startup looks up the already-playing track");
     report();
     check(lookups == 1, @"the first ordinary report does not repeat the startup lookup");
@@ -924,8 +927,14 @@ void artworkChecks(void) {
     track(@"reading-revision", SGLockArtworkLyrics, nil, @[spoken]);
     id firstReading = artwork();
     video(firstReading);
+    extern NSUInteger harnessArtworkHashes;
+    NSUInteger hashes = harnessArtworkHashes;
+    for (NSUInteger i = 0; i < 10; i++) report();
+    check(harnessArtworkHashes == hashes, @"position reports reuse the unchanged song reading digest");
+    // The view's observer may apply the saved reading after the artwork observer is called.
+    [NSNotificationCenter.defaultCenter postNotificationName:SGLyricsAIResultDidChangeNotification object:@"reading-revision"];
     spoken.pronunciation = lineOf(@"replacement reading", 0, 10000);
-    [NSNotificationCenter.defaultCenter postNotificationName:SGKaraokeLinesKeptNotification object:@"reading-revision"];
+    check(await(^BOOL { return artwork() != firstReading; }), @"AI pronunciation edit refreshes the paused artwork");
     id replacementReading = artwork();
     video(replacementReading);
     check([encodedLines containsObject:@"replacement reading"] && video(firstReading) == nil,

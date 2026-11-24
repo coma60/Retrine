@@ -13,7 +13,7 @@ static IMP originalCopy, blockedCopy;
 static Method copyMethod;
 typedef NS_ENUM(NSUInteger, FontCheck) {
     PickNewYork, RemovePreference, RestorePreference, SwitchFamily, SwitchLibrary,
-    KeepPreference, KeepUnsetPreference, RestartUnsetPreference, FontCheckCount
+    KeepPreference, KeepUnsetPreference, DeleteDisplayedImport, RestartUnsetPreference, FontCheckCount
 };
 static FontCheck scenario;
 static UITableViewController *page;
@@ -54,6 +54,7 @@ static void runImport(void) {
     NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
     for (NSString *key in @[SGKeyAppFont, SGKeyAppFontFamily, SGKeyAppFontLibrary]) [store removeObjectForKey:key];
     if (scenario != KeepUnsetPreference && scenario != RestartUnsetPreference) SGSetInt(SGKeyAppFont, SGAppFontSpotify);
+    if (scenario == DeleteDisplayedImport) SGSetInt(SGKeyAppFont, SGAppFontCustom);
     if (scenario == SwitchFamily) {
         SGSetInt(SGKeyAppFont, SGAppFontFamily);
         [store setObject:@"Avenir Next" forKey:SGKeyAppFontFamily];
@@ -66,6 +67,7 @@ static void runImport(void) {
     [(id)picker setValue:[^{
         HARNESS_CHECK(NSThread.isMainThread);
         switch (scenario) {
+            case DeleteDisplayedImport: return; // the swipe completes after this picker
             case PickNewYork: HARNESS_CHECK(SGAppFontChosen() == SGAppFontSerif); break;
             case RemovePreference: HARNESS_CHECK([store objectForKey:SGKeyAppFont] == nil); break;
             case RestorePreference: HARNESS_CHECK(SGAppFontChosen() == SGAppFontRounded); break;
@@ -117,7 +119,21 @@ void SGCheckFontSelection(void) {
             HARNESS_CHECK(!NSThread.isMainThread);
             dispatch_semaphore_t chosen = dispatch_semaphore_create(0);
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (scenario == PickNewYork) {
+                if (scenario == DeleteDisplayedImport) {
+                    // The replacement even has the same family and filename as the displayed import.
+                    NSIndexPath *row = [NSIndexPath indexPathForRow:0 inSection:3];
+                    [page tableView:page.tableView cellForRowAtIndexPath:row];
+                    UIContextualAction *swipe = [page tableView:page.tableView trailingSwipeActionsConfigurationForRowAtIndexPath:row].actions.firstObject;
+                    HARNESS_CHECK(swipe);
+                    swipe.handler(swipe, page.tableView, ^(BOOL finished) {
+                        HARNESS_CHECK([SGRegisteredCustomFont() isEqual:@"Chalkduster"] && SGAppFontChosen() == SGAppFontCustom);
+                        NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+                        NSURL *file = [[support URLByAppendingPathComponent:@"Retrine/Font"] URLByAppendingPathComponent:fixture.lastPathComponent];
+                        HARNESS_CHECK([NSFileManager.defaultManager fileExistsAtPath:file.path]);
+                        ++scenario;
+                        runImport();
+                    });
+                } else if (scenario == PickNewYork) {
                     // Real, still-enabled built-in row action while the import's copy is pending.
                     [page tableView:page.tableView didSelectRowAtIndexPath:
                         [NSIndexPath indexPathForRow:SGAppFontSerif inSection:0]];

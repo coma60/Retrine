@@ -520,8 +520,9 @@ static NSArray<UIView *> *tabItems(NSMutableArray<NSString *> *titles) {
                 SGForEachView(bar, ^(UIView *v) {
                     if ([v isKindOfClass:UIControl.class] && [NSStringFromClass(v.class) containsString:@"TabButton"] && isShown(v)) [buttons addObject:v];
                 });
-                [buttons sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-                    return CGRectGetMinX(screenFrame(a)) < CGRectGetMinX(screenFrame(b)) ? NSOrderedAscending : NSOrderedDescending;
+                [buttons sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+                    CGFloat x = CGRectGetMinX(screenFrame(a)), y = CGRectGetMinX(screenFrame(b));
+                    return x < y ? NSOrderedAscending : x > y ? NSOrderedDescending : NSOrderedSame;
                 }];
                 // The glass bar stacks two buttons on each tab: one a tab, by where it sits.
                 for (UIView *button in buttons) {

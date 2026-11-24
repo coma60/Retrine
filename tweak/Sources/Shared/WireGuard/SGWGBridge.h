@@ -16,10 +16,15 @@ enum SGWGEngineEvent {
 extern "C" {
 #endif
 
+enum SGWGStartResult {
+    SGWGStarted, SGWGStartNetworkUnavailable, SGWGStartRefused
+};
 char *SGWGInspect(char *text);
-int SGWGStart(char *text, char *user, char *pass, int listenerFD, int port);
+// Consumes a duplicate of the reserved, bound socket on every outcome.
+enum SGWGStartResult SGWGStart(char *text, char *user, char *pass, int listenerFD);
+void SGWGStop(void);
 char *SGWGStatus(void);
-void SGWGSetStateCallback(uintptr_t callback);
+void SGWGSetStateCallback(uintptr_t callback, uintptr_t admitted);
 int SGWGRebind(void);
 char *SGWGLookup(char *host);
 char *SGWGResolve(char *host);

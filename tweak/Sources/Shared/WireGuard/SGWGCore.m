@@ -7,6 +7,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#import <fcntl.h>
 #import <netinet/in.h>
 #import <os/lock.h>
 #import <stdatomic.h>
@@ -35,13 +36,19 @@ NSString *const SGWGKindSOCKS5 = @"socks5";
 static atomic_int gState = SGWGStateOff;
 static atomic_bool gActive;       // armed before checking any capability
 static atomic_bool gReady, gGuardsReady, gEngineReady;
-static atomic_bool gEngineRecoverable;
+static atomic_bool gHandedOff;
+// Start ownership and retry tickets belong to gQueue.
+static BOOL gStarting, gRetryStart;
+static unsigned gStartRetries;
+enum { MaxStartRetries = 5 };
+static uint64_t gRetryTicket;
 static os_unfair_lock gReadinessLock = OS_UNFAIR_LOCK_INIT;
 static uint64_t gReadinessGeneration;
 static BOOL gEngineAvailable;    // unvalidated engine event, protected by gReadinessLock
 static BOOL gSessionGuards;
 static int gPort = -1;            // fixed before session hooks are installed
-static int gListenerFD = -1;      // reserved socket handed to Go on start
+static int gListenerFD = -1;      // process-lifetime reservation once published
+static BOOL gPortPublished;       // serialized with definitive refusal
 static char gUser[33], gPass[33]; // per-launch random proxy credentials
 static dispatch_queue_t gQueue;
 
@@ -333,17 +340,23 @@ static id CreateProxyConfig(void) {
     if (!SGWGIsSupportedOS()) return nil;
     // WebSocket tasks do not use NSURLProtocol. Give an invalid configuration
     // a real, fail-closed proxy too, so those tasks cannot use a direct route.
-    if (gBlockAll || (![gKind isEqualToString:SGWGKindWireGuard] && !atomic_load(&gEngineReady))) {
-        nw_endpoint_t endpoint = nw_endpoint_create_host("127.0.0.1", "1");
-        return endpoint ? (__bridge_transfer id)pCreateSocks((__bridge void *)endpoint) : nil;
-    }
-    if ([gKind isEqualToString:SGWGKindWireGuard]) {
+    BOOL tunnel = [gKind isEqualToString:SGWGKindWireGuard];
+    if (tunnel && !gBlockAll) {
         char port[8];
         snprintf(port, sizeof(port), "%d", gPort);
         nw_endpoint_t endpoint = nw_endpoint_create_host("127.0.0.1", port);
         id proxy = endpoint ? (__bridge_transfer id)pCreateSocks((__bridge void *)endpoint) : nil;
-        if (proxy) pSetUserPass((__bridge void *)proxy, gUser, gPass);
-        return proxy;
+        if (!proxy) return nil;
+        pSetUserPass((__bridge void *)proxy, gUser, gPass);
+        os_unfair_lock_lock(&gReadinessLock);
+        BOOL publish = !gBlockAll;
+        if (publish) gPortPublished = YES;
+        os_unfair_lock_unlock(&gReadinessLock);
+        if (publish) return proxy;
+    }
+    if (gBlockAll || !atomic_load(&gEngineReady)) {
+        nw_endpoint_t endpoint = nw_endpoint_create_host("127.0.0.1", "1");
+        return endpoint ? (__bridge_transfer id)pCreateSocks((__bridge void *)endpoint) : nil;
     }
     nw_endpoint_t endpoint = nw_endpoint_create_host(gProxyHost, gProxyPort);
     if (!endpoint) return nil;
@@ -820,61 +833,141 @@ NSDictionary *SGWGEngineStatus(void) {
     return JSONFromGo(SGWGStatus()) ?: @{@"running": @NO};
 }
 
+static void RefuseListener(void);
+
 static void EngineChanged(int state) {
     if (state == SGWGEngineDestinationFailed) return;
     BOOL available = state == SGWGEngineAvailable;
     os_unfair_lock_lock(&gReadinessLock);
     gReadinessGeneration++;
     gEngineAvailable = available;
-    atomic_store(&gEngineRecoverable, state == SGWGEngineUnavailable || available);
     atomic_store(&gEngineReady, false);
     atomic_store_explicit(&gReady, false, memory_order_release);
-    atomic_store(&gState, available ? SGWGStateRunning : SGWGStateFailed);
+    if (gHandedOff && !gBlockAll)
+        atomic_store(&gState, available ? SGWGStateRunning : SGWGStateFailed);
+    if (state == SGWGEngineStopped) gHandedOff = false;
     os_unfair_lock_unlock(&gReadinessLock);
-    // Rebind may still occupy gQueue. Revoke admission before returning to Go, not behind that work.
-    if (!available) SGWGNotifyRecovery();
-    dispatch_async(gQueue, ^{ SGWGRefreshReadiness(); });
+    if (!available && !gBlockAll) SGWGNotifyRecovery();
+    dispatch_async(gQueue, ^{
+        if (state == SGWGEngineStopped && !gBlockAll && gListenerFD >= 0) RefuseListener();
+        SGWGRefreshReadiness();
+    });
+}
+
+// Never leave a reusable port in a configuration retained by Foundation.
+// If even listen/accept is defunct, the bound descriptor still stays owned.
+static void SinkListener(int fd) {
+    static dispatch_source_t sink;
+    if (sink || listen(fd, SOMAXCONN) || fcntl(fd, F_SETFL, O_NONBLOCK) < 0) return;
+    dispatch_queue_t queue = dispatch_queue_create("retrine.wireguard.refuse", DISPATCH_QUEUE_SERIAL);
+    sink = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, queue);
+    dispatch_source_set_event_handler(sink, ^{
+        int client = accept(fd, NULL, NULL);
+        if (client >= 0) close(client);
+        else if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
+            dispatch_suspend(sink);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), queue, ^{ dispatch_resume(sink); });
+        } else if (errno != EAGAIN && errno != EINTR && errno != ECONNABORTED) {
+            dispatch_source_cancel(sink);
+        }
+    });
+    dispatch_resume(sink);
 }
 
 static void RefuseListener(void) {
+    os_unfair_lock_lock(&gReadinessLock);
     gBlockAll = YES;
-    if (gListenerFD >= 0) {
+    gReadinessGeneration++;
+    gReady = false;
+    atomic_store(&gState, SGWGStateBlocked);
+    BOOL stop = atomic_exchange(&gHandedOff, false);
+    BOOL published = gPortPublished;
+    os_unfair_lock_unlock(&gReadinessLock);
+    if (stop) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ SGWGStop(); });
+    if (published) SinkListener(gListenerFD);
+    else if (gListenerFD >= 0) {
         close(gListenerFD);
         gListenerFD = -1;
     }
 }
-static void StartEngine(void) {
-    dispatch_async(gQueue, ^{
-        SGWGState state = SGWGCurrentState();
-        if (atomic_load(&gEngineReady) || state == SGWGStateFailed || gBlockAll) return;
-        OSStatus status = errSecSuccess;
-        NSString *profile = ReadProfile(&status);
-        if (!profile.length) {
-            atomic_store(&gCredentialStatus, status);
-            BOOL retryable = status == errSecInteractionNotAllowed || status == errSecNotAvailable;
-            if (!retryable) RefuseListener();
-            atomic_store(&gState, retryable ? SGWGStateWaitingProfile : SGWGStateBlocked);
-            return;
-        }
-        atomic_store(&gCredentialStatus, errSecSuccess);
-        if (gListenerFD < 0) return; // already handed to Go or definitively refused
-        atomic_store(&gState, SGWGStateStarting);
-        int fd = gListenerFD;
-        gListenerFD = -1; // ownership moves to Go
-        SGWGSetStateCallback((uintptr_t)EngineChanged);
-        int port = SGWGStart((char *)profile.UTF8String, gUser, gPass, fd, gPort);
-        if (port != gPort) EngineChanged(SGWGEngineStopped);
+
+static int ProxyAdmitted(void) { return SGWGReady(); }
+static void StartEngine(void);
+
+static void FinishStart(enum SGWGStartResult result) {
+    gStarting = NO;
+    if (gBlockAll) {
+        if (result == SGWGStarted) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ SGWGStop(); });
+        return;
+    }
+    if (result == SGWGStarted) {
+        os_unfair_lock_lock(&gReadinessLock);
+        gReadinessGeneration++;
+        gHandedOff = true;
+        atomic_store(&gState, gEngineAvailable ? SGWGStateRunning : SGWGStateFailed);
+        os_unfair_lock_unlock(&gReadinessLock);
         SGWGRefreshReadiness();
+    } else if (result == SGWGStartNetworkUnavailable) {
+        atomic_store(&gState, SGWGStateFailed);
+        gRetryStart = YES;
+        if (gStartRetries++ < MaxStartRetries) {
+            int seconds = 1 << (gStartRetries - 1);
+            uint64_t ticket = ++gRetryTicket;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, seconds * (int64_t)NSEC_PER_SEC), gQueue, ^{
+                if (ticket == gRetryTicket && gRetryStart) StartEngine();
+            });
+        }
+    } else RefuseListener();
+}
+
+// On gQueue. A failed attempt consumes only a dup, never the reservation
+// that existing session configurations refer to.
+static void StartEngine(void) {
+    if (gStarting || gHandedOff || gBlockAll || gListenerFD < 0) return;
+    gRetryStart = NO;
+    BOOL pending = NO;
+    if (!SGWGCheckAdmission(&pending)) {
+        if (!pending) RefuseListener();
+        atomic_store(&gState, SGWGStateBlocked);
+        return;
+    }
+    SGWGInstallTransportPatches();
+    OSStatus status = errSecSuccess;
+    NSString *profile = ReadProfile(&status);
+    if (!profile.length) {
+        atomic_store(&gCredentialStatus, status);
+        BOOL retryable = status == errSecInteractionNotAllowed || status == errSecNotAvailable;
+        if (!retryable) RefuseListener();
+        atomic_store(&gState, retryable ? SGWGStateWaitingProfile : SGWGStateBlocked);
+        return;
+    }
+    atomic_store(&gCredentialStatus, errSecSuccess);
+    int fd = dup(gListenerFD);
+    if (fd < 0) {
+        FinishStart(errno == EMFILE || errno == ENFILE ? SGWGStartNetworkUnavailable : SGWGStartRefused);
+        return;
+    }
+    gStarting = YES;
+    atomic_store(&gState, SGWGStateStarting);
+    SGWGSetStateCallback((uintptr_t)EngineChanged, (uintptr_t)ProxyAdmitted);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        enum SGWGStartResult result = SGWGStart((char *)profile.UTF8String, gUser, gPass, fd);
+        dispatch_async(gQueue, ^{ FinishStart(result); });
     });
 }
 
 void SGWGRequestRebind(NSString *reason) {
     if (!gActive) return;
     dispatch_async(gQueue, ^{
-        SGWGState state = SGWGCurrentState();
-        if (state == SGWGStateWaitingProfile) {
+        if (gBlockAll || ![gKind isEqualToString:SGWGKindWireGuard]) return;
+        if (gStarting) {
+            // A trigger can race the final, still-offline DNS result.
+            gStartRetries = 0;
+        } else if (gRetryStart) {
+            gStartRetries = 0;
+            ++gRetryTicket;
             StartEngine();
-        } else if (state == SGWGStateRunning || (state == SGWGStateFailed && atomic_load(&gEngineRecoverable))) {
+        } else if (gHandedOff && SGWGAdmissionReady()) {
             SGWGRebind();
             atomic_fetch_add(&gRebinds, 1);
         }
@@ -902,14 +995,12 @@ NSURLSession *SGWGTunnelSession(id<NSURLSessionDelegate> delegate) {
 static BOOL ReserveListener(void) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return NO;
-    int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in addr = {0};
     addr.sin_len = sizeof(addr);
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t len = sizeof(addr);
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) || listen(fd, 256) ||
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) ||
         getsockname(fd, (struct sockaddr *)&addr, &len)) {
         close(fd);
         return NO;
@@ -925,29 +1016,30 @@ static void RandomHex(char out[33]) {
     for (int i = 0; i < 16; i++) snprintf(out + i * 2, 3, "%02x", bytes[i]);
 }
 
+static void PathUpdated(NSString *signature, BOOL satisfied) {
+    static NSString *lastSignature;
+    BOOL changed = lastSignature && ![signature isEqualToString:lastSignature];
+    BOOL exhausted = gRetryStart && gStartRetries > MaxStartRetries;
+    if (satisfied && (changed || exhausted)) SGWGRequestRebind(@"path");
+    lastSignature = signature;
+}
+
 static void ObserveLifecycle(void) {
     // UIKit notification names as strings: this file is Foundation-only so the
     // same core also runs in the macOS test harness.
     // Rebind only after real backgrounding (iOS may have defuncted the sockets),
     // not after Control Center or a notification banner, to avoid needless
     // interruptions of a playing stream.
-    static CFAbsoluteTime backgroundSince;
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-    [center addObserverForName:@"UIApplicationDidEnterBackgroundNotification" object:nil queue:nil usingBlock:^(NSNotification *note) {
-        backgroundSince = CFAbsoluteTimeGetCurrent();
-    }];
     [center addObserverForName:@"UIApplicationWillEnterForegroundNotification" object:nil queue:nil usingBlock:^(NSNotification *note) {
-        if (backgroundSince > 0 && CFAbsoluteTimeGetCurrent() - backgroundSince > 15) SGWGRequestRebind(@"foreground");
-        backgroundSince = 0;
+        SGWGRequestRebind(@"foreground");
     }];
-    for (NSString *name in @[@"UIApplicationDidBecomeActiveNotification", @"UIApplicationProtectedDataDidBecomeAvailable"]) {
-        [center addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *note) {
-            // Starts the engine if the Keychain was locked at launch; no rebind.
-            if (SGWGCurrentState() == SGWGStateWaitingProfile) SGWGRequestRebind(name);
-        }];
-    }
+    [center addObserverForName:@"UIApplicationProtectedDataDidBecomeAvailable" object:nil queue:nil usingBlock:^(NSNotification *note) {
+        dispatch_async(gQueue, ^{
+            if (SGWGCurrentState() == SGWGStateWaitingProfile) StartEngine();
+        });
+    }];
     static nw_path_monitor_t monitor;
-    static NSString *lastSignature;
     monitor = nw_path_monitor_create();
     nw_path_monitor_set_queue(monitor, gQueue);
     nw_path_monitor_set_update_handler(monitor, ^(nw_path_t path) {
@@ -955,9 +1047,7 @@ static void ObserveLifecycle(void) {
             nw_path_uses_interface_type(path, nw_interface_type_wifi), nw_path_uses_interface_type(path, nw_interface_type_cellular),
             nw_path_uses_interface_type(path, nw_interface_type_wired)];
         // Wi-Fi <-> cellular: reopen the WireGuard UDP socket on the new path.
-        if (lastSignature && ![signature isEqualToString:lastSignature] && nw_path_get_status(path) == nw_path_status_satisfied)
-            SGWGRequestRebind(@"path");
-        lastSignature = signature;
+        PathUpdated(signature, nw_path_get_status(path) == nw_path_status_satisfied);
     });
     nw_path_monitor_start(monitor);
 }
@@ -999,21 +1089,27 @@ static void StartExternalProxy(void) {
 }
 
 void SGWGRefreshReadiness(void) {
+    BOOL tunnel = [gKind isEqualToString:SGWGKindWireGuard];
     os_unfair_lock_lock(&gReadinessLock);
     uint64_t generation = gReadinessGeneration;
-    BOOL available = gEngineAvailable;
+    BOOL available = gEngineAvailable && (gHandedOff || !tunnel);
     os_unfair_lock_unlock(&gReadinessLock);
     // Patching can itself load an image. Validate outside the lock, then commit only that generation.
     BOOL native = SGWGInstallNativePatches();
     BOOL guards = gSessionGuards && native;
-    BOOL ready = guards && SGWGIsSupportedOS() && SGWGAdmissionReady() && available && !gBlockAll;
+    BOOL pending = NO;
+    BOOL admitted = SGWGCheckAdmission(&pending);
+    BOOL ready = guards && SGWGIsSupportedOS() && admitted && available && !gBlockAll;
     os_unfair_lock_lock(&gReadinessLock);
-    if (generation == gReadinessGeneration) {
+    BOOL current = generation == gReadinessGeneration;
+    if (current) {
         atomic_store(&gGuardsReady, guards);
         atomic_store(&gEngineReady, available);
         atomic_store_explicit(&gReady, ready, memory_order_release);
     }
     os_unfair_lock_unlock(&gReadinessLock);
+    if (current && !admitted && !pending && !gBlockAll && tunnel)
+        RefuseListener();
 }
 
 static void ImageChanged(const struct mach_header *header, intptr_t slide) {
@@ -1060,8 +1156,6 @@ __attribute__((constructor)) static void SGWGInit(void) {
                     if (tunnel) StartEngine();
                     else StartExternalProxy();
                 } else if (tunnel && !stillPending) RefuseListener();
-            } else if (SGWGCurrentState() == SGWGStateFailed && atomic_load(&gEngineRecoverable)) {
-                SGWGRequestRebind(@"engine unavailable");
             }
 #ifndef SGWG_TESTING
             if (!SGWGReady()) SGWGNotifyRecovery();
@@ -1075,18 +1169,18 @@ __attribute__((constructor)) static void SGWGInit(void) {
         // A saved opt-in may survive an app update. Do not start a tunnel or
         // touch Spotify's delegates on an uninspected version. The stable Apple
         // entry points still block their covered traffic, not the whole app.
+        if (tunnel && !gBlockAll) ObserveLifecycle();
         if (!admitted) {
             atomic_store(&gState, SGWGStateBlocked);
             return;
         }
-        SGWGInstallTransportPatches();
         if (![gKind isEqualToString:SGWGKindWireGuard]) {
+            SGWGInstallTransportPatches();
             StartExternalProxy();
             return;
         }
         atomic_store(&gState, gBlockAll ? SGWGStateBlocked : SGWGStateStarting);
-        ObserveLifecycle();
-        StartEngine();
+        dispatch_async(gQueue, ^{ StartEngine(); });
     }
 }
 

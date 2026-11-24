@@ -166,7 +166,7 @@ BOOL SGWGInstallNativePatches(void) {
     });
     if (!realNWCreate || !realConnect || !realGetaddrinfo) return NO;
 #ifdef SGWG_TESTING
-    return YES;
+    return !getenv("SGWG_TEST_DEFER_SLOTS");
 #else
     const char *symbols[] = {"nw_connection_create", "connect", "getaddrinfo", "sendto", "sendmsg"};
     void *replacements[] = {HookNWCreate, HookConnect, HookGetaddrinfo, HookSendto, HookSendmsg};

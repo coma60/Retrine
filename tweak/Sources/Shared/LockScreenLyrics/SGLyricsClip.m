@@ -171,9 +171,11 @@ CGImageRef SGLyricsClipDimmedArtwork(CGImageRef cover, CGSize size) {
     CGImageRelease(blurred);
     Lights lights = {0};
     addLights(&lights, CGBitmapContextGetData(context), (size_t)size.width, (size_t)size.height, CGBitmapContextGetBytesPerRow(context));
+    CGContextSetRGBFillColor(context, 0, 0, 0, MIN(.85, 1 - keepFor(&lights) / 256.0));
+    CGContextFillRect(context, (CGRect){CGPointZero, size});
+    CGImageRef dimmed = CGBitmapContextCreateImage(context);
     CGContextRelease(context);
-    style.darkness = 1 - keepFor(&lights) / 256.0;
-    return SGLyricsBackgroundCreate(cover, size, style);
+    return dimmed;
 }
 
 static BOOL isHangul(unichar c) {
@@ -774,12 +776,9 @@ static BOOL writeReady(AVAssetWriter *writer, AVAssetWriterInput *input, CMTime 
     return writer.status == AVAssetWriterStatusCompleted && (!current || current());
 }
 
-BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line,
+static BOOL writeLayoutPartial(NSURL *partial, CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line,
                                  NSString *translation, NSString *next, CGSize size, SGLyricsClipStyle style,
                                  SGLyricsClipLayout layout, BOOL (^current)(void)) {
-    // Written beside the file and moved over it once whole, so a clip cut off halfway is never found.
-    NSURL *partial = [file URLByAppendingPathExtension:@"partial"];
-    [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
     AVAssetWriter *writer = [AVAssetWriter assetWriterWithURL:partial fileType:AVFileTypeMPEG4 error:nil];
     if (!writer) return NO;
     // A scene has no backdrop to breathe: one frame, held as long as the loop.
@@ -811,7 +810,6 @@ BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef co
     CGImageRef words;
     if (!newPicture(backdrop, cover, previous, line, translation, next, size, layout, &words)) {
         [writer cancelWriting];
-        [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
         return NO;
     }
     CGImageRef background = newBackdrop(backdrop, cover, size, layout);
@@ -841,12 +839,20 @@ BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef co
     });
     CGImageRelease(words);
     CGImageRelease(background);
-    if (!ok) {
-        [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
-        return NO;
-    }
-    [NSFileManager.defaultManager removeItemAtURL:file error:nil];
-    return [NSFileManager.defaultManager moveItemAtURL:partial toURL:file error:nil];
+    return ok;
+}
+
+BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line,
+                                 NSString *translation, NSString *next, CGSize size, SGLyricsClipStyle style,
+                                 SGLyricsClipLayout layout, BOOL (^current)(void)) {
+    NSURL *partial = [file URLByAppendingPathExtension:@"partial"];
+    NSFileManager *files = NSFileManager.defaultManager;
+    [files removeItemAtURL:partial error:nil];
+    // A destination that appeared while encoding may already be leased to MediaPlayer.
+    if (writeLayoutPartial(partial, backdrop, cover, previous, line, translation, next, size, style, layout, current) &&
+        [files moveItemAtURL:partial toURL:file error:nil]) return YES;
+    [files removeItemAtURL:partial error:nil];
+    return NO;
 }
 
 // Over moving artwork. The video is read as BGRA, the dimming and the words are drawn into each frame where

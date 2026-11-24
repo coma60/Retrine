@@ -236,8 +236,9 @@ NSArray<NSDictionary *> *SGUpdateReleasesFrom(NSData *data) {
             @"prerelease": @(prerelease),
         }];
     }
-    [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-        return SGVersionIsNewer(a[@"version"], b[@"version"]) ? NSOrderedAscending : NSOrderedDescending;
+    [entries sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        if (SGVersionIsNewer(a[@"version"], b[@"version"])) return NSOrderedAscending;
+        return SGVersionIsNewer(b[@"version"], a[@"version"]) ? NSOrderedDescending : NSOrderedSame;
     }];
     return entries.count > kKept ? [entries subarrayWithRange:NSMakeRange(0, kKept)] : entries;
 }

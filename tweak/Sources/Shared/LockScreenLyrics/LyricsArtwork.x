@@ -91,6 +91,7 @@ static NSString *sg_track;     // the track the clips are for
 static NSArray<SGKaraokeLine *> *sg_lines;
 static NSString *sg_lyricsKey;
 static NSString *sg_readingKey;
+static NSString *sg_readingTag;
 static UIImage *sg_cover;      // the cover named by this track's metadata, never a system placeholder
 static NSURL *sg_coverURL;     // attempted once per track/source, including a failed load
 static NSString *sg_coverKey;  // content identity, including no-cover, in both disk and preview keys
@@ -412,8 +413,7 @@ static NSString *lyricsKey(NSArray<SGKaraokeLine *> *lines) {
     return SGDataSHA256(data);
 }
 
-static NSString *readingKey(NSString *track, NSArray<SGKaraokeLine *> *lines) {
-    NSString *tag = SGLyricsShownLineTag();
+static NSString *readingKey(NSString *tag, NSString *track, NSArray<SGKaraokeLine *> *lines) {
     if (!tag.length) return tag;
     NSMutableArray *rows = [NSMutableArray array];
     for (NSInteger index = 0; index < (NSInteger)lines.count; index++) {
@@ -500,6 +500,7 @@ static NSTimeInterval update(void) {
         }
         NSArray<SGKaraokeLine *> *lines = SGKaraokeLinesForTrack(trackID);
         if (sg_lines != lines) {
+            sg_readingTag = nil;
             NSString *key = lyricsKey(lines);
             sg_lines = lines;
             if (![key isEqual:sg_lyricsKey]) {
@@ -542,7 +543,7 @@ static NSTimeInterval update(void) {
                     return [trackID isEqualToString:SGKaraokePlayingTrack()] && SGFlag(SGKeyLockScreenTranslation, NO)
                         && lines == SGKaraokeLinesForTrack(trackID) && [language isEqual:SGLyricsGeminiLanguage()]
                         && SGLockArtworkShowsLyrics(SGLockScreenArtwork());
-                }, ^{ tick(); });
+                }, ^{ sg_readingTag = nil; tick(); });
             }
         }
         NSInteger ms = SGKaraokeMsToChange(lines, position, -1);
@@ -605,11 +606,14 @@ static NSTimeInterval update(void) {
         }
         NSString *backgroundID = [NSString stringWithFormat:@"%@-%gx%g", SGLyricsBackgroundIdentity(background), size.width, size.height];
         // The pronunciation's choice changes the words of every line drawn, the ones before and after included.
-        NSString *reading = readingKey(trackID, lines);
-        if (![reading isEqual:sg_readingKey]) {
-            sg_readingKey = reading;
-            invalidateRenders();
+        NSString *tag = SGLyricsShownLineTag();
+        if (![tag isEqual:sg_readingTag]) {
+            sg_readingTag = tag;
+            NSString *key = readingKey(tag, trackID, lines);
+            if (![key isEqual:sg_readingKey]) invalidateRenders();
+            sg_readingKey = key;
         }
+        NSString *reading = sg_readingKey;
         NSString *artworkID = [NSString stringWithFormat:@"%@-%ld%@%@%@-%@-%@-%@-%@", trackID, (long)index, resting ? @"r" : @"",
                                translationTag(translationAt(lines, index, resting)), reading, sg_lyricsKey, sg_coverKey, backgroundID, look];
         if ([artworkID isEqualToString:sg_shownID]) return wait;
@@ -728,7 +732,7 @@ static void tick(void) {
                     return [track isEqual:SGKaraokePlayingTrack()] && [language isEqual:SGLyricsGeminiLanguage()]
                         && lines == SGKaraokeLinesForTrack(track) && SGLockArtworkShowsLyrics(SGLockScreenArtwork())
                         && SGFlag(SGKeyLockScreenTranslation, NO);
-                }, ^{ tick(); });
+                }, ^{ sg_readingTag = nil; tick(); });
             });
         }];
         }
@@ -781,13 +785,24 @@ static void tick(void) {
                 [observer playerStateDidChange:SGPlayerState()];
             });
         }];
+        // The lyrics view applies saved AI readings in its own notification handler. Hash only
+        // after all observers have returned, whichever one received the notification first.
+        [NSNotificationCenter.defaultCenter addObserverForName:SGLyricsAIResultDidChangeNotification object:nil queue:nil
+                                                    usingBlock:^(NSNotification *note) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (note.object && ![note.object isEqual:SGKaraokePlayingTrack()]) return;
+                sg_readingTag = nil;
+                if (SGLockArtworkShowsLyrics(SGLockScreenArtwork())) tick();
+            });
+        }];
         // Lines kept for the track, or better timed ones in their place, are posted on main.
         for (NSNotificationName name in @[SGKaraokeLinesKeptNotification, SGLyricsReadingsDidChangeNotification,
                                           SGLyricsLanguageDidChangeNotification, SGLyricsOffsetsDidChangeNotification]) {
         [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil
                                                     usingBlock:^(NSNotification *note) {
-            if (SGLockArtworkShowsLyrics(SGLockScreenArtwork())
-                && (!note.object || [note.object isEqual:SGKaraokePlayingTrack()])) tick();
+            if (note.object && ![note.object isEqual:SGKaraokePlayingTrack()]) return;
+            if (![note.name isEqual:SGLyricsOffsetsDidChangeNotification]) sg_readingTag = nil;
+            if (SGLockArtworkShowsLyrics(SGLockScreenArtwork())) tick();
         }];
         }
         // A hot phone puts the lines over the cover, and they go back over the motion once it cools.

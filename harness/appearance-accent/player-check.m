@@ -157,6 +157,8 @@ static void runChecks(void) {
     if (!automatic) expect(SGRPlayerAccentLike(color(0xFFFF00)),@"Picked preserves the footer's existing lit-control classification");
     UIStackView *stack=[[UIStackView alloc] initWithFrame:CGRectMake(0,0,300,200)]; [front.view addSubview:stack];
     UIImageView *owned=[[UIImageView alloc] initWithImage:knownIcon(SGRAccentColor())];
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    [stack addSubview:button];
     UIImageView *derived=[[UIImageView alloc] initWithImage:knownIcon([SGRAccentColor() colorWithAlphaComponent:.5])];
     UIImageView *unowned=[[UIImageView alloc] initWithImage:rectangle(color(first))];
     UIImageView *templateView=[[UIImageView alloc] initWithImage:[knownIcon(SGRAccentColor()) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
@@ -193,6 +195,10 @@ static void runChecks(void) {
         SGRPlayerPaintCover(stack);
         SGRPlayerPaintCover(stack); // unchanged repaint must be idempotent, including delegates
         expectRGB(imageRGB(owned.image),follow?0xFF26FF:first,@"complete tint operation follows the cover");
+        [button setImage:knownIcon(SGRAccentColor()) forState:UIControlStateSelected];
+        button.selected = YES;
+        [button layoutSubviews];
+        expectRGB(imageRGB(button.imageView.image),follow?0xFF26FF:first,@"new selected-state image follows the cover on layout");
         expect((pixel(derived.image,4)&255)==128,@"derived alpha icon preserves one half opacity");
         expectRGB(imageRGB(unowned.image),first,@"unknown image is left alone");
         checkAnimations(shape,first,origin);

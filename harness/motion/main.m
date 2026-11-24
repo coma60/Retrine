@@ -133,9 +133,14 @@ int main(int argc, const char **argv) {
         printf("a 9:16 Canvas cut to 3:4\n");
         check(writeBands(tall, CGSizeMake(720, 1280), 60, CGAffineTransformIdentity, NO), @"the stand-in Canvas written");
         CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+        [NSFileManager.defaultManager removeItemAtURL:cut error:nil]; // This fixture owns its destination.
         BOOL shaped = SGMotionClipShape(tall, 0.75, cut);
         printf("  (cut in %.0f ms)\n", (CFAbsoluteTimeGetCurrent() - start) * 1000);
         check(shaped, @"cut and written");
+        NSData *original = [NSData dataWithContentsOfURL:cut];
+        check(!SGMotionClipShape(tall, 1, cut) && [[NSData dataWithContentsOfURL:cut] isEqual:original] &&
+              ![NSFileManager.defaultManager fileExistsAtPath:[cut URLByAppendingPathExtension:@"partial"].path],
+              @"a failed move keeps the existing clip and retires its local partial");
         AVAssetTrack *track = videoOf(cut);
         check(CGSizeEqualToSize(shownSize(track), CGSizeMake(720, 960)), [NSString stringWithFormat:@"720 x 960 (%@)", NSStringFromSize(shownSize(track))]);
         check(framesIn(cut) == 60 && framesIn(tall) == 60, [NSString stringWithFormat:@"every frame kept (%d of %d)", framesIn(cut), framesIn(tall)]);
@@ -154,6 +159,7 @@ int main(int argc, const char **argv) {
         CGAffineTransform quarter = CGAffineTransformMake(0, 1, -1, 0, 720, 0);
         check(writeBands(side, CGSizeMake(1280, 720), 30, quarter, YES), @"written");
         check(CGSizeEqualToSize(shownSize(videoOf(side)), CGSizeMake(720, 1280)), @"shown 720 x 1280");
+        [NSFileManager.defaultManager removeItemAtURL:sideCut error:nil];
         check(SGMotionClipShape(side, 0.75, sideCut), @"cut and written");
         AVAssetTrack *sideTrack = videoOf(sideCut);
         check(CGSizeEqualToSize(shownSize(sideTrack), CGSizeMake(720, 960)), [NSString stringWithFormat:@"shown 720 x 960 (%@, stored %@)",

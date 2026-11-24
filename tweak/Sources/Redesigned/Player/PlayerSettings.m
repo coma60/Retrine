@@ -491,6 +491,8 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
 // The clip, the hills, black, a photo or the full-screen cover cover the field, which then holds still, as in the
 // player; and so it does for a paused song, and for the demo where motion is not allowed.
 - (void)holdField {
+    // The visualizer still shows the field through its hills; a backdrop or full-screen still does not.
+    _field.covered = !_active || _backdrop != nil || !_still.hidden || _motion != nil;
     _field.motionHeld = !_active || _paused || _motion != nil || _visualiser != nil || _backdrop != nil || !_still.hidden || (_demo && !noClipMotionAllowed());
 }
 

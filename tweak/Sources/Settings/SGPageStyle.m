@@ -45,6 +45,7 @@ void SGPositionPinnedPreview(UITableView *table, UIView *header, CGFloat height)
 
 void SGPresentInformation(UIViewController *presenter, NSString *title, NSString *message) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    SGPresentDark(alert);
     [alert addAction:[UIAlertAction actionWithTitle:SGL(@"common.ok", @"OK") style:UIAlertActionStyleCancel handler:nil]];
     [presenter presentViewController:alert animated:YES completion:nil];
 }
@@ -422,6 +423,10 @@ void SGPresentPopover(UIViewController *panel, UIView *from) {
     __block void (^present)(void);
     present = ^{
         UIViewController *top = SGTopController();
+        if (!from.window || from.window != top.viewIfLoaded.window) {
+            present = nil;
+            return;
+        }
         if ((top.isBeingDismissed || top.isBeingPresented || top.transitionCoordinator) && ++tries < 20) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), present);
             return;

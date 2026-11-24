@@ -1,9 +1,25 @@
 // Production Objective-C event/admission owner; Go and Spotify import admission are boundaries.
+#import <unistd.h>
+#import <errno.h>
+#import <stdlib.h>
+#import <Network/Network.h>
+static int fixtureDup(int fd) {
+    static int failed;
+    if (getenv("SGWG_TEST_FD_LIMIT") && !failed++) { errno = EMFILE; return -1; }
+    return dup(fd);
+}
+#define dup fixtureDup
+// Path delivery is driven by the fixture, never by the Mac's actual Wi-Fi.
+#define nw_path_monitor_start(monitor) ((void)(monitor))
 #import "Shared/WireGuard/SGWGCore.m"
+#undef nw_path_monitor_start
+#undef dup
 
 static unsigned notices, rebinds;
 static BOOL admitted = YES, patches = YES;
 static atomic_bool sharedImageLoaded;
+static atomic_uint starts, stops;
+static dispatch_semaphore_t handoff, releaseHandoff;
 static int sessionPort;
 static CreateSocksFn realCreateSocks;
 static void *recordSocksEndpoint(void *endpoint) {
@@ -16,7 +32,7 @@ static dispatch_semaphore_t admissionEntered, admissionContinue;
 BOOL SGWGInstallNativePatches(void) { return patches; }
 BOOL SGWGCheckAdmission(BOOL *pendingImages) {
     BOOL ready = SGWGAdmissionReady();
-    if (pendingImages) *pendingImages = !ready && getenv("SGWG_TEST_DELAY_ADMISSION") != NULL;
+    if (pendingImages) *pendingImages = !ready && !sharedImageLoaded && getenv("SGWG_TEST_DELAY_ADMISSION") != NULL;
     return ready;
 }
 BOOL SGWGAdmissionReady(void) {
@@ -36,24 +52,56 @@ void SGWGNotifyRecovery(void) { notices++; CHECK(!SGWGReady()); }
 int SGWGRebind(void) { rebinds++; return 0; }
 static void unexpected(void) { fputs("FAIL unexpected profile/Go status access\n", stderr); exit(1); }
 char *SGWGInspect(char *text) { unexpected(); return NULL; }
-int SGWGStart(char *text, char *user, char *pass, int fd, int port) {
+enum SGWGStartResult SGWGStart(char *text, char *user, char *pass, int fd) {
     if (!getenv("SGWG_TEST_DELAY_ADMISSION")) unexpected();
     struct sockaddr_in address;
     socklen_t size = sizeof(address);
     CHECK(getsockname(fd, (struct sockaddr *)&address, &size) == 0);
-    CHECK(ntohs(address.sin_port) == port && port == sessionPort);
+    CHECK(ntohs(address.sin_port) == sessionPort && fd != gListenerFD);
+    unsigned attempt = ++starts;
+    CHECK(!ProxyAdmitted());
+    if ((attempt == 1 && !getenv("SGWG_TEST_FD_LIMIT")) || getenv("SGWG_TEST_INVALID")) {
+        close(fd);
+        return getenv("SGWG_TEST_INVALID") ? SGWGStartRefused : SGWGStartNetworkUnavailable;
+    }
+    CHECK(listen(fd, 1) == 0);
     close(fd);
     EngineChanged(SGWGEngineAvailable);
-    return port;
+    dispatch_semaphore_signal(handoff);
+    dispatch_semaphore_wait(releaseHandoff, DISPATCH_TIME_FOREVER);
+    return SGWGStarted;
 }
+void SGWGStop(void) { ++stops; }
 char *SGWGStatus(void) { unexpected(); return NULL; }
 char *SGWGLookup(char *host) { unexpected(); return NULL; }
 char *SGWGResolve(char *host) { unexpected(); return NULL; }
 char *SGWGRedact(char *text) { unexpected(); return NULL; }
 void SGWGFree(char *text) { free(text); }
-void SGWGSetStateCallback(uintptr_t callback) { if (!getenv("SGWG_TEST_DELAY_ADMISSION")) unexpected(); }
+void SGWGSetStateCallback(uintptr_t callback, uintptr_t gate) { if (!getenv("SGWG_TEST_DELAY_ADMISSION") || !gate) unexpected(); }
 
 static void drain(void) { dispatch_sync(gQueue, ^{}); }
+static void checkPublishedSink(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {.sin_len = sizeof(addr), .sin_family = AF_INET,
+        .sin_port = htons(sessionPort), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    CHECK(fd >= 0 && bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 && errno == EADDRINUSE);
+    struct timeval timeout = {.tv_sec = 2};
+    CHECK(!setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
+    CHECK(!connect(fd, (struct sockaddr *)&addr, sizeof(addr)));
+    char b;
+    CHECK(read(fd, &b, 1) == 0);
+    close(fd);
+}
+static void waitFor(BOOL (^predicate)(void)) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:3];
+    while (deadline.timeIntervalSinceNow > 0) {
+        __block BOOL ok;
+        dispatch_sync(gQueue, ^{ ok = predicate(); });
+        if (ok) return;
+        usleep(1000);
+    }
+    CHECK(NO);
+}
 
 static void checkLyricsRouting(void) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -182,6 +230,7 @@ static void checkLyricsSessions(void) {
 static void checkStaleRefresh(void) {
     for (NSNumber *event in @[@1, @2, @0]) {
         patches = YES;
+        gHandedOff = true;
         EngineChanged(1);
         drain();
         CHECK(SGWGReady());
@@ -210,6 +259,7 @@ static void checkStaleRefresh(void) {
         CHECK(!SGWGReady());
         patches = YES;
         ImageChanged(NULL, 0);
+        gHandedOff = true;
         EngineChanged(1);
         drain();
         CHECK(SGWGReady());
@@ -227,11 +277,51 @@ int main(int argc, char **argv) {
             NSURLSession *early = NSURLSession.sharedSession;
             CHECK([[early.configuration valueForKey:@"proxyConfigurations"] count] == 1);
             CHECK(sessionPort > 1);
+            handoff = dispatch_semaphore_create(0);
+            releaseHandoff = dispatch_semaphore_create(0);
             sharedImageLoaded = true;
-            StartEngine();
+            dispatch_async(gQueue, ^{
+                PathUpdated(@"wifi", YES);
+                // This attempt parks on failure: no backoff timer can satisfy
+                // either the foreground-only or same-signature path check.
+                gStartRetries = MaxStartRetries;
+                StartEngine();
+            });
+            waitFor(^BOOL{ return !gStarting; });
+            if (getenv("SGWG_TEST_INVALID")) {
+                SGWGRequestRebind(@"fixture path");
+                drain();
+                CHECK(starts == 1 && gBlockAll && !SGWGReady());
+                checkPublishedSink();
+                puts("PASS invalid profile refuses existing configurations and never retries");
+                return 0;
+            }
+            CHECK(gRetryStart && !SGWGReady() && gListenerFD >= 0);
+            if (getenv("SGWG_TEST_SAME_PATH")) {
+                dispatch_async(gQueue, ^{ PathUpdated(@"wifi", YES); });
+            } else {
+                [NSNotificationCenter.defaultCenter postNotificationName:@"UIApplicationWillEnterForegroundNotification" object:nil];
+            }
+            CHECK(!dispatch_semaphore_wait(handoff, dispatch_time(DISPATCH_TIME_NOW, 2*NSEC_PER_SEC)));
             drain();
-            CHECK(SGWGReady() && NSURLSession.sharedSession == early);
-            puts("PASS early shared session targets the same reserved port handed to the admitted engine");
+            CHECK(!SGWGReady());
+            if (getenv("SGWG_TEST_REFUSE_HANDOFF")) {
+                admitted = NO;
+                ImageChanged(NULL, 0);
+                drain();
+                CHECK(gBlockAll);
+                checkPublishedSink();
+            }
+            dispatch_semaphore_signal(releaseHandoff);
+            waitFor(^BOOL{ return !gStarting && (!gBlockAll || stops != 0); });
+            CHECK(starts == (getenv("SGWG_TEST_FD_LIMIT") ? 1 : 2) && NSURLSession.sharedSession == early);
+            CHECK(SGWGReady() == admitted);
+            if (admitted) {
+                dispatch_sync(gQueue, ^{ RefuseListener(); });
+                waitFor(^BOOL{ return stops != 0; });
+            }
+            checkPublishedSink();
+            puts("PASS offline retry and delayed handoff respect current admission");
             return 0;
         }
         if (argc == 2 && !strcmp(argv[1], "--external-proxy")) {
@@ -241,8 +331,13 @@ int main(int argc, char **argv) {
             return 0;
         }
         gActive = YES;
+        CHECK(ReserveListener());
+        RefuseListener();
+        CHECK(gListenerFD < 0);
+        gBlockAll = NO;
         gKind = SGWGKindWireGuard;
         gSessionGuards = YES;
+        gHandedOff = true;
         EngineChanged(1);
         drain();
         CHECK(SGWGReady() && SGWGCurrentState() == SGWGStateRunning);

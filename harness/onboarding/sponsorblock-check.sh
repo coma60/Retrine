@@ -16,6 +16,9 @@ xcrun simctl bootstatus "$udid" -b >/dev/null
 app="$work/build/OnboardingHarness.app"
 xcrun simctl spawn "$udid" "$app/OnboardingHarness" environment-check
 xcrun simctl install "$udid" "$app"
+xcrun simctl launch --console "$udid" com.retrine.onboardingharness kept-cleanup -spotifyglass.language 1 >"$work/result" 2>&1 || { cat "$work/result"; exit 1; }
+cat "$work/result"
+grep -q 'PASS kept cleanup size, delete action and dark environment alerts' "$work/result"
 for language in 1 2; do
     xcrun simctl launch --console "$udid" com.retrine.onboardingharness old sponsorblock-check \
         -spotifyglass.language "$language" >"$work/result" 2>&1 || { cat "$work/result"; exit 1; }

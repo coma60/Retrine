@@ -4,3 +4,6 @@
 bool harnessRegister(CFURLRef url, CTFontManagerScope scope, CFErrorRef *error);
 #define CTFontManagerRegisterFontsForURL harnessRegister
 #import "Shared/Fonts/FontImport.m"
+
+void harnessRemoveCustom(dispatch_block_t done) { removeImported(importIdentity(), done); }
+void harnessImport(NSURL *url, dispatch_block_t done) { import(@[url], done); }

@@ -65,6 +65,8 @@
 #import "../harness-fail.h"
 #import "../sponsorblock/markers-check.h"
 #import <objc/runtime.h>
+#import <Metal/Metal.h>
+#import "Redesigned/Kit/SGRFluidGPU.h"
 #import <objc/message.h>
 #import <stdlib.h>
 #import "Shared/Lyrics/Lyrics.h"
@@ -5694,6 +5696,34 @@ static NSUInteger metalLayersIn(CALayer *layer) {
     return count;
 }
 
+static __weak CAMetalLayer *captureLayer;
+static int presentedPixel[3];
+
+// Sample the first drawable queued for presentation on its own command buffer. Neither a later
+// Smooth frame nor the Light copies can satisfy this check.
+static void captureNextFrame(CAMetalLayer *layer) {
+    memset(presentedPixel, 0, sizeof(presentedPixel));
+    layer.framebufferOnly = NO;
+    captureLayer = layer;
+}
+
+void SGRProbeFluidFrame(CAMetalLayer *layer, id<CAMetalDrawable> drawable, id<MTLCommandBuffer> command) {
+    if (layer != captureLayer) return;
+    captureLayer = nil;
+    id<MTLBuffer> pixel = [layer.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
+    id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+    [blit copyFromTexture:drawable.texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+               sourceSize:MTLSizeMake(1,1,1) toBuffer:pixel destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
+    [blit endEncoding];
+    [command addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        if (finished.status != MTLCommandBufferStatusCompleted) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            const uint8_t *bgra = pixel.contents;
+            for (int i = 0; i < 3; i++) presentedPixel[i] = bgra[2-i];
+        });
+    }];
+}
+
 static CALayer *fluidLayerIn(CALayer *layer) {
     if ([NSStringFromClass(layer.class) isEqualToString:@"SGRFluidLayer"]) return layer;
     for (CALayer *sublayer in layer.sublayers) {
@@ -5800,6 +5830,65 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
                   detail:[NSString stringWithFormat:@"settled at +%.2f s; %@", CACurrentMediaTime() - switchedAt, [seen componentsJoinedByString:@"; "]]];
         });
     }
+    SGRArtworkField *probe = [[SGRArtworkField alloc] initWithFrame:CGRectMake(0, 0, 80, 80)];
+    probe.motionHeld = YES;
+    __block SGRFluidGPULayer *gpu;
+    __block UIView *card;
+    step(0, ^{
+        SGRSetFluidRenderer(SGRFluidRendererSmooth);
+        probe.fluid = YES;
+        [probe layoutIfNeeded];
+        gpu = (SGRFluidGPULayer *)fluidLayerIn(probe.layer).sublayers.firstObject;
+        [probe setArtwork:solid(UIColor.redColor) identity:@"detached" animated:YES];
+    });
+    step(1, ^{
+        [self expect:[gpu valueForKey:@"toPicture"] != nil && ![gpu valueForKey:@"to"] && ![gpu valueForKey:@"link"]
+                step:@"detached artwork prepared without a Metal texture or ticker" detail:state()];
+        captureNextFrame(gpu);
+        [self.window addSubview:probe];
+    });
+    step(1, ^{
+        [self expect:presentedPixel[0] > presentedPixel[2] step:@"first Smooth frame on attachment is red" detail:state()];
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+        [probe setArtwork:solid(UIColor.blueColor) identity:@"inactive" animated:YES];
+    });
+    step(1, ^{
+        [self expect:![gpu valueForKey:@"to"] && ![gpu valueForKey:@"link"]
+                step:@"inactive track change submits no texture or ticker" detail:state()];
+        captureNextFrame(gpu);
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    });
+    step(1, ^{
+        [self expect:presentedPixel[2] > presentedPixel[0] && ![gpu valueForKey:@"link"]
+                step:@"reactivation draws the current blue still without starting motion" detail:state()];
+        // Interrupt the blue-to-green run-in before its first tick. No track change follows.
+        [gpu setPicture:solid(UIColor.greenColor).CGImage animated:YES];
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+        captureNextFrame(gpu);
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    });
+    step(1, ^{
+        [self expect:presentedPixel[1] > 240 && presentedPixel[2] < 10
+                step:@"first Smooth frame after interrupted fade is current green"
+              detail:[NSString stringWithFormat:@"first drawable RGB %d,%d,%d", presentedPixel[0], presentedPixel[1], presentedPixel[2]]];
+        [probe removeFromSuperview];
+        SGSetInt(SGRKeyPlayerArtworkBackground, SGRPlayerBackgroundFluid);
+        SGRSetPlayerBackground(SGRPlayerBackgroundPhoto);
+        card = [[NSClassFromString(@"SGRPlayerPreview") alloc] initWithFrame:CGRectMake(0, 0, 300, 300)];
+        [self.window addSubview:card];
+        [card setValue:@YES forKey:@"active"];
+        SGRArtworkField *field = [card valueForKey:@"field"];
+        gpu = (SGRFluidGPULayer *)fluidLayerIn(field.layer).sublayers.firstObject;
+        captureNextFrame(gpu);
+        [field setArtwork:solid(UIColor.redColor) identity:@"covered" animated:YES];
+    });
+    step(1, ^{
+        [self expect:gpu && captureLayer == gpu && [card valueForKey:@"backdrop"]
+                step:@"photo-covered settings preview submits no Smooth frame" detail:state()];
+        captureLayer = nil;
+        [card setValue:@NO forKey:@"active"];
+        [card removeFromSuperview];
+    });
     step(0.5, ^{
         NSLog(@"[harness] renderer checks: %lu of %lu right -- %@", (unsigned long)(self->_checks - self->_failures), (unsigned long)self->_checks,
               self->_failures ? @"FAIL" : @"PASS");

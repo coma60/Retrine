@@ -219,8 +219,8 @@ public final class SGLiveActivityBridge: NSObject {
         // never truncate one into a different action; drop queue entries if text alone is insufficient.
         do {
             let encoder = JSONEncoder()
-            if try encoder.encode(state).count > maxStateBytes { state.cover = nil }
             while try encoder.encode(state).count > maxStateBytes {
+                if state.cover != nil { state.cover = nil; continue }
                 let texts = [state.line, state.nextLine, state.translation ?? "", state.title, state.artist]
                     + state.tracks.flatMap { [$0.title, $0.artist] }
                 guard let index = texts.indices.max(by: { texts[$0].utf8.count < texts[$1].utf8.count }),

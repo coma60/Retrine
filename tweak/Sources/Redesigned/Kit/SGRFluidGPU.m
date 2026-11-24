@@ -175,11 +175,6 @@ static id<MTLTexture> textureOf(id picture) {
     return texture;
 }
 
-// A suspended app may not use the GPU; a locked phone with Spotify in front is inactive and may.
-static BOOL mayDraw(void) {
-    return UIApplication.sharedApplication.applicationState != UIApplicationStateBackground && !SGRPlayerIsTransitioning();
-}
-
 @interface SGRFluidGPULayer ()
 - (void)tick:(CADisplayLink *)link;
 @end
@@ -204,6 +199,7 @@ static BOOL mayDraw(void) {
     double _time;
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
+    BOOL _resigning;
     int _misses;   // ticks in a row whose frame could not be drawn, once nothing else keeps the link
     int _firstFailures;   // first frames the GPU failed; after three, Light stays and none is tried again
 }
@@ -231,10 +227,10 @@ static BOOL mayDraw(void) {
         layer->_ready = YES;
         [layer update];
     });
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(update)
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(becameActive)
         name:UIApplicationDidBecomeActiveNotification object:nil];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(update)
-        name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(resigning)
+        name:UIApplicationWillResignActiveNotification object:nil];
     // A cover running in keeps drawing even while moving is NO. Hold that work too while the player
     // opens or closes, and resume its clock only after the transition has finished.
     SGRObservePlayerTransition(self, ^(id owner) { [owner update]; });
@@ -248,9 +244,24 @@ static BOOL mayDraw(void) {
 
 #pragma mark - what it shows
 
+- (void)resigning {
+    _resigning = YES;
+    [self update];
+}
+
+- (void)becameActive {
+    _resigning = NO;
+    [self update];
+}
+
+- (BOOL)mayDraw {
+    return !_held && !_resigning && UIApplication.sharedApplication.applicationState == UIApplicationStateActive
+        && !SGRPlayerIsTransitioning();
+}
+
 - (void)setPicture:(CGImageRef)picture animated:(BOOL)animated {
     if (!picture) return;
-    if (animated && _toPicture && _drewOnce && !_held && mayDraw()) {
+    if (animated && _toPicture && _drewOnce && [self mayDraw]) {
         // One still running in is cut short: the new one runs in over the one it was bringing.
         _fromPicture = _toPicture;
         _from = _to;
@@ -331,7 +342,17 @@ static BOOL mayDraw(void) {
 
 // Ticks while it flows or a cover runs in; otherwise a change waiting to be seen is drawn once.
 - (void)update {
-    BOOL wants = _ready && !_held && (_moving || _progress < 1) && mayDraw() && _firstFailures < 3;
+    if ((_held || _resigning) && _progress < 1) {
+        // Nobody can see the rest of this fade. Return on the destination, even if the track hasn't changed.
+        _fromPicture = nil;
+        _from = nil;
+        _progress = 1;
+        _dirty = YES;
+    }
+    BOOL eligible = _ready && _toPicture && [self mayDraw] && _firstFailures < 3;
+    BOOL wants = eligible && (_moving || _progress < 1);
+    if (eligible && !wants && _dirty && self.bounds.size.width >= 1 && self.bounds.size.height >= 1)
+        wants = ![self draw] && _misses < 30;
     if (wants && !_link) {
         SGRFluidTicker *ticker = [SGRFluidTicker new];
         ticker.layer = self;
@@ -343,11 +364,10 @@ static BOOL mayDraw(void) {
         [_link invalidate];
         _link = nil;
     }
-    if (_dirty && !_link) [self draw];
 }
 
 - (void)tick:(CADisplayLink *)link {
-    if (!mayDraw()) {
+    if (![self mayDraw]) {
         [self update];
         return;
     }
@@ -370,19 +390,18 @@ static BOOL mayDraw(void) {
     if (_moving || _progress < 1) return;
     // The last frame of a running-in is tried again for a moment if no drawable was free, rather than left half mixed.
     if (!drew && ++_misses < 30) return;
-    _misses = 0;
     [self update];
+    _misses = 0;
 }
 
 - (BOOL)draw {
-    if (!_ready || _held || !_toPicture || !mayDraw() || _firstFailures >= 3) return NO;
     CGRect bounds = self.bounds;
     if (bounds.size.width < 1 || bounds.size.height < 1) return NO;
+    id<CAMetalDrawable> drawable = [self nextDrawable];
+    if (!drawable) return NO;
     if (!_to) _to = textureOf(_toPicture);
     if (_fromPicture && !_from) _from = textureOf(_fromPicture);
     if (!_to) return NO;
-    id<CAMetalDrawable> drawable = [self nextDrawable];
-    if (!drawable) return NO;
 
     CGRect visible = CGRectIsEmpty(_visibleRect) ? bounds : _visibleRect;
     CGFloat longer = MAX(1, MAX(visible.size.width, visible.size.height));
@@ -426,6 +445,10 @@ static BOOL mayDraw(void) {
         }];
     }
     [buffer presentDrawable:drawable];
+#ifdef SGR_FLUID_FRAME_PROBE
+    extern void SGRProbeFluidFrame(CAMetalLayer *, id<CAMetalDrawable>, id<MTLCommandBuffer>);
+    SGRProbeFluidFrame(self, drawable, buffer);
+#endif
     [buffer commit];
     _dirty = NO;
     return YES;

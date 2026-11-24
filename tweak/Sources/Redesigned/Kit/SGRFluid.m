@@ -136,9 +136,11 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         imageByApplyingFilter:@"CIGaussianBlur" withInputParameters:@{kCIInputRadiusKey: @(radius)}];
     static CIContext *context;
     static dispatch_once_t once;
+    // Covers are prepared even offscreen; leave GPU submission to the visible renderer.
     dispatch_once(&once, ^{
         CGColorSpaceRef encoded = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        context = [CIContext contextWithOptions:@{kCIContextWorkingColorSpace: (__bridge id)encoded}];
+        context = [CIContext contextWithOptions:@{kCIContextWorkingColorSpace: (__bridge id)encoded,
+                                                  kCIContextUseSoftwareRenderer: @YES}];
         CGColorSpaceRelease(encoded);
     });
     CGImageRef cg = [context createCGImage:[output imageByCroppingToRect:extent] fromRect:extent];
@@ -274,7 +276,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
         [self setNeedsLayout];
         if (_blur) [_gpu setPicture:_blur.CGImage animated:NO];
     } else if (!smooth && _gpu) {
-        _gpu.moving = NO;
+        _gpu.held = YES;
         [_gpu removeFromSuperlayer];
         _gpu = nil;
         _gpuShown = NO;

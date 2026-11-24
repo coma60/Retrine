@@ -49,6 +49,7 @@ static void *kPossibleContext = &kPossibleContext;
 @property (nonatomic) CGSize raster;
 @property (nonatomic, strong) NSArray<SGKaraokeLine *> *sourceLines, *preparedLines, *pendingLines;
 @property (nonatomic) BOOL linesDirty;
+@property (nonatomic, copy) NSArray *linePreferences;
 @property (nonatomic, copy) void (^seekCompletion)(void);
 @property (nonatomic, copy) NSString *seekTrack;
 @property (nonatomic) NSInteger seekTarget;
@@ -296,10 +297,16 @@ void SGLyricsPiPToggle(UIView *from) {
     });
 }
 
+- (NSArray *)currentLinePreferences {
+    return @[SGLyricsGeminiLanguage(), @([NSUserDefaults.standardUserDefaults integerForKey:SGKeyLyricsPronunciationNotation]),
+             @(SGFlag(@"spotifyglass.redesign.lyricsTranslation", NO)), @(SGFlag(@"spotifyglass.redesign.lyricsPronunciation", NO))];
+}
+
 - (void)backgroundChanged:(NSNotification *)note {
     // Settings and late artwork must update a paused frame without a polling render timer.
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([note.name isEqual:NSUserDefaultsDidChangeNotification]) {
+        if ([note.name isEqual:NSUserDefaultsDidChangeNotification] &&
+            ![self.linePreferences isEqual:[self currentLinePreferences]]) {
             self.linesDirty = YES;
             self.pendingLines = nil;
         }
@@ -342,7 +349,8 @@ void SGLyricsPiPToggle(UIView *from) {
     NSString *track = SGKaraokePlayingTrack();
     SPTPlayerState *state = [(id<SPTPlayer>)SGKaraokePlayer() state];
     NSString *artworkTrack = SGURIString(state.track.URI);
-    double position = MAX(0, SGKaraokePositionMs()) / 1000.0;
+    NSInteger positionMs = SGKaraokePositionMs();
+    double position = MAX(0, positionMs) / 1000.0;
     BOOL changedTrack = ![_track isEqualToString:track] && (_track || track);
     changedTrack |= ![_artworkTrack isEqualToString:artworkTrack] && (_artworkTrack || artworkTrack);
     if (_seekCompletion && ![_seekTrack isEqual:artworkTrack]) [self completeSeek];
@@ -381,6 +389,7 @@ void SGLyricsPiPToggle(UIView *from) {
     if (track.length && !SGKaraokeLinesForTrack(track)) SGKaraokeRequestLyrics(track);
     NSArray<SGKaraokeLine *> *lines = track.length ? SGKaraokeLinesForTrack(track) : nil;
     if (changedTrack || _linesDirty || _sourceLines != lines) {
+        _linePreferences = [self currentLinePreferences];
         _linesDirty = NO;
         _sourceLines = lines;
         if (changedTrack) _preparedLines = nil;
@@ -430,7 +439,8 @@ void SGLyricsPiPToggle(UIView *from) {
     BOOL showPronunciation = SGFlag(@"spotifyglass.redesign.lyricsPronunciation", NO);
     lines = _preparedLines;
     NSString *current = nil, *next = nil;
-    SGLyricsPiPTextKind kind = SGLyricsPiPTextFor(lines, SGKaraokePositionMs() - SGKaraokeDelayMs(), &current, &next);
+    NSInteger lyricsMs = positionMs - SGKaraokeDelayMs();
+    SGLyricsPiPTextKind kind = SGLyricsPiPTextFor(lines, lyricsMs, &current, &next);
     if (kind == SGLyricsPiPTextNoLyrics) {
         BOOL failed = SGLyricsLoadFailed(track);
         current = failed ? SGL(@"settings.lyrics.load_failed", @"Couldn't load lyrics · Retry")
@@ -444,7 +454,7 @@ void SGLyricsPiPToggle(UIView *from) {
     NSString *credit = track.length ? SGLyricsCreditFor(track) : nil;
     // Always credit every provider, a stronger rule than SGLyricsCreditRequired: full Spicy
     // maker/uploader attribution even with Show source off. Linked again on return from PiP.
-    SGKaraokeLine *selected = SGLyricsPiPSelectedLine(lines, SGKaraokePositionMs() - SGKaraokeDelayMs());
+    SGKaraokeLine *selected = SGLyricsPiPSelectedLine(lines, lyricsMs);
     SGShownTrack *metadata = SGShownTrackNow();
     BOOL currentMetadata = metadata.current && [metadata.uri isEqual:artworkTrack];
     NSArray<NSString *> *content = @[current ?: @"", next ?: @"", credit ?: @"",

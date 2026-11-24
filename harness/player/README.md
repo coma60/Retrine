@@ -378,8 +378,10 @@ come late, out of order, or not at all.
 - `renderer` is the switch from Smooth to Light on its own, five times with the song paused: the field read about 0.2,
   0.5, 1 and 2 s after it (each read's own time logged, with whether Smooth shows, the Metal layers in the field and
   the Light copies hidden), compared with the band read about 4 s after; the read a second after must match it. It
-  uses only Kit API the committed renderer has too, so it also runs with HEAD's `SGRFluid.m` and `SGRFluidGPU.m` copied
-  into a source tree (`SRC=`). The log ends with `renderer checks: n of 5 right -- PASS` or `FAIL`.
+  also changes a paused field's cover while detached and while resigning active: neither change should upload a texture
+  or start a display link. It samples Smooth's first drawable on attachment and reactivation, including an interrupted
+  crossfade with no further track change, and checks that the photo-covered settings preview submits no frame. The log
+  ends with `renderer checks: n of 11 right -- PASS` or `FAIL`.
 
 - `automix` is AutoMix's transitions in the player (`PlayerMix.x`, with `PlayerControls.x`, `PlayerQueue.m` and
   `PlayerArtwork.x`) and the AutoMix page's preview card (`Shared/AutoMix/AutoMixSettings.m`, `AutoMixPreview.m`), in

@@ -68,11 +68,7 @@ BOOL SGClassNamed(Class cls, NSString *marker) {
 }
 
 BOOL SGHasClass(UIView *root, NSString *marker) {
-    __block BOOL found = NO;
-    SGForEachView(root, ^(UIView *v) {
-        if (!found && SGClassNamed(v.class, marker)) found = YES;
-    });
-    return found;
+    return firstMatch(root, ^BOOL(UIView *v) { return SGClassNamed(v.class, marker); }) != nil;
 }
 
 @interface SGWeakBox : NSObject

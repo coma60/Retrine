@@ -8,6 +8,11 @@
 
 static int failures;
 static BOOL renderingOnly;
+static NSUInteger backgrounds;
+CGImageRef SGLyricsHarnessBackground(CGImageRef cover, CGSize size, SGLyricsBackgroundStyle style) {
+    backgrounds++;
+    return SGLyricsBackgroundCreate(cover, size, style);
+}
 static NSUInteger refusedContextIndex;
 CGContextRef SGLyricsHarnessCreateContext(void *data, size_t width, size_t height, size_t bits, size_t stride,
                                          CGColorSpaceRef space, uint32_t info) {
@@ -117,6 +122,27 @@ int main(int argc, char **argv) {
         CGImageRef black = solid(0), white = solid(1), cover = newCover();
         CGImageRef backdrop = SGLyricsClipBackdrop(cover, size);
         if (!renderingOnly) {
+            backgrounds = 0;
+            CGImageRef dim = SGLyricsClipDimmedArtwork(cover, size);
+            check(dim && backgrounds == 1, @"dimmed artwork needs only one blur");
+            CGImageRelease(dim);
+            // An asymmetric dark cover needs only the minimum dim, independent of the contrast search.
+            CGContextRef dark = context(size);
+            CGContextDrawImage(dark, (CGRect){CGPointZero, size}, cover);
+            CGContextSetRGBFillColor(dark, 0, 0, 0, .95);
+            CGContextFillRect(dark, (CGRect){CGPointZero, size});
+            CGImageRef source = CGBitmapContextCreateImage(dark);
+            CGContextRelease(dark);
+            CGImageRef reference = SGLyricsBackgroundCreate(source, size, (SGLyricsBackgroundStyle){SGLyricsBackgroundBlur, 77 / 256., 20, 0});
+            dim = SGLyricsClipDimmedArtwork(source, size);
+            NSData *expected = pixels(reference), *actual = pixels(dim);
+            const uint8_t *a = actual.bytes, *b = expected.bytes;
+            int difference = 0;
+            for (NSUInteger i = 0; i < actual.length; i++) difference = MAX(difference, abs(a[i] - b[i]));
+            check(difference <= 1, @"single-pass dim keeps reference pixels and orientation within rounding");
+            CGImageRelease(reference); CGImageRelease(dim); CGImageRelease(source);
+            refusedContextIndex = 1;
+            check(!SGLyricsClipDimmedArtwork(cover, size), @"missing measurement context returns no dimmed image");
             for (NSUInteger index = 1; index <= 2; index++) {
                 refusedContextIndex = index;
                 CGImageRef frame = render(backdrop, cover, nil, @"Line", nil, size, SGLyricsClipCentered);

@@ -96,6 +96,7 @@ static void tell(NSArray<SGProblem> *list) {
                                                                   message:[paragraphs componentsJoinedByString:@"\n\n"]
                                                            preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:SGL(@"common.ok", @"OK") style:UIAlertActionStyleCancel handler:nil]];
+    SGPresentDark(alert);
     [SGTopController() presentViewController:alert animated:YES completion:nil];
 }
 
@@ -126,21 +127,43 @@ static NSString *sizeOf(NSArray<NSURL *> *urls) {
     return [NSByteCountFormatter stringFromByteCount:total countStyle:NSByteCountFormatterCountStyleFile];
 }
 
-static void offerCleanup(void) {
-    NSArray<NSURL *> *leftovers = chromaLeftovers();
-    if (!leftovers.count) return;
-    NSString *size = sizeOf(leftovers);
+static NSString *sg_leftoverSize; // Main-thread snapshot from the last offer.
+
+static void showCleanup(NSArray<NSURL *> *leftovers, NSString *size) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:SGL(@"settings.environment.chroma.alert.title", @"Chroma left %@ on this iPhone"), size]
                                                                   message:SGL(@"settings.environment.chroma.alert.message", @"Its Karaoke voice model and its saved lock screen videos are still in Spotify's storage, and Retrine uses neither. Your listening history and audio effects stay.")
                                                            preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:SGL(@"common.delete", @"Delete") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        sg_leftoverSize = nil;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             for (NSURL *url in leftovers) [NSFileManager.defaultManager removeItemAtURL:url error:nil];
             SGLog(@"environment: deleted %@ Chroma left", size);
         });
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:SGL(@"settings.environment.chroma.action.keep", @"Keep") style:UIAlertActionStyleCancel handler:nil]];
+    SGPresentDark(alert);
     [SGTopController() presentViewController:alert animated:YES completion:nil];
+}
+
+static void whenClear(NSInteger tries, void (^then)(void));
+
+static void offerCleanup(BOOL automatic) {
+    __weak UIViewController *owner = automatic ? nil : SGTopController();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSArray<NSURL *> *leftovers = chromaLeftovers();
+        if (!leftovers.count) return;
+        NSString *size = sizeOf(leftovers);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sg_leftoverSize = size;
+            whenClear(automatic ? kTries : 0, ^{
+                if (!automatic && owner != SGTopController()) return;
+                NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
+                if (automatic && [store boolForKey:kCleanupOffered]) return;
+                [store setBool:YES forKey:kCleanupOffered];
+                showCleanup(leftovers, size);
+            });
+        });
+    });
 }
 
 // What about the install is worth saying.
@@ -163,8 +186,26 @@ NSArray<SGModRow *> *SGEnvironmentWarningRows(void) {
                                      ^{ tell(@[version()]); })];
     if (withoutAppChanges())
         [rows addObject:SGWarningRow(SGL(@"settings.environment.without_app_changes.title", @"Installed without the app changes"), SGL(@"settings.environment.warning.subtitle", @"Tap for what that does"), ^{ tell(@[appChanges()]); })];
-    if (chromaLeftovers().count)
-        [rows addObject:SGWarningRow(SGL(@"settings.environment.chroma.title", @"Chroma left files behind"), [NSString stringWithFormat:SGL(@"settings.environment.chroma.subtitle", @"%@ Retrine never uses. Tap to delete"), sizeOf(chromaLeftovers())], ^{ offerCleanup(); })];
+    NSArray<NSURL *> *leftovers = chromaLeftovers();
+    if (leftovers.count) {
+        SGModRow *row = SGWarningRow(SGL(@"settings.environment.chroma.title", @"Chroma left files behind"), nil, ^{ offerCleanup(NO); });
+        NSString *format = SGL(@"settings.environment.chroma.subtitle", @"%@ Retrine never uses. Tap to delete");
+        if (sg_leftoverSize) {
+            row.subtitle = [NSString stringWithFormat:format, sg_leftoverSize];
+        } else {
+            // After Keep, there is no automatic offer on the next launch. Let the page's
+            // live visibility refresh insert the row once its own size is ready.
+            __weak SGModRow *weakRow = row;
+            row.visible = ^BOOL { return weakRow.subtitle != nil; };
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                NSString *size = sizeOf(leftovers);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    weakRow.subtitle = [NSString stringWithFormat:format, size];
+                });
+            });
+        }
+        [rows addObject:row];
+    }
     return rows;
 }
 
@@ -201,12 +242,7 @@ static void tellProblems(void) {
     }
     if (list.count) tell(list);
     // Chroma's leftovers are offered once, after any problem; the row in Mod Settings stays while they do.
-    if (chromaLeftovers().count && ![store boolForKey:kCleanupOffered]) {
-        whenClear(kTries, ^{
-            [store setBool:YES forKey:kCleanupOffered];
-            offerCleanup();
-        });
-    }
+    if (![store boolForKey:kCleanupOffered]) offerCleanup(YES);
 }
 
 void SGCheckEnvironmentOnce(void) {

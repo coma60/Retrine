@@ -3341,6 +3341,17 @@ static void checkUpNext(void) {
 
 int main(void) {
     @autoreleasepool {
+        NSString *line = @"<p begin=\"0\" end=\"1\"><span begin=\"0\">verse</span></p>";
+        NSString *rows = [@"" stringByPaddingToLength:line.length * 4096 withString:line startingAtIndex:0];
+        CHECK(SGTTMLLines([NSString stringWithFormat:@"<tt>%@</tt>", rows]).count == 4096);
+        NSString *many = [@"" stringByPaddingToLength:4 * 65536 withString:@"<x/>" startingAtIndex:0];
+        CHECK(!SGTTMLLines([NSString stringWithFormat:@"<tt>%@%@</tt>", line, many]));
+        NSString *open = [@"" stringByPaddingToLength:3 * 80 withString:@"<x>" startingAtIndex:0];
+        NSString *close = [@"" stringByPaddingToLength:4 * 80 withString:@"</x>" startingAtIndex:0];
+        CHECK(!SGTTMLLines([NSString stringWithFormat:@"<tt>%@%@%@</tt>", line, open, close]));
+        CHECK(!SGTTMLLines([NSString stringWithFormat:@"<!DOCTYPE tt><tt>%@</tt>", line]));
+        NSString *padding = [@"" stringByPaddingToLength:1500000 withString:@"界" startingAtIndex:0];
+        CHECK(!SGTTMLLines([NSString stringWithFormat:@"<tt>%@<!--%@--></tt>", line, padding]));
         checkSpotifySyllables();
         checkSpotifyPublishedClock();
         checkHeaderOrigin();

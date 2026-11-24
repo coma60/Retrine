@@ -1,6 +1,7 @@
 // SGMotionClip.h says what these are. The cut is the encoder's: the writer is given the cut's size and told
 // to fill it keeping the picture's shape, so it drops what overhangs either side and scales nothing.
 #import <AVFoundation/AVFoundation.h>
+#import <unistd.h>
 #import "Shared/AdBlock/Protobuf.h"
 #import "SGMotionClip.h"
 
@@ -18,7 +19,7 @@ CGSize SGMotionClipCut(CGSize shown, CGFloat ratio) {
     return CGSizeMake(floor(cut.width / 2) * 2, floor(cut.height / 2) * 2);
 }
 
-BOOL SGMotionClipShape(NSURL *file, CGFloat ratio, NSURL *out) {
+static BOOL writeShape(NSURL *file, CGFloat ratio, NSURL *partial) {
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:file options:nil];
     __block AVAssetTrack *track = nil;
     dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
@@ -46,8 +47,6 @@ BOOL SGMotionClipShape(NSURL *file, CGFloat ratio, NSURL *out) {
 
     // Written beside the file and moved over it once whole, as SGLyricsClip.m writes, so a clip cut off
     // halfway is never found.
-    NSURL *partial = [out URLByAppendingPathExtension:@"partial"];
-    [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
     AVAssetWriter *writer = [AVAssetWriter assetWriterWithURL:partial fileType:AVFileTypeMPEG4 error:nil];
     AVAssetWriterInput *input = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:@{
         AVVideoCodecKey: AVVideoCodecTypeH264,
@@ -85,9 +84,15 @@ BOOL SGMotionClipShape(NSURL *file, CGFloat ratio, NSURL *out) {
     dispatch_semaphore_t written = dispatch_semaphore_create(0);
     [writer finishWritingWithCompletionHandler:^{ dispatch_semaphore_signal(written); }];
     dispatch_semaphore_wait(written, DISPATCH_TIME_FOREVER);
-    if (writer.status != AVAssetWriterStatusCompleted) return NO;
-    [NSFileManager.defaultManager removeItemAtURL:out error:nil];
-    return [NSFileManager.defaultManager moveItemAtURL:partial toURL:out error:nil];
+    return writer.status == AVAssetWriterStatusCompleted;
+}
+
+BOOL SGMotionClipShape(NSURL *file, CGFloat ratio, NSURL *out) {
+    NSURL *partial = [out URLByAppendingPathExtension:@"partial"];
+    unlink(partial.fileSystemRepresentation);
+    if (writeShape(file, ratio, partial) && [NSFileManager.defaultManager moveItemAtURL:partial toURL:out error:nil]) return YES;
+    unlink(partial.fileSystemRepresentation);
+    return NO;
 }
 
 NSData *SGMotionCanvasAsk(NSString *uri) {

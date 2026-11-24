@@ -232,12 +232,6 @@ static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.2,
 // the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
 // the deepening stand aside wherever it shows, and only the dim's top band stays.
 static const CGFloat kAdjustSaturation = 2.4;
-// The adjustment does not come in along a line: the Music app's gradient eases in between its stops (its
-// ColorAdjustmentsLayer sets the gradient's interpolations to an ease-in, a cubic through (0.42, 0) and (1, 1),
-// iOS 27.2.1), so it stays light under the title and the times and takes most of its strength near the foot. Drawn
-// here as kAdjustSteps stops along that curve.
-static const CGFloat kAdjustEaseX1 = 0.42;
-enum { kAdjustSteps = 8 };
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -633,25 +627,6 @@ static NSArray *deepenColors(void) {
     return colors;
 }
 
-// The ease-in's value at `x` (0 to 1): the cubic through (0, 0), (kAdjustEaseX1, 0), (1, 1), (1, 1), solved for x.
-static CGFloat adjustEase(CGFloat x) {
-    CGFloat lo = 0, hi = 1, u = x;
-    for (int i = 0; i < 24; i++) {
-        u = (lo + hi) / 2;
-        CGFloat bx = 3 * (1 - u) * (1 - u) * u * kAdjustEaseX1 + 3 * (1 - u) * u * u + u * u * u;
-        if (bx < x) lo = u; else hi = u;
-    }
-    return 3 * (1 - u) * u * u + u * u * u;
-}
-
-// The adjustment's stops: nothing where it starts, then the ease-in to whole, in `color` at `alpha` when whole.
-static NSArray *adjustColors(CGFloat white, CGFloat alpha) {
-    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
-    for (int j = 0; j <= kAdjustSteps; j++)
-        [colors addObject:(__bridge id)[UIColor colorWithWhite:white alpha:alpha * adjustEase((CGFloat)j / kAdjustSteps)].CGColor];
-    return colors;
-}
-
 // The white that lifts a dark clip's foot: nothing where it starts, then the curve to whole (its opacity is kLiftFoot).
 static NSArray *liftColors(void) {
     NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
@@ -744,11 +719,11 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     [_picture.layer addSublayer:_soft];
     [_picture.layer addSublayer:_softer];
     _adjust = [CAGradientLayer layer];
-    _adjust.colors = adjustColors(0, 1 - kAdjustKeep);
+    _adjust.colors = @[(id)UIColor.clearColor.CGColor, (id)[UIColor colorWithWhite:0 alpha:1 - kAdjustKeep].CGColor];
     _adjust.hidden = YES;
     [_picture.layer addSublayer:_adjust];
     _adjustLift = [CAGradientLayer layer];
-    _adjustLift.colors = adjustColors(1, kAdjustLift);
+    _adjustLift.colors = @[(id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:kAdjustLift].CGColor];
     _adjustLift.compositingFilter = @"plusL";
     _adjustLift.hidden = YES;
     [_picture.layer addSublayer:_adjustLift];
@@ -934,9 +909,7 @@ static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutable
     ((CAGradientLayer *)_soft.mask).locations = @[at(height * kSoftFrom), at(height * kSoftWhole)];
     ((CAGradientLayer *)_softer.mask).locations = @[at(height * kSofterFrom), at(height * kSofterWhole)];
     CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, region = screen * kAdjustShare;
-    CGFloat adjustFrom = screen - region * (1 - kAdjustFrom);
-    NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
-    for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
+    NSArray *adjustAt = @[at(screen - region * (1 - kAdjustFrom)), at(screen)];
     for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
         layer.frame = CGRectMake(0, 0, width, total);
         layer.locations = adjustAt;

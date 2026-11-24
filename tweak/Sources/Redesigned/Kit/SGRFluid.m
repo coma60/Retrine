@@ -4,21 +4,24 @@
 #import "SGRFluidGPU.h"
 #import "SGRTokens.h"
 
-// Each copy: its side as a share of the visible rect's longer side, its center as shares of that rect, and
-// one turn's length in seconds (negative turns the other way).
+// The copies, laid out as the Music app's player lays its own: in a square as wide as the visible rect's longer side,
+// centered on it (its half-side is the unit below), each copy a square of the cover `side` units across, centered
+// `x`, `y` units from the middle (y up), and turning about the square's middle, not its own, once in `turn` seconds,
+// counterclockwise. The first turns where it is; the second circles at its offset; the third circles with the first's
+// turn and its own added (once in 120 s and once in 90 s). Each is opaque and drawn over the one before.
 static const struct { CGFloat side, x, y; CFTimeInterval turn; } kCopy[] = {
-    {2.2, 0.25, 0.20, 46},
-    {2.0, 0.80, 0.35, -61},
-    {2.4, 0.30, 0.75, 73},
-    {1.8, 0.70, 0.85, -54},
+    {1.4, 0, 0, 120},
+    {0.7, -0.25, 0.15, 70},
+    {0.7, 0.7, 0.7, 1 / (1 / 120.0 + 1 / 90.0)},
 };
 enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
+// The smaller copies' edges are feathered over this share of their side, so they run into the copy under them as the
+// Music app's blur of the whole square runs them together.
+static const CGFloat kCopyFeather = 0.22;
 // The blurred cover is small: it is drawn several times the screen's size, so detail is lost anyway. The Blur
 // setting is its radius in steps of 1.25 px, so the standard 24 is 30 px. Core Image works here on encoded values,
 // as the Music app's shader does (in linear light even -0.08 turned every channel under about 30% to black, issue #100).
 static const CGFloat kBlurSide = 128, kBlurPerStep = 1.25;
-// The upper three copies' opacity at full Warp.
-static const float kOverOpacity = 0.7;
 // The shade over the bottom of the visible rect, where the controls are. It was flat and light, because the ceiling
 // below kept the whole cover dark (and 0.55 left the lower half of a dark cover black, issue #100). The Music app's
 // player instead keeps the cover's own colors and brightness down to the title and the bar and goes dark only toward
@@ -198,7 +201,34 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     return result;
 }
 
+// A square that is opaque in the middle and fades to clear over kCopyFeather of its side at each edge (smoothstep),
+// the mask of the smaller copies.
+static CGImageRef featherMask(void) {
+    static CGImageRef mask;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        enum { kSide = 64 };
+        CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+        CGContextRef bitmap = CGBitmapContextCreate(NULL, kSide, kSide, 8, kSide, gray, (CGBitmapInfo)kCGImageAlphaOnly);
+        CGColorSpaceRelease(gray);
+        if (!bitmap) return;
+        unsigned char *pixels = CGBitmapContextGetData(bitmap);
+        for (int y = 0; y < kSide; y++) {
+            for (int x = 0; x < kSide; x++) {
+                CGFloat u = (x + 0.5) / kSide, v = (y + 0.5) / kSide;
+                CGFloat edge = MIN(MIN(u, 1 - u), MIN(v, 1 - v)) / kCopyFeather;
+                CGFloat t = MAX(0, MIN(1, edge));
+                pixels[y * kSide + x] = (unsigned char)round(255 * t * t * (3 - 2 * t));
+            }
+        }
+        mask = CGBitmapContextCreateImage(bitmap);
+        CGContextRelease(bitmap);
+    });
+    return mask;
+}
+
 @implementation SGRFluidLayer {
+    CALayer *_orbits[kCopies];   // each copy's turn about the square's middle
     CALayer *_copies[kCopies];
     CAGradientLayer *_shade;
     CGFloat _lowerLight;   // how light the shown cover's lower part is, 0 to 1 (blurred())
@@ -219,9 +249,16 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     self.masksToBounds = YES;
     self.backgroundColor = UIColor.blackColor.CGColor;
     for (int i = 0; i < kCopies; i++) {
+        _orbits[i] = [CALayer layer];
         _copies[i] = [CALayer layer];
         _copies[i].contentsGravity = kCAGravityResizeAspectFill;
-        [self addSublayer:_copies[i]];
+        if (i > 0) {
+            CALayer *mask = [CALayer layer];
+            mask.contents = (__bridge id)featherMask();
+            _copies[i].mask = mask;
+        }
+        [_orbits[i] addSublayer:_copies[i]];
+        [self addSublayer:_orbits[i]];
     }
     [self applyWarp];
     _shade = [CAGradientLayer layer];
@@ -251,13 +288,13 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [self setArtwork:source animated:NO];
 }
 
-// Warp is how far from the visible rect's middle the copies turn, and how much the upper three show: at none,
-// one copy turns about the middle, a still picture turning, with nothing to flow through it.
+// Warp is how far from the middle the smaller copies sit, and how much they show (opaque at the standard 100 %): at
+// none, the large copy turns alone, a still picture turning, with nothing to flow through it.
 - (void)applyWarp {
     _warp = SGRFluidValue(SGRFluidWarp) / 100.0;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    for (int i = 1; i < kCopies; i++) _copies[i].opacity = kOverOpacity * (float)_warp;
+    for (int i = 1; i < kCopies; i++) _copies[i].opacity = (float)_warp;
     [CATransaction commit];
 }
 
@@ -309,7 +346,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
 - (void)showCopies {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    for (int i = 0; i < kCopies; i++) _copies[i].hidden = _gpuShown;
+    for (int i = 0; i < kCopies; i++) _orbits[i].hidden = _gpuShown;
     [CATransaction commit];
     [self updateCopies];
 }
@@ -363,12 +400,14 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     if (!CGRectEqualToRect(visible, _laidOutFor) && visible.size.width >= 1) {
         _laidOutFor = visible;
         if (_turning) [self stop];
-        CGFloat longer = MAX(visible.size.width, visible.size.height);
+        CGFloat half = MAX(visible.size.width, visible.size.height) / 2;
         for (int i = 0; i < kCopies; i++) {
-            CGFloat side = round(longer * kCopy[i].side);
+            CGFloat side = round(2 * half * kCopy[i].side);
+            _orbits[i].bounds = CGRectMake(0, 0, 2 * half, 2 * half);
+            _orbits[i].position = CGPointMake(CGRectGetMidX(visible), CGRectGetMidY(visible));
             _copies[i].bounds = CGRectMake(0, 0, side, side);
-            _copies[i].position = CGPointMake(CGRectGetMidX(visible) + visible.size.width * (kCopy[i].x - 0.5) * _warp,
-                                              CGRectGetMidY(visible) + visible.size.height * (kCopy[i].y - 0.5) * _warp);
+            _copies[i].position = CGPointMake(half * (1 + kCopy[i].x * _warp), half * (1 - kCopy[i].y * _warp));
+            _copies[i].mask.frame = _copies[i].bounds;
         }
         [self updateCopies];
     }
@@ -384,17 +423,20 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     CGFloat gain = SGRFluidValue(SGRFluidBrightness) / 100.0;
     __weak SGRFluidLayer *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        CGFloat lowerLight = 0;
+        CGFloat lowerLight = 0, ignored = 0;
         UIImage *blur = blurred(image, contrast, radius, saturation, gain, &lowerLight);
+        // The smaller copies are half the large one's size, so their cover is blurred twice as far for the same blur
+        // on screen, as the Music app blurs the whole square at once.
+        UIImage *small = blurred(image, contrast, radius * kCopy[0].side / kCopy[1].side, saturation, gain, &ignored);
         dispatch_async(dispatch_get_main_queue(), ^{
             SGRFluidLayer *layer = weakSelf;
             if (!blur || !layer || generation != layer->_generation) return;
-            [layer show:blur lowerLight:lowerLight animated:animated];
+            [layer show:blur small:small ?: blur lowerLight:lowerLight animated:animated];
         });
     });
 }
 
-- (void)show:(UIImage *)blur lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
+- (void)show:(UIImage *)blur small:(UIImage *)small lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
     _blur = blur;
     _lowerLight = lowerLight;
     // The shade's peak follows the new cover's lower part, crossfading with the cover.
@@ -413,7 +455,7 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
             fade.duration = SGRCrossfade;
             [_copies[i] addAnimation:fade forKey:@"contents"];
         }
-        _copies[i].contents = (__bridge id)blur.CGImage;
+        _copies[i].contents = (__bridge id)(i == 0 ? blur : small).CGImage;
     }
     [CATransaction commit];
 }
@@ -434,20 +476,21 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     _rate = SGRFluidValue(SGRFluidSpeed) / 100.0;
     CAFrameRateRange rate = CAFrameRateRangeMake(15, 60, 30);
     for (int i = 0; i < kCopies; i++) {
-        CFTimeInterval length = fabs(kCopy[i].turn);
+        CFTimeInterval length = kCopy[i].turn;
         // The turn's offset carries the angle it stopped at, so the resting angle goes back to none.
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        _copies[i].transform = CATransform3DIdentity;
+        _orbits[i].transform = CATransform3DIdentity;
         [CATransaction commit];
+        // Counterclockwise on screen, where y runs down.
         CABasicAnimation *turn = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-        turn.byValue = @(kCopy[i].turn > 0 ? 2 * M_PI : -2 * M_PI);
+        turn.byValue = @(-2 * M_PI);
         turn.duration = length / _rate;
         turn.repeatCount = HUGE_VALF;
         turn.additive = YES;
         turn.timeOffset = fmod(_elapsed, length) / _rate;
         turn.preferredFrameRateRange = rate;
-        [_copies[i] addAnimation:turn forKey:@"turn"];
+        [_orbits[i] addAnimation:turn forKey:@"turn"];
     }
 }
 
@@ -460,10 +503,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     for (int i = 0; i < kCopies; i++) {
-        CFTimeInterval length = fabs(kCopy[i].turn);
-        CGFloat angle = (kCopy[i].turn > 0 ? 1 : -1) * 2 * M_PI * fmod(_elapsed, length) / length;
-        [_copies[i] removeAnimationForKey:@"turn"];
-        _copies[i].transform = CATransform3DMakeRotation(angle, 0, 0, 1);
+        CFTimeInterval length = kCopy[i].turn;
+        CGFloat angle = -2 * M_PI * fmod(_elapsed, length) / length;
+        [_orbits[i] removeAnimationForKey:@"turn"];
+        _orbits[i].transform = CATransform3DMakeRotation(angle, 0, 0, 1);
     }
     [CATransaction commit];
 }

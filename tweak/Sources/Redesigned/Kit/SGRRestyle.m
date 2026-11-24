@@ -904,6 +904,8 @@ static void inkTick(void) {
     readField();
 }
 
+static void placeInkCapture(UIView *source);
+
 void SGRBackdropInkSetSource(UIView *source) {
     if (source) placeInkCapture(source);
     if (source == sg_inkSource && (sg_inkTimer.valid || !source)) return;

@@ -21,10 +21,11 @@ static const CGFloat kCopyFeather = 0.22;
 // Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
 static const CGFloat kHeldZoom = 1.25;
 static const CFTimeInterval kSettle = 0.8;
-// Its blur's standard deviation, in points on screen, and the radius Core Image takes for it on the copies' cover: with
-// the radius at the standard deviation, colors stood apart 1.3 to 2.3 times as much as the Music app's over two of three
-// covers, and at 1.8 times it (the earlier blur) about as much or less; simulated over three covers at many moments of
-// its turn, 1.8 times came nearest the Music app's player.
+// Its blur's standard deviation, in points on screen, and how much more Retrine blurs to look like it. Core Image's
+// radius is the standard deviation itself (measured, .github/workflows/ci-blur-probe.yml: 1.00 at 4 to 64 px), yet at
+// 160 pt the colors stood apart 1.3 to 2.3 times as much as the Music app's over two of three covers; its quarter-size
+// picture and the bend it is shown through soften it further. Simulated over three covers at many moments of the
+// turn, 1.8 times came nearest its player.
 static const CGFloat kBackdropSigma = 160, kBlurRadiusPerSigma = 1.8;
 // The blurred cover is small: it is drawn larger than the screen, so detail is lost anyway. The Blur setting scales
 // kBackdropSigma (the standard 24 is the Music app's), worked out as a radius on this cover in setArtwork:. Core

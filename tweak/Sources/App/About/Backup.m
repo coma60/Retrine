@@ -15,7 +15,7 @@
 // here. What is left out belongs to this install rather than to its user's choices.
 static BOOL isSetting(NSString *key) {
     if (![key hasPrefix:@"spotifyglass."]) return NO;
-    if (SGPrivatePreferenceKey(key) || [key isEqual:SGKeySponsorBlockServer]) return NO;
+    if (SGPrivatePreferenceKey(key) || [key isEqual:SGKeySponsorBlockServer] || [key isEqual:@"spotifyglass.wireguard"]) return NO;
     for (NSString *local in @[@"spotifyglass.adblock.counts", @"spotifyglass.privacy.counts", @"spotifyglass.update.",
                               @"spotifyglass.signing.", @"spotifyglass.onboarding.", @"spotifyglass.navbar.stock",
                               @"spotifyglass.redesign.navbar.stock", @"spotifyglass.automix.saved",
@@ -39,15 +39,19 @@ static UIAlertController *showAlert(UIViewController *presenter, NSString *title
     return alert;
 }
 
-void SGExportSettings(void) {
+static NSDictionary *exportSettings(NSDictionary *stored) {
     NSMutableDictionary *settings = [NSMutableDictionary dictionary];
-    [storedDefaults() enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+    [stored enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
         if (isSetting(key) && [NSJSONSerialization isValidJSONObject:@[value]]) settings[key] = value;
     }];
+    return settings;
+}
+
+void SGExportSettings(void) {
     NSDictionary *file = @{
         @"mod": @(SG_VERSION),
         @"spotify": [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"unknown",
-        @"settings": settings,
+        @"settings": exportSettings(storedDefaults()),
     };
     NSData *data = [NSJSONSerialization dataWithJSONObject:file options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
     NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"spotifyglass-settings.json"]];
@@ -209,10 +213,8 @@ static NSDictionary *fromChroma(NSDictionary *settings) {
     return ours;
 }
 
-static void importSettings(NSDictionary *settings) {
-    NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
+static void importSettings(NSDictionary *settings, NSUserDefaults *store, NSDictionary *stored) {
     settings = fromChroma(settings);
-    NSDictionary *stored = storedDefaults();
     for (NSString *key in stored) {
         if (isSetting(key)) [store removeObjectForKey:key];
     }
@@ -227,7 +229,6 @@ static void importSettings(NSDictionary *settings) {
         else skipped++;
     }
     SGLog(@"import: set %lu keys, skipped %lu", (unsigned long)(settings.count - skipped), (unsigned long)skipped);
-    SGRestartSpotify();
 }
 
 @interface SGSettingsPicker : NSObject <UIDocumentPickerDelegate>
@@ -282,7 +283,8 @@ static NSDictionary *readSettingsFile(NSURL *url) {
         message = [NSString stringWithFormat:SGL(@"settings.mod.backup.import_confirm.alert.message", @"Your settings are replaced by the file's, exported from version %@. Anything it does not have goes back to its default, and Spotify restarts."), mod];
         confirm = [UIAlertAction actionWithTitle:SGL(@"settings.mod.backup.action.import_and_restart", @"Import and restart") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
             [self finish];
-            importSettings(file[@"settings"]);
+            importSettings(file[@"settings"], NSUserDefaults.standardUserDefaults, storedDefaults());
+            SGRestartSpotify();
         }];
     } else {
         title = SGL(@"settings.mod.backup.invalid_file.alert.title", @"Not a settings file");

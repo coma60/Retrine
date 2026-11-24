@@ -163,6 +163,10 @@ CGImageRef SGLyricsClipDimmedArtwork(CGImageRef cover, CGSize size) {
     CGImageRef blurred = SGLyricsBackgroundCreate(cover, size, style);
     if (!blurred) return NULL;
     CGContextRef context = newContext(size, NULL, 0);
+    if (!context) {
+        CGImageRelease(blurred);
+        return NULL;
+    }
     CGContextDrawImage(context, (CGRect){CGPointZero, size}, blurred);
     CGImageRelease(blurred);
     Lights lights = {0};
@@ -291,11 +295,15 @@ static void drawCut(CTFrameRef frame, NSAttributedString *words, CGContextRef co
 // carry a shadow, the dimmed lines are less dim, and the image is only the words' box, which `drawn` gets
 // the place of in the clip. With `scrim` (Over the artwork on its cover kept sharp) the image carries the
 // gradient behind them.
-static CGImageRef newWords(NSString *previous, NSString *line, NSString *translation, NSString *next, CGSize size,
-                           SGLyricsClipLayout layout, BOOL scrim, CGRect *drawn) CF_RETURNS_RETAINED {
+// YES with no image is an intentional rest; NO means rendering failed.
+static BOOL newWords(NSString *previous, NSString *line, NSString *translation, NSString *next, CGSize size,
+                     SGLyricsClipLayout layout, BOOL scrim, CGRect *drawn, CGImageRef *result) {
+    *result = NULL;
     // Over the artwork keeps the line sung last above the line instead of the next, which shows only at a rest.
     if (layout == SGLyricsClipOverArtwork && line.length) next = nil;
-    if (!previous.length && !line.length && !next.length) return NULL;
+    if (!previous.length && !line.length && !next.length) return YES;
+    CGContextRef context = newContext(size, NULL, 0);
+    if (!context) return NO;
     if (!line.length) translation = nil;
     if (layout == SGLyricsClipPoster) {
         // The line alone; at a rest the next one takes its place.
@@ -343,7 +351,6 @@ static CGImageRef newWords(NSString *previous, NSString *line, NSString *transla
     CGRect box = CGRectMake(round((size.width - screen) / 2 + screen * kMargin), round(size.height - top - height), width, height);
     CGPathRef path = CGPathCreateWithRect(box, NULL);
     CTFrameRef frame = CTFramesetterCreateFrame(setter, CFRangeMake(0, 0), path, NULL);
-    CGContextRef context = newContext(size, NULL, 0);
     if (scrim) {
         CGFloat reachX = size.width * kArtworkSideReach, reachY = height / 2 + size.width * kArtworkVerticalReach;
         uint8_t *pixels = CGBitmapContextGetData(context);
@@ -369,7 +376,7 @@ static CGImageRef newWords(NSString *previous, NSString *line, NSString *transla
     else CTFrameDraw(frame, context);
     CGImageRef image = CGBitmapContextCreateImage(context);
     CGContextRelease(context);
-    if (drawn) {
+    if (image && drawn) {
         // Out to the shadow's reach, inside the clip; an image is cut from the top, Core Graphics counts from the bottom.
         *drawn = CGRectIntersection(CGRectIntegral(CGRectInset(box, -lineSize, -lineSize)), (CGRect){CGPointZero, size});
         CGImageRef cut = CGImageCreateWithImageInRect(image, CGRectMake(drawn->origin.x, size.height - CGRectGetMaxY(*drawn),
@@ -380,7 +387,8 @@ static CGImageRef newWords(NSString *previous, NSString *line, NSString *transla
     CFRelease(frame);
     CGPathRelease(path);
     CFRelease(setter);
-    return image;
+    *result = image;
+    return image != NULL;
 }
 
 // Messages and Vinyl paint the whole clip. Their sizes are shares of the card, the strip of the clip the lock screen
@@ -669,6 +677,7 @@ static void drawVinyl(CGContextRef context, CGImageRef cover, NSString *line, NS
 static CGImageRef newScene(CGImageRef cover, NSString *previous, NSString *line, NSString *next, CGSize size,
                            SGLyricsClipLayout layout) CF_RETURNS_RETAINED {
     CGContextRef context = newContext(size, NULL, 0);
+    if (!context) return NULL;
     if (layout == SGLyricsClipMessages) drawMessages(context, previous, line, next, size);
     else drawVinyl(context, cover, line, next, size);
     CGImageRef image = CGBitmapContextCreateImage(context);
@@ -678,11 +687,14 @@ static CGImageRef newScene(CGImageRef cover, NSString *previous, NSString *line,
 
 // What goes over the backdrop: a scene's picture, or the words; Over the artwork's under their scrim when it has no
 // backdrop, as the cover then shows sharp.
-static CGImageRef newPicture(CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line, NSString *translation,
-                             NSString *next, CGSize size, SGLyricsClipLayout layout) CF_RETURNS_RETAINED {
-    if (SGLyricsClipIsScene(layout)) return newScene(cover, previous, line, next, size, layout);
+static BOOL newPicture(CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line, NSString *translation,
+                       NSString *next, CGSize size, SGLyricsClipLayout layout, CGImageRef *picture) {
+    if (SGLyricsClipIsScene(layout)) {
+        *picture = newScene(cover, previous, line, next, size, layout);
+        return *picture != NULL;
+    }
     BOOL over = layout == SGLyricsClipOverArtwork;
-    return newWords(over ? previous : nil, line, translation, next, size, layout, over && !backdrop, NULL);
+    return newWords(over ? previous : nil, line, translation, next, size, layout, over && !backdrop, NULL, picture);
 }
 
 static CGImageRef newBackdrop(CGImageRef backdrop, CGImageRef cover, CGSize size, SGLyricsClipLayout layout) CF_RETURNS_RETAINED {
@@ -701,12 +713,16 @@ static void drawFrame(CGContextRef context, CGImageRef backdrop, CGImageRef word
 
 CGImageRef SGLyricsClipFrameWithLayout(CGImageRef backdrop, CGImageRef cover, NSString *previous, NSString *line,
                                        NSString *translation, NSString *next, CGSize size, SGLyricsClipLayout layout) {
-    CGImageRef words = newPicture(backdrop, cover, previous, line, translation, next, size, layout);
+    CGImageRef words;
+    if (!newPicture(backdrop, cover, previous, line, translation, next, size, layout, &words)) return NULL;
     CGImageRef background = newBackdrop(backdrop, cover, size, layout);
     CGContextRef context = newContext(size, NULL, 0);
-    drawFrame(context, background, words, size, 0);
-    CGImageRef frame = CGBitmapContextCreateImage(context);
-    CGContextRelease(context);
+    CGImageRef frame = NULL;
+    if (context) {
+        drawFrame(context, background, words, size, 0);
+        frame = CGBitmapContextCreateImage(context);
+        CGContextRelease(context);
+    }
     CGImageRelease(words);
     CGImageRelease(background);
     return frame;
@@ -792,7 +808,12 @@ BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef co
     [writer addInput:input];
     if (![writer startWriting]) return NO;
     [writer startSessionAtSourceTime:kCMTimeZero];
-    CGImageRef words = newPicture(backdrop, cover, previous, line, translation, next, size, layout);
+    CGImageRef words;
+    if (!newPicture(backdrop, cover, previous, line, translation, next, size, layout, &words)) {
+        [writer cancelWriting];
+        [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
+        return NO;
+    }
     CGImageRef background = newBackdrop(backdrop, cover, size, layout);
     __block int32_t i = 0;
     BOOL ok = writeReady(writer, input, length, current, ^NSInteger {
@@ -803,6 +824,11 @@ BOOL SGLyricsClipWriteWithLayout(NSURL *file, CGImageRef backdrop, CGImageRef co
         if (!allocated) return -1;
         CVPixelBufferLockBaseAddress(buffer, 0);
         CGContextRef context = newContext(size, CVPixelBufferGetBaseAddress(buffer), CVPixelBufferGetBytesPerRow(buffer));
+        if (!context) {
+            CVPixelBufferUnlockBaseAddress(buffer, 0);
+            CVPixelBufferRelease(buffer);
+            return -1;
+        }
         drawFrame(context, background, words, size, (double)i / frames);
         CGContextRelease(context);
         CVPixelBufferUnlockBaseAddress(buffer, 0);
@@ -888,7 +914,7 @@ static void setKeep(Over *over, size_t rows, CGFloat band) {
 static Over makeOver(Motion motion, NSString *previous, NSString *line, NSString *translation, NSString *next,
                      SGLyricsClipLayout layout) {
     Over over = {0};
-    over.words = newWords(previous, line, translation, next, motion.cut, layout, NO, &over.drawn);
+    if (!newWords(previous, line, translation, next, motion.cut, layout, NO, &over.drawn, &over.words)) return over;
     size_t rows = (size_t)motion.cut.height;
     over.keep = malloc(rows * sizeof(uint16_t));
     CGRect cut = cutIn(motion);
@@ -986,7 +1012,7 @@ static void fitBand(AVURLAsset *asset, Motion motion, Over *over, double from, d
     uint8_t *frame = malloc(bytesPerRow * height);
     double at = fmod(MAX(from, 0), motion.length), span = MAX(seconds - 1 / kMotionFPS, 0);
     int light = 0;
-    for (int i = 0; i < kBandSamples; i++) {
+    for (int i = 0; frame && i < kBandSamples; i++) {
         CMTime time = CMTimeMakeWithSeconds(fmod(at + span * i / (kBandSamples - 1), motion.length), 600);
         CGImageRef image = [generator copyCGImageAtTime:time actualTime:NULL error:nil];
         if (!image) continue;
@@ -995,6 +1021,10 @@ static void fitBand(AVURLAsset *asset, Motion motion, Over *over, double from, d
         CGContextRef context = space && CGColorSpaceGetModel(space) == kCGColorSpaceModelRGB
             ? CGBitmapContextCreate(frame, width, height, 8, bytesPerRow, space, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little)
             : newContext(motion.stored, frame, bytesPerRow);
+        if (!context) {
+            CGImageRelease(image);
+            continue;
+        }
         CGContextSetBlendMode(context, kCGBlendModeCopy);
         CGContextDrawImage(context, (CGRect){CGPointZero, motion.stored}, image);
         CGContextRelease(context);
@@ -1045,6 +1075,10 @@ static BOOL drawOver(CVPixelBufferRef buffer, Motion motion, Over *over) {
     }
     if (over->words) {
         CGContextRef context = newContext(motion.stored, base, bytesPerRow);
+        if (!context) {
+            CVPixelBufferUnlockBaseAddress(buffer, 0);
+            return NO;
+        }
         CGContextDrawImage(context, CGRectOffset(over->drawn, cut.origin.x, cut.origin.y), over->words);
         CGContextRelease(context);
     }
@@ -1135,6 +1169,7 @@ CGImageRef SGLyricsClipMotionFrame(NSURL *motionFile, NSString *previous, NSStri
     if (!track) return NULL;
     __block Over over = makeOver(motion, previous, line, translation, next, layout);
     // As the clip judges its band.
+    if (!over.keep) return NULL;
     fitBand(asset, motion, &over, from, MIN(seconds, motion.length));
     __block CGImageRef frame = NULL;
     eachFrame(asset, track, motion, from, motion.length, ^BOOL(CMSampleBufferRef sample) {
@@ -1142,9 +1177,10 @@ CGImageRef SGLyricsClipMotionFrame(NSURL *motionFile, NSString *previous, NSStri
         if (!drawOver(buffer, motion, &over)) return NO;
         CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
         CGContextRef context = newContext(motion.stored, CVPixelBufferGetBaseAddress(buffer), CVPixelBufferGetBytesPerRow(buffer));
-        CGImageRef whole = CGBitmapContextCreateImage(context);
-        CGContextRelease(context);
+        CGImageRef whole = context ? CGBitmapContextCreateImage(context) : NULL;
+        if (context) CGContextRelease(context);
         CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+        if (!whole) return NO;
         frame = CGImageCreateWithImageInRect(whole, cutIn(motion));
         CGImageRelease(whole);
         return NO;
@@ -1183,6 +1219,11 @@ BOOL SGLyricsClipWriteOverMotion(NSURL *file, NSURL *motionFile, NSString *previ
     if (![writer startWriting]) return NO;
     [writer startSessionAtSourceTime:kCMTimeZero];
     __block Over over = makeOver(motion, previous, line, translation, next, layout);
+    if (!over.keep) {
+        [writer cancelWriting];
+        [NSFileManager.defaultManager removeItemAtURL:partial error:nil];
+        return NO;
+    }
     fitBand(asset, motion, &over, from, seconds);
     __block BOOL any = NO;
     SGLyricsMotionFrames *frames = [[SGLyricsMotionFrames alloc] initWithAsset:asset track:track motion:motion from:from seconds:seconds];

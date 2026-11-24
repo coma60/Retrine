@@ -374,7 +374,8 @@ static CGFloat layoutPill(UIView *header, UIStackView *stack, UIView *face) {
     place(buttons, pill);
     CGRect filter = CGRectMake(kPillPad, 0, kPillButton, kPillHeight);
     if (!CGRectEqualToRect(buttons.filter.frame, filter)) buttons.filter.frame = filter;
-    SGRGlassCapsuleInside(glass, &kPillGlassKey, pill.size, NO);
+    // The glass sits in its holder beside the buttons, so it is told the Filter button it backs (touch response).
+    SGRGlassBacks(SGRGlassCapsuleInside(glass, &kPillGlassKey, pill.size, NO), buttons.filter);
     layoutFriday(glass, pill.size);
     return CGRectGetMinX(pill);
 }

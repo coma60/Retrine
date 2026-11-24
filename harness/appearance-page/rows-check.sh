@@ -10,5 +10,6 @@ xcrun clang -target arm64-apple-ios17.0-macabi -fobjc-arc -O0 -isysroot "$SDK" \
     -iframework "$SDK/System/iOSSupport/System/Library/Frameworks" -I"$SRC" \
     "$HERE/rows-check.m" "$SRC/Native/Appearance/AppearanceSettings.m" "$SRC/Native/Appearance/AccentHistory.m" \
     "$SRC/Redesigned/Kit/SGRAppearanceSettings.m" "$SRC/Redesigned/Kit/SGRAccentHistory.m" \
-    -framework UIKit -framework Foundation -o "$OUT/check"
+    "$SRC/Redesigned/Kit/SGRGlass.m" "$SRC/Redesigned/Kit/SGRRefinements.m" \
+    -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Foundation -o "$OUT/check"
 "$OUT/check"

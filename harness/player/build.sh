@@ -77,7 +77,8 @@ for index, source in enumerate(sources):
 subprocess.run(compiler + flags + linked + libraries + ["-o", binary], check=True)
 PY
 }
-compile -target arm64-apple-ios17.0-simulator -fobjc-arc -g -O0 \
+# The chip-record and owner scenarios inspect the driver's floating-unit snapshots.
+compile -target arm64-apple-ios17.0-simulator -fobjc-arc -g -O0 -DSG_DRIVER="${SG_DRIVER:-1}" \
     -I"$SRC" -I"$SRC/Redesigned/Player" -I"$SRC/Redesigned/Kit" -I"$SRC/Shared/Player" -I"$OUT/gen" -I"$(dirname "$0")" -isysroot "$SDK" \
     -include "$SRC/Core/SGLocalize.h" \
     -Wno-deprecated-declarations \

@@ -1113,6 +1113,127 @@ static void runStates(SGHarnessChrome *chrome) {
     });
 }
 
+#pragma mark - the listener's glass
+
+// `glass`: the listener's glass (Redesigned/Kit/SGRGlass.h) on the platter of every bar shown and on the now playing
+// card, expanded and then minimized, each held for a screenshot (a SHOT line, with AREA lines naming the glass in
+// points); then real taps on Your Library's tab and on the card's play button, which must work whatever touch response
+// says. Every glass's tint and touch response are read here, and the platters' material; the card's material shows
+// only on the screen. What each glass should be is given as literals: -harness.wantMaterial (0 Regular, 1 Clear), -harness.wantTint
+// (0 none, 1 white at 30%, 2 black at 45%) and -harness.wantInteractive. UIKit's own platter glass is Regular,
+// untinted and interactive, so the defaults expect it as UIKit made it.
+static void expectGlass(NSInteger style, UIColor *tintColor, BOOL isInteractive, NSString *what, NSString *moment) {
+    NSUserDefaults *store = NSUserDefaults.standardUserDefaults;
+    NSInteger material = [store integerForKey:@"harness.wantMaterial"], tint = [store integerForKey:@"harness.wantTint"];
+    BOOL interactive = [store boolForKey:@"harness.wantInteractive"];
+    CGFloat white = -1, alpha = 0;
+    if (tintColor && ![tintColor getWhite:&white alpha:&alpha]) HARNESS_FAIL(@"%@: %@ tinted %@", moment, what, tintColor);
+    BOOL tintRight = tint == 0 ? tintColor == nil
+        : fabs(white - (tint == 1 ? 1 : 0)) < 0.01 && fabs(alpha - (tint == 1 ? 0.3 : 0.45)) < 0.01;
+    if ((style != NSNotFound && style != material) || !tintRight || isInteractive != interactive) {
+        HARNESS_FAIL(@"%@: %@ is style %ld, tint %@, interactive %d; want %ld, %ld, %d", moment, what, (long)style, tintColor,
+                     isInteractive, (long)material, (long)tint, interactive);
+    }
+}
+
+static void shotGlass(SGHarnessChrome *chrome, NSString *moment, NSString *shot) {
+    UIWindow *window = chrome.view.window;
+    NSUInteger platters = 0;
+    for (UITabBar *bar in systemBarsIn(chrome.tabs.bar)) {
+        UIView *platter = bar.hidden ? nil : platterIn(bar);
+        if (!platter.window) continue;
+        // A platter's glass is its own background, a _UIViewGlass; -_glassEffect reads its style back as Regular
+        // whatever it is, so the material and the touch response are read from the glass itself.
+        NSString *background = [[platter valueForKey:@"_background"] description];
+        NSInteger style = [background containsString:@"Configuration(clear)"] ? 1 : [background containsString:@"Configuration(regular)"] ? 0 : -1;
+        BOOL flexible = [background containsString:@"isFlexible: true"];
+        expectGlass(style, [[platter valueForKey:@"_glassEffect"] valueForKey:@"tintColor"], flexible,
+                    [NSString stringWithFormat:@"platter %lu (%@)", (unsigned long)platters, background], moment);
+        CGRect frame = [platter convertRect:platter.bounds toView:window];
+        printf("AREA platter%lu %.1f %.1f %.1f %.1f\n", (unsigned long)platters, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+        platters++;
+    }
+    if (platters == 0) HARNESS_FAIL(@"%@: no platter shown", moment);
+    CGRect card = SGRNowPlayingCardFrameIn(window, NULL);
+    UIVisualEffectView *pane = nil;
+    for (UIView *sub in chrome.npb.subviews.firstObject.subviews) {
+        if ([sub isKindOfClass:UIVisualEffectView.class] && CGRectEqualToRect([sub convertRect:sub.bounds toView:window], card)) pane = (UIVisualEffectView *)sub;
+    }
+    if (!pane) HARNESS_FAIL(@"%@: no glass under the card at %@", moment, NSStringFromCGRect(card));
+    if (![pane.effect isKindOfClass:NSClassFromString(@"UIGlassEffect")]) HARNESS_FAIL(@"%@: the card has %@, not glass", moment, pane.effect);
+    // An effect view hands back its glass rebuilt without its style (Regular for a Clear one, iOS 26.5): the card's
+    // material is judged from the screen (glass-check.py).
+    expectGlass(NSNotFound, [pane.effect valueForKey:@"tintColor"],
+                [[pane.effect valueForKey:@"interactive"] boolValue], @"the card's glass", moment);
+    printf("AREA card %.1f %.1f %.1f %.1f\nSHOT %s\n", card.origin.x, card.origin.y, card.size.width, card.size.height, shot.UTF8String);
+    fflush(stdout);
+    NSLog(@"[harness] PASS %@: %lu platters and the card in the glass asked for", moment, (unsigned long)platters);
+}
+
+static void runGlass(SGHarnessChrome *chrome) {
+    NSString *shot = [NSUserDefaults.standardUserDefaults stringForKey:@"harness.shot"] ?: @"glass";
+    NSLog(@"[harness] glass with Reduce Transparency %@", UIAccessibilityIsReduceTransparencyEnabled() ? @"on" : @"off");
+    shotGlass(chrome, @"expanded", [shot stringByAppendingString:@"-expanded"]);
+    after(3.0, ^{
+        SGRSetTabBarMinimized(YES, NO);
+        [chrome.view layoutIfNeeded];
+    });
+    after(3.5, ^{
+        if (!SGRTabBarMinimized()) HARNESS_FAIL(@"the bar did not minimize");
+        shotGlass(chrome, @"minimized", [shot stringByAppendingString:@"-minimized"]);
+    });
+    after(6.5, ^{
+        SGRSetTabBarMinimized(NO, NO);
+        [chrome.view layoutIfNeeded];
+    });
+    __block NSUInteger plays = 0;
+    after(7.0, ^{
+        UIWindow *window = chrome.view.window;
+        UITabBar *bar = barHolding(chrome, @"Your Library");
+        NSUInteger index = [bar.items indexOfObjectPassingTest:^BOOL(UITabBarItem *item, NSUInteger i, BOOL *stop) {
+            return [item.accessibilityLabel isEqualToString:@"Your Library"];
+        }];
+        // UIKit's tab buttons, left to right, in the platter's content (not the copy it lifts into the selection).
+        NSMutableArray<UIView *> *buttons = [NSMutableArray array];
+        SGForEachView(bar, ^(UIView *v) {
+            NSString *holder = NSStringFromClass(v.superview.class);
+            if ([v isKindOfClass:UIControl.class] && [holder hasSuffix:@"ContentView"] && ![holder hasSuffix:@"SelectedContentView"]) [buttons addObject:v];
+        });
+        [buttons sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            return [@([a convertRect:a.bounds toView:window].origin.x) compare:@([b convertRect:b.bounds toView:window].origin.x)];
+        }];
+        UIView *tab = index < buttons.count && buttons.count == bar.items.count ? buttons[index] : nil;
+        if (!tab || stockLit(chrome, @"Your Library")) HARNESS_FAIL(@"Your Library's tab %@ of %@, already on: %d", tab, buttons, stockLit(chrome, @"Your Library"));
+        CGRect frame = [tab convertRect:tab.bounds toView:window];
+        SGHarnessTap(window, CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame)));
+    });
+    after(8.0, ^{
+        if (!stockLit(chrome, @"Your Library")) HARNESS_FAIL(@"a finger on Your Library's tab did not tap Spotify's");
+        UIWindow *window = chrome.view.window;
+        // The mock's own play button sits past the card's trailing edge (the mock's page is wider than the card), so
+        // one goes beside it where the card shows its play button, 16 pt in from the card's trailing edge.
+        CGRect card = SGRNowPlayingCardFrameIn(window, NULL);
+        UIButton *mock = (UIButton *)firstOf(chrome.npb, ^BOOL(UIView *v) {
+            return [v isKindOfClass:UIButton.class] && [((UIButton *)v).currentImage isEqual:[UIImage systemImageNamed:@"play.fill"]];
+        });
+        if (!mock) HARNESS_FAIL(@"no play button in the now playing bar");
+        UIButton *play = [UIButton systemButtonWithImage:[UIImage systemImageNamed:@"play.fill"] target:nil action:nil];
+        play.frame = [mock.superview convertRect:CGRectMake(CGRectGetMaxX(card) - 48, CGRectGetMidY(card) - 16, 32, 32) fromView:window];
+        [mock.superview addSubview:play];
+        [play addAction:[UIAction actionWithHandler:^(UIAction *action) { plays++; }] forControlEvents:UIControlEventTouchUpInside];
+        CGRect frame = [play convertRect:play.bounds toView:window];
+        CGPoint middle = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+        UIView *hit = [window hitTest:middle withEvent:nil];
+        if (hit != play) HARNESS_FAIL(@"a finger on the card's play button at %@ lands on %@", NSStringFromCGPoint(middle), hit);
+        SGHarnessTap(window, middle);
+    });
+    after(9.0, ^{
+        if (plays != 1) HARNESS_FAIL(@"a finger on the card's play button played %lu times", (unsigned long)plays);
+        NSLog(@"[harness] PASS all glass: the tab and the card's play button took their taps");
+        exit(0);
+    });
+}
+
 #pragma mark - the app
 
 // Before every %ctor, so the redesign's gate reads on; the fade under the bars on unless the launch line says `off`;
@@ -1284,6 +1405,11 @@ static void after(double seconds, dispatch_block_t block) {
     // `search`: Search on the minimized bar's trailing circle (search.m).
     if ([mode isEqualToString:@"search"]) {
         after(1.0, ^{ SGHarnessRunSearch(chrome.tabs.bar); });
+        return;
+    }
+    // `glass`: the listener's glass on the bars and the card (runGlass).
+    if ([mode isEqualToString:@"glass"]) {
+        after(1.0, ^{ runGlass(chrome); });
         return;
     }
     // `states`: what an earlier state leaves on the bar (runStates).
@@ -1600,7 +1726,7 @@ static void after(double seconds, dispatch_block_t block) {
 
 int main(int argc, char *argv[]) {
     sgJam = argc > 1 && strcmp(argv[1], "jam") == 0;
-    sgColorful = argc > 1 && (strcmp(argv[1], "fade") == 0 || strcmp(argv[1], "navsettings") == 0);
+    sgColorful = argc > 1 && (strcmp(argv[1], "fade") == 0 || strcmp(argv[1], "navsettings") == 0 || strcmp(argv[1], "glass") == 0);
     sgGlyphs = argc > 1 && (strcmp(argv[1], "glyphs") == 0 || strcmp(argv[1], "symbols") == 0);
     sgSwiftIcons = sgGlyphs && argc > 2 && strcmp(argv[2], "swift") == 0;
     sgSearch = argc > 1 && strcmp(argv[1], "search") == 0;

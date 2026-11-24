@@ -14,7 +14,8 @@
 #include <unistd.h>
 extern char **environ;
 
-#define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "FAILED line %d: %s\n", __LINE__, #cond); exit(1); } } while (0)
+#import "../harness-fail.h"
+#define CHECK(cond) HARNESS_CHECK(cond)
 
 // What LyricsSources.m and KaraokeSource.x give the tweak, here as little as the file needs.
 @implementation SGLyricsResult
@@ -346,7 +347,7 @@ static void validatorCheck(void) {
         CHECK(![folder containsObject:@"first.lrc"]);
         CHECK(([retiredNames() isEqual:@[]]));
     }
-    SGLyricsResult *byName = SGImportedLRCFor(@"spotify:track:y", @"A Song", @"By Name");
+    SGLyricsResult *byName = SGImportedLRCFor(@"spotify:local:::y:120", @"A Song", @"By Name");
     CHECK(byName != nil);
 
     // Normal persistence, done: the replaced file is gone and the linked one serves the track.
@@ -494,7 +495,7 @@ static void asyncLibraryCheck(void) {
     }
     atomic_store(&sg_requireWorker, true);
     // No link: the library scan and every parser run must happen off main.
-    CHECK([asyncLyrics(@"spotify:track:unlinked", @"Track79").texts.firstObject isEqual:@"Cached words"]);
+    CHECK([asyncLyrics(@"spotify:local:::unlinked:120", @"Track79").texts.firstObject isEqual:@"Cached words"]);
     NSHashTable *retainedLines = [NSHashTable weakObjectsHashTable];
     for (NSUInteger i = 0; i < 80; i++) {
         @autoreleasepool {
@@ -508,6 +509,64 @@ static void asyncLibraryCheck(void) {
     CHECK([asyncLyrics(@"spotify:local:Cache:Album:Track0:120", nil).texts.firstObject isEqual:@"Cached words"]);
     atomic_store(&sg_requireWorker, false);
     puts("LRC async: worker-only scanning/parsing, main completion and bounded retained sheets passed");
+}
+
+static SGLyricsResult *playbackTag(NSString *file) {
+    __block BOOL delivered = NO;
+    __block SGLyricsResult *sheet;
+    NSString *path = [@(getenv("SG_TEST_TAGS")) stringByAppendingPathComponent:file];
+    SGPlaybackLyricsFetch(@"spotify:local:Fixture:Record:Embedded:240", path, ^(SGLyricsResult *result) {
+        HARNESS_CHECK(NSThread.isMainThread);
+        sheet = result; delivered = YES;
+    });
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:5];
+    while (!delivered && limit.timeIntervalSinceNow > 0)
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.005]];
+    HARNESS_CHECK(delivered);
+    return sheet;
+}
+
+static void embeddedCheck(void) {
+    atomic_store(&sg_requireWorker, true);
+    for (NSInteger v = 2; v <= 4; v++) {
+        SGLyricsResult *plain = playbackTag([NSString stringWithFormat:@"plain%ld",(long)v]);
+        CHECK([plain.texts.firstObject isEqual:@"café"] && !plain.synced && [plain.provider isEqual:@"From the file"]);
+        SGLyricsResult *sync = playbackTag([NSString stringWithFormat:@"sync%ld",(long)v]);
+        CHECK((sync.synced && [sync.starts isEqual:@[@511,@4000]] && [sync.texts isEqual:@[@"First",@"Second"]]));
+    }
+    CHECK([playbackTag(@"flac-plain").texts.firstObject isEqual:@"Plain text"]);
+    SGLyricsResult *flac = playbackTag(@"flac-synced");
+    CHECK(flac.synced && [flac.starts isEqual:@[@1250]] && [flac.texts.firstObject isEqual:@"Stamped"]);
+    CHECK([playbackTag(@"tail.m4a").texts.firstObject isEqual:@"가사"]);
+    SGLyricsResult *afterBreaks = playbackTag(@"breaks-and-plain");
+    CHECK([SGKaraokeLineText(afterBreaks.karaokeLines.firstObject) isEqual:@"Words after breaks"] &&
+          !afterBreaks.synced && !playbackTag(@"only-breaks"));
+    CHECK(!playbackTag(@"missing") && !playbackTag(@"frame-clock") && !playbackTag(@"too-large"));
+    atomic_store(&sg_requireWorker, false);
+    puts("embedded: ID3 ULT/SLT and v2.3/2.4 USLT/SYLT, FLAC LYRICS/UNSYNCEDLYRICS and tail M4A ©lyr passed");
+}
+
+static void reviewFileChecks(void) {
+    // Modest pre-fix expansion (not a stress test); the text after removing stamps
+    // is copied 512 times by the timing builder.
+    NSString *stamps = [@"" stringByPaddingToLength:512*7 withString:@"[00:01]" startingAtIndex:0];
+    NSString *text = [@"" stringByPaddingToLength:512 withString:@"note" startingAtIndex:0];
+    NSError *error = nil;
+    BOOL bounded = !SGImportedLyricsFromText([stamps stringByAppendingString:text], &error)
+        && error.code == SGLyricsImportErrorUnreadable;
+    SGLyricsResult *tag = playbackTag(@"large-picture");
+    BOOL artwork = [tag.texts.firstObject isEqual:@"After artwork"] && tag.karaokeLines.firstObject.fileOwned;
+    NSString *uri = @"spotify:local:Fixture::Dangling:100";
+    NSString *matched = importLRC(lrc(@"Fixture - Dangling.lrc", @"Matched after removal"),nil,nil);
+    NSString *linked = importLRC(lrc(@"linked.txt", @"Linked override"),uri,nil);
+    HARNESS_CHECK(linked && matched && SGImportedLRCFor(uri,nil,nil).karaokeLines.firstObject.fileOwned);
+    HARNESS_CHECK([NSFileManager.defaultManager removeItemAtPath:lyricsPath(linked) error:nil]);
+    BOOL dangling = deleteLRC(linked) && !SGImportedLRCLinkedTo(uri)
+        && [SGImportedLRCFor(uri,nil,nil).texts.firstObject isEqual:@"Matched after removal"];
+    HARNESS_CHECK(deleteLRC(matched));
+    if (!bounded || !artwork || !dangling)
+        HARNESS_FAIL(@"bounded expansion=%d, lyrics after large artwork=%d, dangling removal=%d", bounded, artwork, dangling);
+    puts("file review: bounded expansion, lyrics after large artwork and dangling link removal passed");
 }
 
 // A second launch of the same binary over the same home: the links and the retired list as the defaults
@@ -555,14 +614,15 @@ int main(int argc, char *argv[]) {
         NSString *name = importLRC(lrc(@"halo.lrc", sheet), nil, &error);
         CHECK([name isEqualToString:@"halo.lrc"]);
         CHECK([SGLyricsOrder().firstObject isEqualToString:SGImportedLRCKey]);   // the first import goes on top
-        SGLyricsResult *found = SGImportedLRCFor(@"spotify:track:x", @"HALO", @"beyonce");
+        CHECK(!SGImportedLRCFor(@"spotify:track:x", @"HALO", @"beyonce"));
+        SGLyricsResult *found = SGImportedLRCFor(@"spotify:local:::x:120", @"HALO", @"beyonce");
         CHECK(found.synced && found.karaokeLines.count == 4);
         NSArray<NSNumber *> *starts = [found.karaokeLines valueForKey:@"start"];
         CHECK([starts isEqualToArray:(@[@10000, @19750, @59750, @64623])]);
         CHECK([SGKaraokeLineText(found.karaokeLines[2]) isEqualToString:@"Remember"]);
         CHECK([found.title isEqualToString:@"Halo"] && [found.provider isEqualToString:@"Imported LRC"]);
-        CHECK(!SGImportedLRCFor(@"spotify:track:x", @"Halo", @"Someone else"));
-        CHECK(!SGImportedLRCFor(@"spotify:track:x", nil, @"Beyoncé"));   // never without a title
+        CHECK(!SGImportedLRCFor(@"spotify:local:::x:120", @"Halo", @"Someone else"));
+        CHECK(!SGImportedLRCFor(@"spotify:local:::x:120", nil, @"Beyoncé"));   // never without a matching title
 
         // A taken name is numbered.
         CHECK([importLRC(lrc(@"halo.lrc", sheet), nil, &error) isEqualToString:@"halo (2).lrc"]);
@@ -571,10 +631,10 @@ int main(int argc, char *argv[]) {
         // "Artist - Title" and "Title – Artist" with no tags: the sides come from the track.
         importLRC(lrc(@"Daft Punk - One More Time.lrc", @"[00:01.00]One more time"), nil, &error);
         importLRC(lrc(@"Around the World – Daft Punk.lrc", @"[00:01.00]Around the world"), nil, &error);
-        CHECK(SGImportedLRCFor(@"spotify:track:y", @"one more time!", @"DAFT PUNK"));
-        CHECK(SGImportedLRCFor(@"spotify:track:y", @"Around The World", @"Daft Punk"));
-        CHECK(!SGImportedLRCFor(@"spotify:track:y", @"One More Time", @"Justice"));
-        CHECK(!SGImportedLRCFor(@"spotify:track:y", @"Discovery", @"Daft Punk"));
+        CHECK(SGImportedLRCFor(@"spotify:local:::y:120", @"one more time!", @"DAFT PUNK"));
+        CHECK(SGImportedLRCFor(@"spotify:local:::y:120", @"Around The World", @"Daft Punk"));
+        CHECK(!SGImportedLRCFor(@"spotify:local:::y:120", @"One More Time", @"Justice"));
+        CHECK(!SGImportedLRCFor(@"spotify:local:::y:120", @"Discovery", @"Daft Punk"));
 
         // A local file named by its URI; one linked has its file whatever the names say, and keeps it
         // through a rename's lyrics key. A file with a tag in it is LRC: its tags go, and what a bracketed
@@ -590,7 +650,12 @@ int main(int argc, char *argv[]) {
         found = SGImportedLRCFor(other, nil, nil);
         CHECK(found && !found.synced && found.karaokeLines.count == 3 && [found.title isEqualToString:@"Track 01"]);
         CHECK(([found.texts isEqual:(@[@"First line", @"Second line", @"bracketed"])]));
-        CHECK(!importLRC(lrc(@"skip.lrc", @"[00:01]x"), @"spotify:track:z", &error) || !SGImportedLRCLinkedTo(@"spotify:track:z"));
+        NSString *songFile = importLRC(lrc(@"song.XmL", @"[00:01]My song"), @"spotify:track:z", &error);
+        CHECK([songFile isEqual:@"song.lrc"] && [SGImportedLRCFor(@"z",nil,nil).texts.firstObject isEqual:@"My song"]);
+        CHECK(deleteLRC(songFile) && !SGImportedLRCFor(@"z",nil,nil));
+        CHECK(!importLRC(lrc(@"wrong.mp3", @"plain"), nil, &error) && error.code == SGLyricsImportErrorType);
+        NSString *limit = [@"Words" stringByPaddingToLength:1048576 withString:@" " startingAtIndex:0];
+        CHECK([importLRC(lrc(@"limit.TXT",limit), nil, &error) isEqual:@"limit.txt"]);
 
         // Deleting the file takes its link and its lyrics.
         CHECK(deleteLRC(plain));
@@ -605,6 +670,8 @@ int main(int argc, char *argv[]) {
         invalidationCheck(NO);
         invalidationCheck(YES);
         asyncLibraryCheck();
+        embeddedCheck();
+        reviewFileChecks();
         [NSFileManager.defaultManager removeItemAtURL:temporaryDirectory error:nil];
         printf("lrc: all checks passed\n");
     }

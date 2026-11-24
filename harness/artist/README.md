@@ -1,5 +1,16 @@
 # Artist harness
 
+**Hold Play (live Spotify, not the mock).** With Premium enabled on iOS 26.5, holding Play from a paused
+album on The Weeknd's page (9.1.90) and Queen's page (9.2.0) changed `SGPlayerState().contextURI` to
+the displayed artist's popular-release context and set `options.shufflingContext`. A tap paused; holding
+with shuffle already on resumed. Repeating the hold while playing did not pause, including after turning
+shuffle off manually. Holding for 0.8 s then dragging outside before lift left playback and shuffle alone.
+Neither artist header offered a Smart Shuffle step. On 9.2.0 the Korean custom action `셔플` was invoked
+through its registered target and selector; it declined a missing or disabled source and started shuffled
+playback with both sources available. This was not a spoken VoiceOver or physical vibration test.
+9.1.78 and 9.1.88 rely on the existing artist header identifiers and Spotify's Encore accessibility strings;
+an unrecognized control state leaves the hold inactive.
+
 Spotify's artist page mocked under its own class names and accessibility identifiers (from
 `trees/clean/artist/01.txt` and `05.txt`, recorded 2026-09-16), so `Redesigned/Artist/` can be laid out and
 looked at on the Mac without the phone.
@@ -53,10 +64,8 @@ and on with About hidden:
 The check allocates an isolated build directory and a simulator and runs all three cases. It removes
 its builds and simulator afterwards. Existing `harness/artist/build/` is untouched.
 
-About membership is learned from a diffable source's completed cell configuration, bound to its item
-identifier and artist. Layout only confirms that receipt against the current snapshot; it cannot stamp
-a previously unseen cell. The fixture uses UIKit's real snapshot reconfiguration with a retained cell,
-including configuration before the header pass and a stale cell with no valid artist. The header
-remains until a matching configuration is confirmed. Evidence survives
-scrolling/reuse, but not a new artist, data-source replacement, reload, or collection transaction.
-No About UI or native localized listener count is changed.
+With the option on, the header drops the listeners line from its first layout, for every artist; with
+About hidden too it keeps the line, since nothing else on the page would show the count. The page's
+cells are never inspected: Spotify's artist list is a Swift diffable data source that never calls the
+Objective-C cell provider an earlier receipt design hooked (iPhone 13 Pro, 1.0.0). No About UI or
+native localized listener count is changed.

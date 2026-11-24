@@ -918,6 +918,34 @@ static void buildLikedSongs(UIViewController *page, CGFloat W) {
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         NSLog(@"[harness] owner picture: %@", creatorPictureState(page.view));
+        NSArray *args = NSProcessInfo.processInfo.arguments;
+        if ([args containsObject:@"verify-details"]) {
+            BOOL line = ![args containsObject:@"no-line"], picture = line && ![args containsObject:@"no-picture"];
+            NSMutableSet *visible = [NSMutableSet set];
+            SGForEachView(page.view, ^(UIView *view) {
+                if (![NSStringFromClass(view.superview.class) isEqualToString:@"SGRHeaderInfo"] ||
+                    ![view isKindOfClass:UILabel.class] || view.hidden) return;
+                UILabel *label = (UILabel *)view;
+                [visible addObject:label.text ?: @""];
+                if ([args containsObject:@"verify-card-gap"] && [label.text isEqual:@"Barre Beats"]) {
+                    CGFloat coverBottom = CGRectGetMaxY([cover convertRect:cover.bounds toView:layout]);
+                    CGFloat gap = CGRectGetMinY([label convertRect:label.bounds toView:layout]) - coverBottom;
+                    CGFloat expected = CGRectGetMinY(block.frame) - coverBottom;
+                    if (fabs(gap - expected) > 0.5)
+                        HARNESS_FAIL(@"Compact Card cover-to-title gap %.2f, expected %.2f", gap, expected);
+                    NSLog(@"[harness] PASS compact Card cover-to-title gap %.2f", gap);
+                }
+                if ([label.text isEqual:@"The Weeknd"] && (!label.userInteractionEnabled ||
+                    !(label.accessibilityTraits & UIAccessibilityTraitButton))) HARNESS_FAIL(@"Creator lost its link");
+            });
+            NSMutableSet *want = [NSMutableSet setWithObject:@"Barre Beats"];
+            if (line) [want addObjectsFromArray:@[@"The Weeknd", @"4 637 saves • 20h 28m"]];
+            if (![args containsObject:@"no-description"])
+                [want addObject:@"All music for beat-driven barre classes. Some cool-downs too! I'm always adding to the list"];
+            if (![visible isEqual:want] || [creatorPictureState(page.view) hasPrefix:@"drawn"] != picture)
+                HARNESS_FAIL(@"Playlist metadata: visible %@, expected %@, picture %@", visible, want, creatorPictureState(page.view));
+            fprintf(stderr, "PASS playlist metadata\n");
+        }
     });
     box(creatorRow, UIView.class, CGRectMake(109.67, 0, columnWidth - 109.67, 34), nil);
 

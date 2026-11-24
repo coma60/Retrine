@@ -131,11 +131,12 @@ static BOOL isRefetch(NSString *path) {
 }
 
 // What a request's URL makes it, worked out once per task: its data comes in many chunks.
-enum { kBlocked = 1, kRefetch = 2, kPatched = 4 };
+enum { kBlocked = 1, kRefetch = 2, kPatched = 4, kAd = 8 };
 
 static unsigned kindOf(NSURL *url) {
     NSString *path = url.path.lowercaseString ?: @"";
-    return ((premium && isLogout(path)) || (ads && isAd(url, path)) ? kBlocked : 0)
+    return (ads && isAd(url, path) ? kAd : 0)
+         | (premium && isLogout(path) ? kBlocked : 0)
          | (premium && isRefetch(path) ? kRefetch : 0)
          | ((premium && (isBootstrap(path) || isCustomize(path))) || (premiumSplit && isSplitConfig(path))
             || (ads && isFeed(path)) ? kPatched : 0);
@@ -143,15 +144,20 @@ static unsigned kindOf(NSURL *url) {
 
 // The thirty seconds are read at each call, as the task's data and its end arrive.
 // The kind is worked out once per URL the task is on: a redirect moves it to another, which is classified again.
-static SGNet classify(NSURLSessionTask *task) {
-    NSURL *url = task.currentRequest.URL;
+static unsigned taskKind(NSURLSessionTask *task, NSURL *url) {
+    id key = url ?: (id)NSNull.null;
     NSArray *stored = objc_getAssociatedObject(task, &kKindKey);   // @[url, kind]
-    if (!stored || (stored[0] != url && ![stored[0] isEqual:url])) {
-        stored = @[url ?: NSNull.null, @(kindOf(url))];
-        objc_setAssociatedObject(task, &kKindKey, stored, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!stored || (stored[0] != key && ![stored[0] isEqual:key])) {
+        stored = @[key, @(kindOf(url))];
+        // resume and the delegate queue can both read the cached classification.
+        objc_setAssociatedObject(task, &kKindKey, stored, OBJC_ASSOCIATION_RETAIN);
     }
-    unsigned kind = [stored[1] unsignedIntValue];
-    if ((kind & kBlocked) || ((kind & kRefetch) && elapsed() > 30)) return SGNetBlock;
+    return [stored[1] unsignedIntValue];
+}
+
+static SGNet classify(NSURLSessionTask *task) {
+    unsigned kind = taskKind(task, task.currentRequest.URL);
+    if ((kind & (kBlocked | kAd)) || ((kind & kRefetch) && elapsed() > 30)) return SGNetBlock;
     return kind & kPatched ? SGNetPatch : SGNetPass;
 }
 
@@ -279,7 +285,7 @@ static void deliver(id<NSURLSessionDataDelegate> delegate, NSURLSession *session
 
 static BOOL blockedAdTask(NSURLSessionTask *task) {
     NSURL *url = task.currentRequest.URL ?: task.originalRequest.URL;
-    return ads && isAd(url, url.path.lowercaseString ?: @"");
+    return ads && (taskKind(task, url) & kAd);
 }
 
 static NSHTTPURLResponse *emptyAdResponse(NSURLSessionTask *task) {
@@ -306,6 +312,16 @@ static BOOL receiveAdResponse(NSURLSessionTask *task, SGResponseHandler handler,
     return YES;
 }
 
+static char kRequestCounted;
+static void countRequest(NSURLSessionTask *task, BOOL blocked) {
+    @synchronized (task) {
+        if (objc_getAssociatedObject(task, &kRequestCounted)) return;
+        objc_setAssociatedObject(task, &kRequestCounted, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    SGAdBlockSawOne(@"Requests");
+    if (blocked) SGAdBlockCountOne(@"Requests");
+}
+
 static BOOL completeAd(id<NSURLSessionDataDelegate> delegate, NSURLSession *session, NSURLSessionTask *task,
                        void (^finish)(NSError *)) {
     if (!blockedAdTask(task)) return NO;
@@ -317,8 +333,7 @@ static BOOL completeAd(id<NSURLSessionDataDelegate> delegate, NSURLSession *sess
                 finish([NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]);
                 return;
             }
-            SGAdBlockSawOne(@"Requests");
-            SGAdBlockCountOne(@"Requests");
+            countRequest(task, YES);
             deliver(delegate, session, task, [NSData data]);
             finish(nil);
         };
@@ -338,8 +353,14 @@ static BOOL completeAd(id<NSURLSessionDataDelegate> delegate, NSURLSession *sess
 // A conditional nebula reply uses server bytes captured under the task's original session.
 static NSURLResponse *responseFor(NSURLSessionTask *task, NSURLResponse *response) {
     NSURL *url = task.currentRequest.URL;
+    if (!isOfflineConfig(url)) {
+        // A later response on the same task must supersede any earlier offline buffer.
+        if (objc_getAssociatedObject(task, &kOfflineKey))
+            objc_setAssociatedObject(task, &kOfflineKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return response;
+    }
     SGOfflineResponse *state = [SGOfflineResponse new];
-    state.enabled = isOfflineConfig(url) && SGOfflineCompanionLoaded();
+    state.enabled = SGOfflineCompanionLoaded();
     state.url = url;
     objc_setAssociatedObject(task, &kOfflineKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (state.enabled) {
@@ -396,9 +417,8 @@ static void completeOffline(id<NSURLSessionDataDelegate> delegate, NSURLSession 
     }
 }
 
-static SGResponseHandler replayDecision(id<NSURLSessionDataDelegate> delegate, NSURLSession *session,
-                                       NSURLSessionTask *task, SGResponseHandler handler) {
-    NSData *body = objc_getAssociatedObject(task, &kOfflineReplayKey);
+static SGResponseHandler replayBody(id<NSURLSessionDataDelegate> delegate, NSURLSession *session,
+                                       NSURLSessionTask *task, NSData *body, SGResponseHandler handler) {
     if (!body) return handler;
     return ^(NSURLSessionResponseDisposition disposition) {
         void (^accepted)(void) = ^{
@@ -406,17 +426,23 @@ static SGResponseHandler replayDecision(id<NSURLSessionDataDelegate> delegate, N
             // Foundation may issue completion as soon as this is called.
             handler(disposition);
         };
-        if (NSOperationQueue.currentQueue == session.delegateQueue) accepted();
-        else [session.delegateQueue addOperationWithBlock:accepted];
+        [session.delegateQueue addOperationWithBlock:accepted];
     };
+}
+
+static SGResponseHandler replayDecision(id<NSURLSessionDataDelegate> delegate, NSURLSession *session,
+                                       NSURLSessionTask *task, SGResponseHandler handler) {
+    return replayBody(delegate, session, task, objc_getAssociatedObject(task, &kOfflineReplayKey), handler);
 }
 
 // A customize the server says has not changed, answered with the rewritten one from last time.
 static NSHTTPURLResponse *replayFor(NSURLSessionTask *task, NSURLResponse *response) {
     if (!premium || ![response isKindOfClass:NSHTTPURLResponse.class] || ((NSHTTPURLResponse *)response).statusCode != 304) return nil;
     NSURL *url = task.currentRequest.URL;
-    if (!isCustomize(url.path.lowercaseString ?: @"") || !cached()) return nil;
-    objc_setAssociatedObject(task, &kServedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!isCustomize(url.path.lowercaseString ?: @"")) return nil;
+    NSData *body = cached();
+    if (!body) return nil;
+    objc_setAssociatedObject(task, &kServedKey, body, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return [[NSHTTPURLResponse alloc] initWithURL:url statusCode:200 HTTPVersion:@"HTTP/2.0" headerFields:@{}];
 }
 
@@ -445,13 +471,14 @@ static void complete(id<NSURLSessionDataDelegate> delegate, NSURLSession *sessio
     NSMutableData *buffer = objc_getAssociatedObject(task, &kBufferKey);
     objc_setAssociatedObject(task, &kBufferKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (objc_getAssociatedObject(task, &kServedKey)) {
-        finish(nil);
+        countRequest(task, NO);
+        finish(error);
         return;
     }
-    SGAdBlockSawOne(@"Requests");
-    switch (classify(task)) {
+    SGNet kind = classify(task);
+    countRequest(task, kind == SGNetBlock);
+    switch (kind) {
         case SGNetBlock:
-            SGAdBlockCountOne(@"Requests");
             SGLog(@"answered %@ empty", path);
             deliver(delegate, session, task, blockedReply(path));
             finish(nil);
@@ -482,8 +509,7 @@ static void complete(id<NSURLSessionDataDelegate> delegate, NSURLSession *sessio
     BOOL consumed = receiveAdResponse(task, handler, ^(NSHTTPURLResponse *empty, SGResponseHandler decision) { %orig(session, task, empty, decision); });
     if (consumed) return;
     NSHTTPURLResponse *replay = replayFor(task, response);
-    %orig(session, task, replay ?: response, handler);
-    if (replay) deliver((id)self, session, task, cached());
+    %orig(session, task, replay ?: response, replay ? replayBody((id)self, session, task, objc_getAssociatedObject(task, &kServedKey), handler) : handler);
 }
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data {
     if (!holds(task, data)) %orig;
@@ -498,8 +524,7 @@ static void complete(id<NSURLSessionDataDelegate> delegate, NSURLSession *sessio
     BOOL consumed = receiveAdResponse(task, handler, ^(NSHTTPURLResponse *empty, SGResponseHandler decision) { %orig(session, task, empty, decision); });
     if (consumed) return;
     NSHTTPURLResponse *replay = replayFor(task, response);
-    %orig(session, task, replay ?: response, handler);
-    if (replay) deliver((id)self, session, task, cached());
+    %orig(session, task, replay ?: response, replay ? replayBody((id)self, session, task, objc_getAssociatedObject(task, &kServedKey), handler) : handler);
 }
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)task didReceiveData:(NSData *)data {
     if (!holds(task, data)) %orig;
@@ -584,12 +609,11 @@ static void complete(id<NSURLSessionDataDelegate> delegate, NSURLSession *sessio
     NSString *host = url.host.lowercaseString ?: @"", *path = url.path.lowercaseString ?: @"";
     BOOL spotify = has(host, @"spotify") || has(host, @"spclient");
     // EeveeSpotifyReincarnated 350aa15, with Hide ads independent of Spoof Premium.
-    if ((ads && isAd(url, path)) ||
+    if ((ads && (taskKind(self, url) & kAd)) ||
         (premium && spotify && elapsed() > 30 &&
          (has(path, @"deletetoken") || has(path, @"signup/public") || has(path, @"pses/screenconfig")
           || isCustomize(path) || has(host, @"apresolve")))) {
-        SGAdBlockSawOne(@"Requests");
-        SGAdBlockCountOne(@"Requests");
+        countRequest(self, YES);
         SGLog(@"canceled %@%@ before it left", host, path);
         [self cancel];
         return;
@@ -699,7 +723,7 @@ static SGDataCompletion offlineCompletion(NSURLSession *session, NSURLRequest *r
 %end
 %end
 
-%group OfflineLocalCompletionRequests
+%group OfflineLocalRequests
 %hook __NSURLSessionLocal
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
     observeAccountRequest(request);
@@ -709,6 +733,11 @@ static SGDataCompletion offlineCompletion(NSURLSession *session, NSURLRequest *r
         objc_setAssociatedObject(task, &kGenerationKey, generation, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return task;
 }
+%end
+%end
+
+%group OfflineLocalCompletionRequests
+%hook __NSURLSessionLocal
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))handler {
     observeAccountRequest(request);
     return %orig(offlineRequest(request), offlineCompletion((id)self, request, handler));
@@ -745,8 +774,11 @@ static void installOfflineHooks(void) {
             if (!offlineInputs) offlineInputs = [NSMutableDictionary new];
         }
         %init(OfflineCompletionRequests);
-        SEL selector = @selector(dataTaskWithRequest:completionHandler:);
         Class local = objc_getClass("__NSURLSessionLocal");
+        SEL selector = @selector(dataTaskWithRequest:);
+        Method plain = local ? class_getInstanceMethod(local, selector) : NULL;
+        if (plain && plain != class_getInstanceMethod(NSURLSession.class, selector)) %init(OfflineLocalRequests);
+        selector = @selector(dataTaskWithRequest:completionHandler:);
         Method own = local ? class_getInstanceMethod(local, selector) : NULL;
         if (own && own != class_getInstanceMethod(NSURLSession.class, selector)) %init(OfflineLocalCompletionRequests);
         %init(OfflineDelegates);

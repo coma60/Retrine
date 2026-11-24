@@ -60,6 +60,8 @@ static UILabel *label(UIFontTextStyle style, UIFontWeight weight, CGFloat size, 
     [center addObserver:self selector:@selector(activity:) name:UIApplicationDidBecomeActiveNotification object:nil];
     [center addObserver:self selector:@selector(activity:) name:UIApplicationWillResignActiveNotification object:nil];
     [center addObserver:self selector:@selector(tick) name:SGLyricsOffsetsDidChangeNotification object:nil];
+    for (NSString *name in @[SGNativeFileSheetDidChange, SGLyricsPinDidChangeNotification, SGLyricsSourceChosenNotification])
+        [center addObserver:self selector:@selector(sheetChanged:) name:name object:nil];
     UIView *view = self.view;
     view.backgroundColor = UIColor.blackColor;
 
@@ -168,13 +170,23 @@ static UILabel *label(UIFontTextStyle style, UIFontWeight weight, CGFloat size, 
     _artist.text = artist;
     _status.text = SGL(@"settings.locallyrics.viewer.loading", @"Loading lyrics…");
     _status.hidden = NO;
-    // The file is read off the main thread the first time; after that it is kept.
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        SGLyricsResult *lyrics = SGImportedLRCFor(uri, title, artist);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (generation == self->_loadGeneration) [self show:lyrics];
+    NSString *key = SGKaraokePlayingTrack();
+    if (key && (SGLyricsPinnedID(key) || SGLyricsChosenSource(key))) {
+        SGLyricsFetch(key, ^(SGLyricsResult *lyrics) {
+            if (generation == self->_loadGeneration && [key isEqual:SGKaraokePlayingTrack()]) [self show:lyrics];
         });
-    });
+        return;
+    }
+    BOOL loading;
+    SGLyricsResult *lyrics = SGNativeCurrentFileSheet(&loading);
+    if (!loading && generation == _loadGeneration) [self show:lyrics];
+}
+
+- (void)sheetChanged:(NSNotification *)note {
+    SPTPlayerState *state = SGPlayerState();
+    NSString *uri = SGURIString(state.track.URI);
+    if (note.object && ![note.object isEqual:uri] && ![note.object isEqual:SGKaraokePlayingTrack()]) return;
+    [self load:state uri:uri];
 }
 
 - (void)show:(SGLyricsResult *)lyrics {
@@ -187,6 +199,10 @@ static UILabel *label(UIFontTextStyle style, UIFontWeight weight, CGFloat size, 
         return;
     }
     _status.hidden = YES;
+    if (lyrics.provider.length) {
+        NSString *artist = SGPlayerState().track.artistName;
+        _artist.text = artist.length ? [@[artist, lyrics.provider] componentsJoinedByString:@" · "] : lyrics.provider;
+    }
     NSMutableArray<UILabel *> *labels = [NSMutableArray array];
     for (SGKaraokeLine *line in _lines) {
         UILabel *text = label(UIFontTextStyleTitle2, UIFontWeightBold, 24, UIColor.whiteColor);
@@ -233,7 +249,7 @@ static UILabel *label(UIFontTextStyle style, UIFontWeight weight, CGFloat size, 
     if (!_presented || _inactive || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
     SPTPlayerState *state = SGPlayerState();
     NSString *uri = SGURIString(state.track.URI);
-    if (uri && ![uri isEqualToString:_uri]) [self load:state uri:uri];
+    if (uri != _uri && ![uri isEqualToString:_uri]) [self load:state uri:uri];
     if (!_timed || !_labels.count) return;
     NSInteger ms = (NSInteger)((state.isPaused ? state.positionAsOfTimestamp : state.position) * 1000) - SGKaraokeDelayMs();
     NSInteger current = SGKaraokeLeadLine(_lines, ms);

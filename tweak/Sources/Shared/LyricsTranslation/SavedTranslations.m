@@ -86,9 +86,14 @@ static BOOL migrateStore(void) {
     sg_migrationError = error;
     return migrated;
 }
-static void maintainStore(BOOL startup) {
+static NSDictionary *sg_importPreview;
+static BOOL sg_stagingReclaimed;
+// Abandoned import stages are reclaimed once per launch, at the first pass that opens the store; a preview
+// staged in this launch is live, so a retry waits until none is held.
+static void maintainStore(void) {
     NSError *error = nil;
-    if ([store() prepare:&error] && (!startup || [SGTranslationTransfer reclaimStaging:store() error:&error]))
+    if ([store() prepare:&error] && (sg_stagingReclaimed || sg_importPreview ||
+        (sg_stagingReclaimed = [SGTranslationTransfer reclaimStaging:store() error:&error])))
         migrateStore();
     sg_storageError = error;
     refreshSummary();
@@ -100,9 +105,11 @@ static dispatch_queue_t writes(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         queue = dispatch_queue_create("retrine.translations", DISPATCH_QUEUE_SERIAL);
-        dispatch_async(queue, ^{ maintainStore(YES); });
-        [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationProtectedDataDidBecomeAvailable object:nil queue:nil
-            usingBlock:^(NSNotification *note) { dispatch_async(queue, ^{ maintainStore(NO); }); }];
+        dispatch_async(queue, ^{ maintainStore(); });
+        // A store first used before UIApplicationMain only learns it is unlocked at launch.
+        for (NSNotificationName name in @[UIApplicationProtectedDataDidBecomeAvailable, UIApplicationDidFinishLaunchingNotification])
+            [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil
+                usingBlock:^(NSNotification *note) { dispatch_async(queue, ^{ maintainStore(); }); }];
     });
     return queue;
 }
@@ -547,7 +554,6 @@ void SGSavedExport(NSArray *selection, void (^done)(NSArray<NSURL *> *, NSError 
         dispatch_async(dispatch_get_main_queue(), ^{ done(files, error); });
     });
 }
-static NSDictionary *sg_importPreview;
 static NSURL *sg_importURL;
 void SGSavedDiscardPreview(void (^done)(NSError *)) {
     dispatch_async(writes(), ^{

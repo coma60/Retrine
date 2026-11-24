@@ -53,7 +53,11 @@ static void placeLine(void);
 static char kLineKey, kStackKey, kTitleKey;
 static __weak UIView *sg_host;              // SPTNowPlayingView
 static __weak UIViewController *sg_floating; // the chips over the title (FloatingElementsUnit)
+#if SG_DRIVER
 static void flushChip(BOOL leaving);
+#else
+#define flushChip(leaving) ((void)0)
+#endif
 static CGFloat visibleChipTop(UIView *host, CGRect area);
 static void watchLineChip(CALayer *root);
 
@@ -645,6 +649,7 @@ static BOOL chipVisibleThrough(UIView *v, UIView *host, CGRect *clip) {
     }
     return !CGRectIsEmpty(*clip);
 }
+#if SG_DRIVER
 static __weak UIView *sg_chip;
 static uint64_t sg_tree;
 static void chipMix(uint64_t n) { sg_tree = (sg_tree ^ n) * UINT64_C(1099511628211); }
@@ -759,9 +764,12 @@ static void reportChip(UIView *host, CGRect area, CGFloat top, CGFloat titleTop,
     sg_pending = [record dataUsingEncoding:NSUTF8StringEncoding];
     flushChip(NO);
 }
-static CGFloat chipTopInBranch(UIView *view, UIView *host, CGRect clip, UIView **winner, BOOL record) {
+#endif
+static CGFloat chipTopInBranch(UIView *view, UIView *host, CGRect clip, UIView **winner, BOOL placement) {
     // Parent-local geometry preserves hierarchy and ignores a translation of the whole unit.
     BOOL identified = [view.accessibilityIdentifier isEqualToString:SGVideoSwitchIdentifier];
+#if SG_DRIVER
+    BOOL record = placement;
     if (record) {
         fingerprintLayer(view.layer, view == sg_floating.viewIfLoaded ? view.bounds : view.frame);
         chipMix(view.subviews.count); chipMix(view.layer.sublayers.count);
@@ -769,22 +777,27 @@ static CGFloat chipTopInBranch(UIView *view, UIView *host, CGRect clip, UIView *
         chipMix(view.clipsToBounds | (view.hidden << 1) | (identified << 2) | ((view.accessibilityIdentifier.length != 0) << 3));
         chipNumbers((CGFloat[]){view.alpha}, 1);
     }
+#else
+    BOOL record = NO;
+#endif
     if (!CGRectIsEmpty(clip) && !chipVisibleThrough(view, host, &clip)) clip = CGRectNull;
     CGRect visible = CGRectIsEmpty(clip) ? CGRectNull : CGRectIntersection(clip, [host convertRect:view.bounds fromView:view]);
     if (!record && CGRectIsEmpty(clip)) return CGFLOAT_MAX;
-    BOOL control = !record && ([view isKindOfClass:UIControl.class] || [view isKindOfClass:UIVisualEffectView.class]);
+    BOOL control = !placement && ([view isKindOfClass:UIControl.class] || [view isKindOfClass:UIVisualEffectView.class]);
     BOOL owns = !CGRectIsEmpty(visible) && (identified || control || layerOwnPaint(view.layer));
     CGFloat top = CGFLOAT_MAX;
     for (CALayer *layer in view.layer.sublayers) {
         if ([layer.delegate isKindOfClass:UIView.class] && ((UIView *)layer.delegate).layer == layer) continue;
+#if SG_DRIVER
         if (record) fingerprintLayer(layer, layer.frame);
+#endif
         if (owns || CGRectIsEmpty(clip) || !layerPaints(layer)) continue;
         CGRect rect = CGRectIntersection(clip, [host convertRect:layer.frame fromView:view]);
         if (!CGRectIsEmpty(rect) && CGRectGetMinY(rect) < top) { *winner = view; top = CGRectGetMinY(rect); }
     }
     for (UIView *child in view.subviews) {
         UIView *candidate = nil;
-        CGFloat other = chipTopInBranch(child, host, clip, &candidate, record);
+        CGFloat other = chipTopInBranch(child, host, clip, &candidate, placement);
         if (other < top) { top = other; *winner = candidate; }
     }
     if (owns) { *winner = view; return CGRectGetMinY(visible); }
@@ -793,8 +806,10 @@ static CGFloat chipTopInBranch(UIView *view, UIView *host, CGRect clip, UIView *
 
 static CGFloat visibleChipTop(UIView *host, CGRect area) {
     UIView *floating = sg_floating.viewIfLoaded;
+#if SG_DRIVER
     sg_chip = nil;
     sg_tree = UINT64_C(14695981039346656037);
+#endif
     if (!floating) return CGFLOAT_MAX;
     CGRect clip = CGRectNull;
     if (!CGRectIsEmpty(area) && floating.window && floating.window == host.window) {
@@ -805,7 +820,9 @@ static CGFloat visibleChipTop(UIView *host, CGRect area) {
     }
     UIView *winner = nil;
     CGFloat top = chipTopInBranch(floating, host, clip, &winner, YES);
+#if SG_DRIVER
     sg_chip = winner;
+#endif
     return top;
 }
 
@@ -1017,7 +1034,6 @@ static void placeLine(void) {
     BOOL wasCompact = line.normalSide > 0;
     CGFloat chipTop = CGFLOAT_MAX;
     line.chipArea = CGRectNull;
-    sg_chip = nil;
     line.normalSide = 0;
     line.ownedTilt = nil;
     BOOL wants = title && SGRPlayerLineTakesPreview(YES, host.bounds.size.height > host.bounds.size.width, playingTrackSynced());
@@ -1061,8 +1077,11 @@ static void placeLine(void) {
     BOOL fits = [line placeWithChipTop:chipTop];
     settlePreview(host, tilt, wants && fits);
     if (!fits) SGRPlayerReserveCover(nil, 0);
-    refreshEmptyStrip(fits && line.normalSide && !clip ? nil : host);
+    if (fits && line.normalSide && !clip) SGRPlayerEmptyStripIn(nil);
+    else refreshEmptyStrip(host);
+#if SG_DRIVER
     reportChip(host,line.chipArea,chipTop,title ? CGRectGetMinY(anchor) : CGFLOAT_MAX,stackFrame,fits && !clip ? line.normalSide : 0);
+#endif
     if (!wants && previewShowing(tilt, host)) fits = NO;
     // Both slots can fit and have the same width. Their ownership still changes
     // which source the clock must show (or clear) on this layout pass.
@@ -1245,8 +1264,10 @@ static void watchPreviewTaps(UIView *preview) {
     if (!SGRedesignedUI()) return;
     if (SGRPlayerLyricLineOn()) {
         %init(SGRLyricPreviewLayout);
+#if SG_DRIVER
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:nil
             usingBlock:^(NSNotification *note) { flushChip(YES); }];
+#endif
     }
     %init;
     SGRequireClasses(@[

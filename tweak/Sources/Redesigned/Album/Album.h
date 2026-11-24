@@ -49,6 +49,7 @@ UIViewController *SGRAlbumSettingsPage(void);
 // AlbumRows.x. A track row's artist line goes when it only repeats the album's artist, with the explicit badge
 // moved up beside the title; on until switched off (AlbumSettings.m).
 #define SGRKeyAlbumHideTrackArtists @"spotifyglass.redesign.album.hide.trackArtists"
+#define SGRKeyAlbumTrackNumbers @"spotifyglass.redesign.album.trackNumbers"
 // The album's artist as the header of the page `view` is on shows it, for the rows to compare theirs with. A
 // change lays the page's track rows out again; the same artist again is a no-op.
 void SGRAlbumSetArtist(UIView *view, NSString *artist);

@@ -1,11 +1,11 @@
 #import <Foundation/Foundation.h>
+#import "Core/SGPrefs.h"
 
 #define SGKeySponsorBlock @"spotifyglass.sponsorblock.enabled"
 #define SGKeySponsorBlockOverlay @"spotifyglass.sponsorblock.overlay"
 #define SGKeySponsorBlockRespectManual @"spotifyglass.sponsorblock.respectManualSeek"
 #define SGKeySponsorBlockHaptics @"spotifyglass.sponsorblock.haptics"
 #define SGKeySponsorBlockMinimum @"spotifyglass.sponsorblock.minDuration"
-#define SGKeySponsorBlockServer @"spotifyglass.sponsorblock.serverURL"
 #define SGKeySponsorBlockCount @"spotifyglass.sponsorblock.skipCount"
 #define SGKeySponsorBlockSaved @"spotifyglass.sponsorblock.timeSaved"
 

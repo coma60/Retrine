@@ -338,8 +338,6 @@ void SGRAlbumSetArtist(UIView *view, NSString *artist) {
 static void applyCredit(UIView *cell, UIView *row, UIView *page) {
     NSString *album = objc_getAssociatedObject(page, &kArtistKey);
     if (!album) return;
-    // The content's own pass first: a new row has no size in its text before it.
-    [((UICollectionViewCell *)cell).contentView layoutIfNeeded];
     UIView *subtitle = SGRFindByIdentifier(row, @"EncoreConsumerMobile.View.Granular.Subtitle", &kSubtitleKey);
     UILabel *title = onlyLabel(SGRFindByIdentifier(row, @"EncoreConsumerMobile.View.Granular.Title", &kTitleKey));
     UILabel *artist = onlyLabel(subtitle);
@@ -419,6 +417,16 @@ static NSHashTable<UIView *> *countedPages(void) {
     return pages;
 }
 
+static NSString *pageAlbumURI(UIView *page) {
+    NSString *uri;
+    for (UIResponder *r = page.nextResponder; r; r = r.nextResponder) {
+        if (![r isKindOfClass:UIViewController.class]) continue;
+        uri = [NSClassFromString(@"SGAlbumQueuePage") albumURI:r];
+        if (uri) break;
+    }
+    return uri;
+}
+
 static SGRAlbumCountPage *spotifyCountsForPage(UIView *page) {
     static char key;
     SGRAlbumCountPage *counts = objc_getAssociatedObject(page, &key);
@@ -426,12 +434,7 @@ static SGRAlbumCountPage *spotifyCountsForPage(UIView *page) {
         counts = [[SGRAlbumCountPage alloc] initWithStore:SGRAlbumSpotifyCountsStore()];
         objc_setAssociatedObject(page, &key, counts, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    NSString *uri;
-    for (UIResponder *r = page.nextResponder; r; r = r.nextResponder) {
-        if (![r isKindOfClass:UIViewController.class]) continue;
-        uri = [NSClassFromString(@"SGAlbumQueuePage") albumURI:r];
-        if (uri) break;
-    }
+    NSString *uri = pageAlbumURI(page);
     __weak UIView *weakPage = page;
     [counts followAlbum:uri changed:^{
         UIView *page = weakPage;
@@ -441,8 +444,28 @@ static SGRAlbumCountPage *spotifyCountsForPage(UIView *page) {
     return counts;
 }
 
+static BOOL sg_trackNumbers;
+static char kIndexAlbum, kTrackIndex;
+static void followTrackIndex(UIView *page) {
+    NSString *uri = pageAlbumURI(page);
+    NSString *previous = objc_getAssociatedObject(page, &kIndexAlbum);
+    if (previous == uri || [previous isEqual:uri]) return;
+    objc_setAssociatedObject(page, &kIndexAlbum, uri, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    objc_setAssociatedObject(page, &kTrackIndex, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    layOutRowsAgain(page);
+    if (!uri) return;
+    __weak UIView *weakPage = page;
+    [SGRAlbumSpotifyCountsStore() loadTrackIndex:uri completion:^(SGRAlbumTrackIndex *index) {
+        UIView *page = weakPage;
+        if (![objc_getAssociatedObject(page, &kIndexAlbum) isEqual:uri]) return;
+        objc_setAssociatedObject(page, &kTrackIndex, index, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (index) layOutRowsAgain(page);
+    }];
+}
+
 void SGRAlbumSetTitle(UIView *view, NSString *title) {
     UIView *page = SGRAlbumPageOf(view);
+    if (sg_trackNumbers && page) followTrackIndex(page);
     if (page && countsPlace() != SGRAlbumPlayCountsOff && SGRAlbumUsesSpotifyCounts()) {
         spotifyCountsForPage(page);
         return;
@@ -578,7 +601,6 @@ static void applyCount(UIView *cell, UIView *row, UIView *page) {
     NSString *album = objc_getAssociatedObject(page, &kAlbumKey);
     BOOL spotify = SGRAlbumUsesSpotifyCounts();
     if (!album && !spotify) return;
-    [((UICollectionViewCell *)cell).contentView layoutIfNeeded];
     UILabel *title = titleOf(row);
     if (!title) return;
     UIView *menu = SGRFindByIdentifier(row, @"Components.UI.ContextMenuButton*", &kMenuKey);
@@ -798,6 +820,76 @@ static void applyMore(UIView *cell, UIView *row, UIView *page) {
 
 #pragma mark - the rows
 
+// Layout coordinates, independent of the vertical transform that belongs to the credit change.
+typedef struct { CGPoint center; CGRect bounds; } SGRTitleGeometry;
+
+static SGRTitleGeometry titleGeometry(UILabel *title) {
+    return (SGRTitleGeometry){title.center, title.bounds};
+}
+
+static BOOL hasTitleGeometry(UILabel *title, SGRTitleGeometry geometry) {
+    return CGPointEqualToPoint(title.center, geometry.center) && CGRectEqualToRect(title.bounds, geometry.bounds);
+}
+
+static void setTitleGeometry(UILabel *title, SGRTitleGeometry geometry) {
+    title.bounds = geometry.bounds;
+    title.center = geometry.center;
+}
+
+@interface SGROrdinal : UILabel
+@property (nonatomic, weak) UILabel *titleLabel;
+@property (nonatomic, weak) UIView *observedOwner;
+@property (nonatomic) SGRTitleGeometry original, inset, settled;
+@property (nonatomic) CGSize ownerSize;
+@end
+@implementation SGROrdinal
+@end
+
+static char kOrdinal;
+static void restoreOrdinal(UIView *cell) {
+    SGROrdinal *number = objc_getAssociatedObject(cell, &kOrdinal);
+    if (!number.superview) return;
+    if (hasTitleGeometry(number.titleLabel, number.inset))
+        setTitleGeometry(number.titleLabel, number.original);
+    number.titleLabel = nil;
+    [number removeFromSuperview];
+}
+
+static SGROrdinal *applyOrdinal(UIView *cell, UIView *row, UIView *page) {
+    SGRAlbumTrackIndex *index = objc_getAssociatedObject(page, &kTrackIndex);
+    if (!index) return nil;
+    UILabel *title = titleOf(row);
+    if (!title.text.length || !CGAffineTransformIsIdentity(title.transform)) return nil;
+    UIView *menu = SGRFindByIdentifier(row, @"Components.UI.ContextMenuButton*", &kMenuKey);
+    NSString *uri = SGRAlbumTrackURIFromMenuIdentifier(menu.accessibilityIdentifier);
+    NSNumber *position = [index numberForURI:uri title:title.text];
+    if (!position) return nil;
+    SGROrdinal *number = objc_getAssociatedObject(cell, &kOrdinal);
+    if (!number) {
+        number = [SGROrdinal new];
+        number.userInteractionEnabled = number.isAccessibilityElement = NO;
+        objc_setAssociatedObject(cell, &kOrdinal, number, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    number.text = position.stringValue;
+    number.font = SGMonospacedDigitsFont(title.font);
+    number.textColor = title.textColor;
+    number.alpha = title.alpha;
+    CGFloat width = ceil(number.intrinsicContentSize.width), lead = width + 6;
+    CGRect frame = title.frame;
+    if (frame.size.width <= lead) return nil;
+    BOOL rtl = row.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+    number.original = titleGeometry(title);
+    CGRect inRow = [title.superview convertRect:frame toView:row];
+    number.frame = CGRectMake(rtl ? CGRectGetMaxX(inRow) - width : CGRectGetMinX(inRow), inRow.origin.y, width, inRow.size.height);
+    frame.size.width -= lead;
+    if (!rtl) frame.origin.x += lead;
+    title.frame = frame; // Identity transform here, before applyCredit.
+    number.inset = titleGeometry(title);
+    [row addSubview:number];
+    number.titleLabel = title;
+    return number;
+}
+
 static void applyRow(UIView *cell, UIView *page) {
     clearSurface(cell);
     UIView *row = SGRFindByIdentifier(cell, @"Components.UI.RetrievalRow*", &kRowKey);
@@ -820,9 +912,35 @@ static void applyRow(UIView *cell, UIView *page) {
 
     applyHairline(row);
     offerMotionRow((UICollectionViewCell *)cell, row, page);
+    // Settle Spotify's text constraints once, before any decorator measures or insets the title.
+    if (sg_trackNumbers || hidesCredits() || countsPlace() == SGRAlbumPlayCountsInRow)
+        [((UICollectionViewCell *)cell).contentView layoutIfNeeded];
     if (countsPlace() == SGRAlbumPlayCountsInRow) applyCount(cell, row, page);
     else if (countsPlace() == SGRAlbumPlayCountsInMenu) watchMenu(cell, row);
+    SGROrdinal *number = sg_trackNumbers ? applyOrdinal(cell, row, page) : nil;
     if (hidesCredits()) applyCredit(cell, row, page);
+    if (number) {
+        UILabel *title = number.titleLabel;
+        number.center = CGPointMake(number.center.x, CGRectGetMidY([title convertRect:title.bounds toView:row]));
+        // The Encore label wrapper lays its UILabel out again independently of the cell.
+        // Keep the final box (including credit/badge and count geometry), not another
+        // incremental inset. Reuse clears titleLabel before the next row takes ownership.
+        number.settled = titleGeometry(title);
+        number.ownerSize = title.superview.bounds.size;
+        if (number.observedOwner != title.superview) {
+            __weak SGROrdinal *weakNumber = number;
+            __weak UIView *weakCell = cell;
+            if (SGRObserveLayout(title.superview, ^(UIView *owner) {
+                SGROrdinal *active = weakNumber;
+                UILabel *label = active.titleLabel;
+                if (label.superview != owner) return;
+                if (!CGSizeEqualToSize(owner.bounds.size, active.ownerSize)) {
+                    [weakCell setNeedsLayout];
+                } else if (!hasTitleGeometry(label, active.settled))
+                    setTitleGeometry(label, active.settled);
+            })) number.observedOwner = title.superview;
+        }
+    }
     applyMore(cell, row, page);
 }
 
@@ -860,6 +978,7 @@ static void motionBatch(UICollectionView *list, NSInteger delta) {
 - (void)layoutSubviews {
     // In the reverse of the order they were made: the artist line's change measured the narrowed title.
     restoreCredit((UIView *)self);
+    if (sg_trackNumbers) restoreOrdinal((UIView *)self);
     restoreCount((UIView *)self);
     // Flagged again below while it is still an album's track row.
     unwatch((UIView *)self);
@@ -878,6 +997,7 @@ static void motionBatch(UICollectionView *list, NSInteger delta) {
     unwatch(cell);
     dropDrawnBadge(cell);
     BOOL changed = restoreCredit(cell);
+    if (sg_trackNumbers) restoreOrdinal(cell);
     changed = restoreCount(cell) || changed;
     if (changed || SGRIsTrackContent(cell.contentView.subviews.firstObject)) [cell setNeedsLayout];
 }
@@ -885,6 +1005,7 @@ static void motionBatch(UICollectionView *list, NSInteger delta) {
 
 %ctor {
     if (!SGRedesignedUI()) return;
+    sg_trackNumbers = SGFlag(SGRKeyAlbumTrackNumbers, NO);
     %init;
     if (countsPlace() == SGRAlbumPlayCountsInMenu) %init(SGRAlbumMenuActions);
     if (countsPlace() == SGRAlbumPlayCountsInRow) {

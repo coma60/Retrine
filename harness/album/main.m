@@ -9,6 +9,7 @@
 #import "Redesigned/Kit/SGRField.h"
 #import <mach/mach.h>
 #import "../harness-fail.h"
+#import "Core/SGPrefs.h"
 #import "motion-visibility.h"
 #import "hero-veil-check.h"
 #import "cover-fixtures.h"
@@ -273,6 +274,13 @@ static void verifyAlbumActions(UIView *root) {
 // The element the cell's content is, which is the only thing that says what a cell holds.
 @interface MockRetrievalListStructuredDataView : UIView @end
 @implementation MockRetrievalListStructuredDataView @end
+
+@interface SGAlbumQueuePage : NSObject @end
+@implementation SGAlbumQueuePage
++ (NSString *)albumURI:(id)controller {
+    return [NSProcessInfo.processInfo.arguments containsObject:@"ordinal-layout"] ? @"spotify:album:0000000000000000000001" : nil;
+}
+@end
 
 @interface MockAlbum_PageImpl20FooterStructuredDataView : UIView @end
 @implementation MockAlbum_PageImpl20FooterStructuredDataView @end
@@ -647,7 +655,17 @@ static NSString *trailingLabel(UIView *root) {
         UIView *content = box(cell.contentView, MockRetrievalListStructuredDataView.class, cell.contentView.bounds, nil);
         UIView *row = box(content, UIView.class, content.bounds, @"Components.UI.RetrievalRowElementUI");
         row.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1];
-        label(row, CGRectMake(16, 8, W - 90, 18), track[0], 13, UIColor.whiteColor, @"EncoreConsumerMobile.View.Granular.Title");
+        UILabel *constrainedTitle = label(row, CGRectMake(16, 8, W - 90, 18), track[0], 13, UIColor.whiteColor, @"EncoreConsumerMobile.View.Granular.Title");
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"ordinal-layout"]) {
+            UIView *owner = constrainedTitle.superview;
+            constrainedTitle.translatesAutoresizingMaskIntoConstraints = NO;
+            [NSLayoutConstraint activateConstraints:@[
+                [constrainedTitle.leadingAnchor constraintEqualToAnchor:owner.leadingAnchor],
+                [constrainedTitle.trailingAnchor constraintEqualToAnchor:owner.trailingAnchor],
+                [constrainedTitle.topAnchor constraintEqualToAnchor:owner.topAnchor],
+                [constrainedTitle.bottomAnchor constraintEqualToAnchor:owner.bottomAnchor],
+            ]];
+        }
         CGFloat artistX = 16;
         if (track[2].length) {
             UIView *badge = box(row, UIView.class, CGRectMake(16, 31, 13, 13), @"Components.UI.ExplicitIcon");
@@ -667,6 +685,65 @@ static NSString *trailingLabel(UIView *root) {
         y += 56;
     }
     _tracksBottom = y;
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"ordinal-layout"]) at(3, ^{
+        UICollectionViewCell *cell = trackCells[2];
+        UILabel *title = (id)byIdentifier(cell, @"EncoreConsumerMobile.View.Granular.Title-internal");
+        UIView *owner = title.superview, *row = owner.superview;
+        UILabel *number = nil;
+        for (UIView *v in row.subviews) if ([v isKindOfClass:UILabel.class] && [((UILabel *)v).text isEqual:@"1"]) number = (UILabel *)v;
+        HARNESS_CHECK(number && [title.text isEqual:tracks[2][0]]);
+        BOOL translatedPass = [NSProcessInfo.processInfo.arguments containsObject:@"ordinal-translated"];
+        CGAffineTransform credit = title.transform;
+        if (translatedPass) {
+            HARNESS_CHECK(credit.ty != 0 && SGEnabled(SGRKeyAlbumHideTrackArtists));
+            // Exercise the same constraint solution at another vertical translation. Neither
+            // changing it nor restoring it should change the title's underlying layout position.
+            title.transform = CGAffineTransformTranslate(credit, 0, 3);
+        }
+        // A new constraint solution in the title's owner, without a layout pass of the cell.
+        NSLayoutConstraint *edge = owner.constraints.firstObject;
+        edge.constant += 1;
+        [owner layoutIfNeeded];
+        edge.constant -= 1;
+        [owner layoutIfNeeded];
+        if (translatedPass) {
+            HARNESS_CHECK(CGAffineTransformEqualToTransform(title.transform, CGAffineTransformTranslate(credit, 0, 3)));
+            title.transform = credit;
+            CGFloat delta = CGRectGetMidY([title convertRect:title.bounds toView:row]) - CGRectGetMidY(row.bounds);
+            if (fabs(delta) > 0.5) HARNESS_FAIL(@"translated title displaced %.2f pt after constraint pass", delta);
+        }
+        CGRect drawn = [title convertRect:title.bounds toView:row];
+        BOOL rtl = row.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+        CGFloat gap = rtl ? CGRectGetMinX(number.frame) - CGRectGetMaxX(drawn) : CGRectGetMinX(drawn) - CGRectGetMaxX(number.frame);
+        if (gap < 5.5) HARNESS_FAIL(@"ordinal overlaps constrained title: gap %.2f", gap);
+        HARNESS_CHECK(!number.isAccessibilityElement && !number.userInteractionEnabled);
+        UIView *menu = byIdentifier(row, @"Components.UI.ContextMenuButton-5673WA8EEUSPx1ir26lhGW");
+        HARNESS_CHECK(menu.userInteractionEnabled && !menu.hidden);
+        if (SGEnabled(SGRKeyAlbumHideTrackArtists)) {
+            HARNESS_CHECK(byIdentifier(row, @"EncoreConsumerMobile.View.Granular.Subtitle").alpha == 0);
+            HARNESS_CHECK(byIdentifier(row, @"Components.UI.ExplicitIcon").alpha == 0);
+            UIImageView *drawnBadge = nil;
+            for (UIView *v in row.subviews) if ([v isKindOfClass:UIImageView.class]) drawnBadge = (id)v;
+            HARNESS_CHECK(drawnBadge.image && fabs(CGRectGetMidY(number.frame) - CGRectGetMidY(drawn)) < 1);
+            CGFloat textWidth = ceil([title textRectForBounds:title.bounds limitedToNumberOfLines:1].size.width);
+            CGFloat badgeGap = rtl ? CGRectGetMaxX(drawn) - textWidth - CGRectGetMaxX(drawnBadge.frame) :
+                CGRectGetMinX(drawnBadge.frame) - CGRectGetMinX(drawn) - textWidth;
+            HARNESS_CHECK(fabs(badgeGap - 4) < 1);
+        }
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"ordinal-count"]) {
+            UILabel *count = nil;
+            for (UIView *v in row.subviews) if ([v isKindOfClass:UILabel.class] && v != number) count = (id)v;
+            HARNESS_CHECK(count.text.length && !CGRectIntersectsRect(count.frame, drawn) &&
+                          !CGRectIntersectsRect(count.frame, menu.frame));
+        }
+        [cell prepareForReuse];
+        HARNESS_CHECK(!number.superview);
+        if (translatedPass) {
+            HARNESS_CHECK(CGAffineTransformIsIdentity(title.transform));
+            HARNESS_CHECK(CGRectEqualToRect(title.frame, owner.bounds));
+        }
+        NSLog(@"[harness] PASS ordinal layout: %.2fpt gap after container pass, reused cleanly", gap);
+    });
 
     // What each row shows once the header has given its artist: the line's alpha, how far the title moved, and
     // where the badge is drawn against the end of the title's text. Then the first row is prepared for reuse and

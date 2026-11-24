@@ -21,3 +21,5 @@ compile -DSG_LYRICS_TEST_STORE \
     "$SRC/Shared/Lyrics/KaraokeTiming.m" "$SRC/Shared/Lyrics/LyricsLanguage.m" "$SRC/Shared/Lyrics/Romanise.m" "$SRC/Core/SGLocalize.m" "$SRC/Core/SGFileHash.m" "$SRC/Shared/AdBlock/Protobuf.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \
     -framework NaturalLanguage -framework UIKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework Security -framework Foundation -lz "$SRC/Core/SGDataRoot.m" -o "$OUT/check"
 "$OUT/check" "$@"
+# A fresh process: startup maintenance must fail before anything else has opened the store.
+if [ $# -eq 0 ]; then "$OUT/check" --startup-reclaim-only; fi

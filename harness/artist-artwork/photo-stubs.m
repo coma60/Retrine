@@ -9,6 +9,15 @@ const CGFloat SGRHeaderInfoTitleRise = 56;
 @implementation SGRHeaderInfo
 @end
 
+// Play's hold to shuffle (ArtistShuffleHold.h): never pressed here.
+#import "Redesigned/Kit/SGRActionRow.h"
+#import "Shared/Haptics/Haptics.h"
+@implementation SGRPlayCapsule
+@end
+void SGPlayFeedback(SGFeedback feedback) {}
+BOOL SGRActivate(UIView *source) { return NO; }
+BOOL SGRSourceEnabled(UIView *source) { return NO; }
+
 // Core/SGLocalize.m: English.
 NSString *SGL(NSString *key, NSString *english) { return english; }
 
@@ -56,7 +65,7 @@ NSString *SGRFirstLabelText(UIView *view) {
 UIImageView *SGRHeaderArtworkIn(UIView *root) { return nil; }
 BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view)) { return NO; }
 void SGRBlankView(UIView *view) {}
-void SGRPinnedMore(UIView *page, const void *key, UIView *more) {}
+SGRMirrorButton *SGRPinnedMore(UIView *page, const void *key, UIView *more) { return nil; }
 
 // Artist/ArtistFollow.x and ArtistSections.x.
 BOOL SGRArtistFollowing(UIView *page, NSString *moreIdentifier, BOOL *following, void (^changed)(void)) { return NO; }

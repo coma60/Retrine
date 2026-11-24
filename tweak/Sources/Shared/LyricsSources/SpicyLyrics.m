@@ -55,7 +55,13 @@ static NSString *storedKey(SGLyricsRequestContext *context) {
     }
     sg_keyLoaded = YES;
     if (status == errSecItemNotFound || !data) return nil;
-    NSString *key = [[NSString alloc] initWithData:(__bridge_transfer NSData *)data encoding:NSUTF8StringEncoding];
+    NSData *bytes = CFBridgingRelease(data);
+    NSString *key = [[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding];
+    if (bytes.length && !key) {
+        sg_keyLoaded = NO;
+        [context noteFailure:YES];
+        return nil;
+    }
     sg_key = key.length ? key : nil;
     return sg_key;
 }
@@ -390,7 +396,6 @@ void SGSpicyLyricsAskWith(NSString *key, SGLyricsQuery *query, void (^done)(SGLy
 void SGSpicyLyricsAskWith(NSString *key, SGLyricsQuery *query, void (^done)(SGLyricsResult *result)) {
     NSString *trackID = query.trackID;
     if (!key.length || !isTrackID(trackID)) {
-        if (!key.length) [query.requestContext noteFailure:YES];
         done(nil);
         return;
     }

@@ -11,10 +11,13 @@ SRC=$(cd "$HERE/../../../tweak/Sources" && pwd)
 OUT=${OUT:-"$HERE/../build/lyrics"}   # harness/*/build/ is ignored
 rm -rf "$OUT/LocalLyricsHarness.app"; mkdir -p "$OUT/LocalLyricsHarness.app" "$OUT/shots"
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+"${THEOS:-$HOME/theos}/bin/logos.pl" -c generator=internal "$SRC/Native/LocalFiles/LocalLyricsButton.x" > "$OUT/footer.inc"
+python3 "$HERE/../embedded-fixtures.py" "$OUT/tags"
+cp "$OUT/tags/flac-plain" "$OUT/LocalLyricsHarness.app/tagged.flac"
 xcrun -sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-arc -g -O0 -Wall -Werror -Wno-deprecated-declarations \
-    -I"$SRC" -isysroot "$SDK" \
-    "$HERE/main.m" "$HERE/../../scene.m" "$HERE/viewer.m" \
-    "$SRC/Shared/LocalFiles/LocalLyricsPage.m" "$SRC/Shared/LocalFiles/LocalLyrics.m" "$SRC/Shared/LocalFiles/LyricRetirement.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \
+    -I"$SRC" -I"$SRC/Native/LocalFiles" -I"$OUT" -isysroot "$SDK" \
+    "$HERE/main.m" "$HERE/../../scene.m" "$HERE/footer.m" "$SRC/Native/LocalFiles/LocalLyricsPage.m" \
+    "$SRC/Shared/LocalFiles/LocalLyricsPage.m" "$SRC/Shared/LocalFiles/LocalLyrics.m" "$SRC/Shared/LocalFiles/EmbeddedLyrics.m" "$SRC/Shared/LocalFiles/LyricRetirement.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \
     "$SRC/Shared/Lyrics/KaraokeTiming.m" "$SRC/Shared/LyricsSources/SGTTML.m" "$SRC/Shared/AdBlock/Protobuf.m" \
     "$SRC/Settings/SGPage.m" "$SRC/Settings/SGPageStyle.m" "$SRC/Core/SGGlass.m" "$SRC/Core/SGLog.m" "$SRC/Core/SGLocalize.m" "$SRC/Core/SGPrefs.m" "$SRC/Core/SGViewTree.m" "$SRC/Core/SGUIMode.m" \
     -framework UIKit -framework QuartzCore -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers -framework Foundation \

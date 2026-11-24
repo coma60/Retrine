@@ -8,6 +8,7 @@
 #import "Shared/Player/PlayerState.h"
 #import "Core/SGOptionalWork.h"
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
+#import "../harness-fail.h"
 #define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "FAILED line %d: %s\n", __LINE__, #cond); exit(1); } } while (0)
 
 static void (^sg_pinnedReply)(SGLyricsResult *);
@@ -155,6 +156,9 @@ static OSStatus emptySpicyKey(CFDictionaryRef query, CFTypeRef *data) { return e
 #define kKeptTracks kSpicyKeptTracks
 #import "Shared/LyricsSources/SpicyLyrics.m"
 #undef kKeptTracks
+#define keyQuery deezerKeyQuery
+#import "Shared/LyricsSources/Deezer.m"
+#undef keyQuery
 #undef SecItemCopyMatching
 #undef SecItemDelete
 #undef SGLyricsGetJSONReplyIn
@@ -165,7 +169,7 @@ static NSString *sg_providerTrack;
 static SGLyricsRequestContext *sg_providerContext;
 SGLyricsAsk SGMusixmatchAsk = ^(SGLyricsQuery *q, void (^done)(SGLyricsResult *)) { sg_providerReply = done; sg_providerTrack = q.trackID; sg_providerContext = q.requestContext; };
 SGLyricsAsk SGBiniLyricsAsk, SGUnisonAsk, SGNetEaseAsk, SGQQMusicAsk, SGKuGouAsk;
-SGLyricsAsk SGBugsAsk, SGGenieAsk, SGLyricsPlusAsk, SGDeezerAsk, SGImportedLRCAsk, SGGeniusAsk;
+SGLyricsAsk SGBugsAsk, SGGenieAsk, SGLyricsPlusAsk, SGImportedLRCAsk, SGGeniusAsk;
 SGLyricsAsk SGPetitLyricsAsk;
 NSString *const SGImportedLRCKey = @"importedlrc";
 @implementation SGSource
@@ -203,10 +207,14 @@ SPTPlayerState *SGPlayerState(void) { return sg_fixtureState; }
 NSNotificationName const SGLocalFileEditsDidChangeNotification = @"harness.localFileEdits";
 static BOOL sg_testLocalFile;
 BOOL SGLocalFileIs(NSString *track) { return sg_testLocalFile; }
-NSString *SGLocalFileLyricsKey(NSString *track) { return nil; }
+NSString *SGLocalFileLyricsKey(NSString *track) { return [track hasPrefix:@"spotify:local:"] ? track : nil; }
 NSDictionary *SGLocalFileInfo(NSString *track) { return @{@"title": @"Song", @"artist": @"Singer", @"seconds": @200}; }
 static NSMutableDictionary<NSString *, void (^)(SGLyricsResult *)> *sg_importedReplies;
-void SGImportedLRCFetch(NSString *track, NSString *title, NSString *artist, void (^done)(SGLyricsResult *)) {
+static NSString *sg_linkedSong;
+static NSString *sg_testReportedPath;
+NSString *SGImportedLRCLinkedTo(NSString *track) { return [track isEqual:sg_linkedSong] ? @"listener.lrc" : nil; }
+void SGPlaybackLyricsFetch(NSString *track, NSString *path, void (^done)(SGLyricsResult *)) {
+    sg_testReportedPath = path;
     if (sg_importedReplies) sg_importedReplies[track] = done;
     else dispatch_async(dispatch_get_main_queue(), ^{ done(nil); });
 }
@@ -610,6 +618,76 @@ static void checkImportedDelivery(void) {
     puts("imported delivery: nonblocking lookup, track isolation and retired-token rejection passed");
 }
 
+static void checkSongImport(void) {
+    NSString *song = @"7aQAZv5XfpQF63U7lgN6w5";
+    NSArray *uris = @[[@"spotify:track:" stringByAppendingString:song]];
+    [sg_testDefaults setBool:YES forKey:SGKeyLyricsOffline];
+    SGLyricsResult *ordinary = SGLrcLibRecordResult(@{@"syncedLyrics":@"[00:02]Ordinary words"});
+    SGLyricsStoreSave(song,ordinary.karaokeLines,@"Ordinary");
+    sg_linkedSong = song;
+    NSUInteger asks = sg_spotifyAsks;
+    sg_providerReply = nil;
+    sg_importedReplies = [NSMutableDictionary dictionary];
+    SGKaraokeRequestLyrics(song);
+    void (^deliver)(SGLyricsResult *) = sg_importedReplies[song];
+    HARNESS_CHECK(deliver && !SGKaraokeLinesForTrack(song));
+    deliver(SGLyricsPlainTextResult(@"My words", @"Imported LRC"));
+    SGKaraokeKeepSpotifyLines(song,ordinary.karaokeLines); // even an unsolicited Spotify answer loses
+    HARNESS_CHECK([SGKaraokeLineText(SGKaraokeLinesForTrack(song).firstObject) isEqual:@"My words"]);
+    HARNESS_CHECK(!sg_providerReply && sg_spotifyAsks == asks);
+    sg_linkedSong = nil;
+    importsChanged(uris);
+    SGKaraokeRequestLyrics(song);
+    pumpUntil(^BOOL { return SGKaraokeLinesForTrack(song).count > 0; });
+    HARNESS_CHECK([SGKaraokeLineText(SGKaraokeLinesForTrack(song).firstObject) isEqual:@"Ordinary words"]);
+    HARNESS_CHECK(SGLyricsPin(song, (@{@"id":@719, @"syncedLyrics":@"[00:01]Pinned words"})));
+    sg_linkedSong = song;
+    importsChanged(uris);
+    SGKaraokeRequestLyrics(song);
+    HARNESS_CHECK([SGKaraokeLineText(SGKaraokeLinesForTrack(song).firstObject) isEqual:@"Pinned words"]);
+    sg_linkedSong = nil; sg_importedReplies = nil;
+    [sg_pins removeObjectForKey:song];
+    SGKaraokeForgetLyrics(song);
+    [sg_testDefaults setBool:NO forKey:SGKeyLyricsOffline];
+    puts("catalogue song: import above offline, Spotify and sources; ordinary offline words restored; pin preserved");
+}
+
+static void checkFileDeliveryReview(void) {
+    NSString *song = @"71QAZv5XfpQF63U7lgN6w5";
+    SGLyricsResult *ordinary = madeUpLyrics(@"Ordinary offline", SGKaraokeTimingLine);
+    SGLyricsResult *file = madeUpLyrics(@"Imported provider", SGKaraokeTimingLine);
+    for (SGKaraokeLine *line in file.karaokeLines) line.fileOwned = YES;
+    SGLyricsStoreSave(song, ordinary.karaokeLines, @"Ordinary");
+    // The source walk writes directly with a lease, independently of the keeper's authority.
+    SGLyricsStoreSaveWithLease(song, [[NSArray alloc] initWithArray:file.karaokeLines copyItems:YES],
+                               @"Provider", [SGLyricsLease new]);
+    __block NSString *saved;
+    SGLyricsStoreLoad(song, ^(NSArray *lines, NSString *credit, SGLyricsResult *metadata) {
+        saved = SGKaraokeLineText(lines.firstObject) ?: @"";
+    });
+    pumpUntil(^BOOL { return saved != nil; });
+    SGLyricsStoreDelete(song);
+
+    sg_testLocalFile = YES;
+    HarnessLyricsState *state = [HarnessLyricsState new];
+    state.track = [HarnessLyricsTrack new]; state.track.URI = @"spotify:local:A:B:C:120";
+    sg_fixtureState = (id)state;
+    sg_importedReplies = [NSMutableDictionary dictionary];
+    NSString *key = state.track.URI;
+    SGKaraokeTrackWatcher *watcher = [SGKaraokeTrackWatcher new];
+    SGKaraokeRequestLyrics(key);
+    sg_importedReplies[key](madeUpLyrics(@"Name match",SGKaraokeTimingLine));
+    state.track.metadata = @{@"local_file_path":@"/fixture/c.mp3"};
+    if ([watcher respondsToSelector:@selector(playerStateDidReport:)]) [watcher playerStateDidReport:(id)state];
+    if ([sg_testReportedPath isEqual:@"/fixture/c.mp3"]) sg_importedReplies[key](madeUpLyrics(@"Embedded",SGKaraokeTimingLine));
+    NSString *shown = SGKaraokeLineText(SGKaraokeLinesForTrack(key).firstObject);
+    sg_fixtureState = nil; sg_testLocalFile = NO; sg_importedReplies = nil;
+    SGKaraokeForgetLyrics(key);
+    if (![saved isEqual:@"Ordinary offline"] || ![shown isEqual:@"Embedded"])
+        HARNESS_FAIL(@"offline=%@, after path report=%@", saved, shown);
+    puts("file delivery review: offline copy survives file provider; late local path replaces name match");
+}
+
 static void checkDirectInstrumentalFallback(void) {
     BOOL oldOwn = sg_ownSources, oldLocal = sg_testLocalFile;
     sg_ownSources = NO;
@@ -928,6 +1006,35 @@ static NSDictionary *recoveryDisk(NSString *track) {
     });
     pumpUntil(^BOOL { return loaded; });
     return value;
+}
+
+static void checkCredentialFallback(void) {
+    RecoveryFixture *fixture = [RecoveryFixture new];
+    SGLyricsProvider *spicy = SGLyricsProviderFor(SGSpicyLyricsKey);
+    SGLyricsSetOrder(@[SGSpicyLyricsKey, @"deezer", @"musixmatch"]);
+    for (NSUInteger rejected = 0; rejected <= 1; rejected++) {
+        NSString *track = rejected ? @"0123456789abcdefghijkR" : @"0123456789abcdefghijkU";
+        spicy.ask = SGSpicyLyricsAsk;
+        if (rejected) spicy.ask = ^(SGLyricsQuery *q, void (^done)(SGLyricsResult *)) {
+            SGSpicyLyricsAskWith(@"sl_pk_fixture", q, done);
+        };
+        SGLyricsPlaybackChanged(track);
+        SGKaraokeRequestLyrics(track);
+        if (rejected) {
+            pumpUntil(^BOOL { return sg_spicyReply != nil; });
+            sg_spicyReply(nil, [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@"https://fixture.invalid"]
+                statusCode:401 HTTPVersion:nil headerFields:nil]);
+            sg_spicyReply = nil;
+        }
+        pumpUntil(^BOOL { return fixture.held[[track stringByAppendingString:@"musixmatch"]] != nil; });
+        [fixture reply:@"musixmatch" track:track result:madeUpLyrics(@"Fallback", SGKaraokeTimingLine) failed:NO];
+        CHECK([SGKaraokeLineText(SGKaraokeLinesForTrack(track).firstObject) isEqual:@"Fallback"]);
+        SGLyricsResult *answer = SGLyricsKeptAnswer(track);
+        CHECK(answer && answer.provisional == rejected);
+        CHECK(rejected ? !recoveryDisk(track) : [recoveryDisk(track)[@"text"] isEqual:@"Fallback"]);
+    }
+    SGSpicyLyricsForgetKey();
+    [fixture restore];
 }
 
 static void checkSoundtrackRetry(void) {
@@ -2163,6 +2270,108 @@ static void checkWalkSelection(void) {
     puts("walk selection: 40-track eviction, failed/empty picks, Spotify restoration and imported timing passed");
 }
 
+static BOOL checkFileAfterPick(BOOL replace) {
+    NSString *track = NSUUID.UUID.UUIDString;
+    SGLyricsProvider *provider = SGLyricsProviderFor(@"musixmatch");
+    SGLyricsAsk saved = provider.ask;
+    provider.ask = ^(SGLyricsQuery *query, void (^done)(SGLyricsResult *)) {
+        done(madeUpLyrics(@"Explicit words", SGKaraokeTimingLine));
+    };
+    sg_linkedSong = track;
+    sg_importedReplies = [NSMutableDictionary dictionary];
+    SGKaraokeRequestLyrics(track);
+    SGLyricsResult *original = madeUpLyrics(@"Original file", SGKaraokeTimingLine);
+    for (SGKaraokeLine *line in original.karaokeLines) line.fileOwned = YES;
+    sg_importedReplies[track](original);
+    [sg_importedReplies removeAllObjects];
+    SGLyricsAskOffers(track);
+    SGLyricsChooseSource(track, @"musixmatch");
+    if (replace) importsChanged(@[[@"spotify:track:" stringByAppendingString:track]]);
+    HARNESS_CHECK([SGLyricsChosenSource(track) isEqual:@"musixmatch"]);
+    HARNESS_CHECK([SGKaraokeLineText(SGKaraokeLinesForTrack(track).firstObject) isEqual:@"Explicit words"]);
+    NSString *wanted = replace ? @"Replacement file" : @"Original file";
+    if (!replace) {
+        sg_testTranslations = YES; sg_translationRequestedLanguage = nil;
+        [sg_testDefaults setInteger:7 forKey:SGKeyLyricsTranslationLanguage];
+    }
+    SGLyricsChooseAutomatic(track);
+    if (replace) {
+        SGKaraokeRequestLyrics(track);
+        if (sg_importedReplies[track]) sg_importedReplies[track](madeUpLyrics(wanted, SGKaraokeTimingLine));
+    } else {
+        SGKaraokeKeepSpotifyLines(track, madeUpLyrics(@"Late Spotify", SGKaraokeTimingWords).karaokeLines);
+        sg_testTranslations = NO; sg_translationReply = nil;
+        [sg_testDefaults removeObjectForKey:SGKeyLyricsTranslationLanguage];
+    }
+    BOOL current = [SGKaraokeLineText(SGKaraokeLinesForTrack(track).firstObject) isEqual:wanted]
+        && (replace || !sg_translationRequestedLanguage);
+    sg_linkedSong = nil; sg_importedReplies = nil; provider.ask = saved;
+    SGKaraokeForgetLyrics(track);
+    return current;
+}
+
+static BOOL checkLocalRevisit(void) {
+    HarnessLyricsState *state = [HarnessLyricsState new];
+    HarnessLyricsTrack *a = [HarnessLyricsTrack new], *b = [HarnessLyricsTrack new];
+    a.URI = @"spotify:local:A::Song:120"; a.metadata = @{@"local_file_path":@"/fixture/a.mp3"};
+    b.URI = @"spotify:local:B::Song:120"; b.metadata = @{@"local_file_path":@"/fixture/b.mp3"};
+    sg_testLocalFile = YES; sg_fixtureState = (id)state;
+    sg_importedReplies = [NSMutableDictionary dictionary];
+    SGKaraokeTrackWatcher *watcher = [SGKaraokeTrackWatcher new];
+    for (HarnessLyricsTrack *song in @[a,b]) {
+        state.track = song;
+        SGKaraokeRequestLyrics(song.URI);
+        sg_importedReplies[song.URI](madeUpLyrics(@"File words",SGKaraokeTimingLine));
+        [sg_importedReplies removeAllObjects];
+    }
+    state.track = a;
+    [watcher playerStateDidReport:(id)state];
+    BOOL reused = !sg_importedReplies[a.URI] && SGKaraokeLinesForTrack(a.URI).count;
+    if (!reused && sg_importedReplies[a.URI]) {
+        sg_importedReplies[a.URI](madeUpLyrics(@"File words",SGKaraokeTimingLine));
+        [sg_importedReplies removeAllObjects];
+    }
+    sg_testApplication.applicationState = UIApplicationStateBackground;
+    a.metadata = @{@"local_file_path":@"/fixture/new-a.mp3"};
+    [watcher playerStateDidReport:(id)state];
+    BOOL deferred = !sg_importedReplies[a.URI] && SGKaraokeLinesForTrack(a.URI).count;
+    sg_testApplication.applicationState = UIApplicationStateActive;
+    [watcher becameActive:nil];
+    BOOL resumed = sg_importedReplies[a.URI] && [sg_testReportedPath isEqual:@"/fixture/new-a.mp3"];
+    sg_fixtureState = nil; sg_testLocalFile = NO; sg_importedReplies = nil;
+    SGKaraokeForgetLyrics(a.URI); SGKaraokeForgetLyrics(b.URI);
+    return reused && deferred && resumed;
+}
+
+static BOOL checkHeldPagesOnImportChange(void) {
+    NSString *track = NSUUID.UUID.UUIDString;
+    NSURL *url = [NSURL URLWithString:[@"https://example.test/color-lyrics/v2/track/" stringByAppendingString:track]];
+    NSHTTPURLResponse *missing = [[NSHTTPURLResponse alloc] initWithURL:url statusCode:404 HTTPVersion:@"HTTP/2" headerFields:nil];
+    SGLyricsStoreSave(track, madeUpLyrics(@"Offline copy", SGKaraokeTimingLine).karaokeLines, @"Ordinary");
+    NSMutableArray *cancelled = [@[@0,@0] mutableCopy];
+    sg_providerReply = nil;
+    for (NSUInteger i = 0; i < 2; i++) {
+        HarnessTask *task = [HarnessTask new];
+        task.originalRequest = task.currentRequest = [NSURLRequest requestWithURL:url];
+        receivedResponse(nil,nil,(id)task,missing,^(NSURLSessionResponseDisposition disposition) {
+            HARNESS_CHECK(disposition == NSURLSessionResponseCancel);
+            cancelled[i] = @([cancelled[i] unsignedIntegerValue]+1);
+        }, ^(NSURLResponse *response, SGDisposition handler) { HARNESS_FAIL(@"retired response forwarded"); });
+    }
+    pumpUntil(^BOOL { return sg_providerReply != nil; });
+    importsChanged(@[[@"spotify:track:" stringByAppendingString:track]]);
+    sg_providerReply(madeUpLyrics(@"Late source", SGKaraokeTimingLine)); sg_providerReply = nil;
+    drainReplies();
+    __block BOOL loaded = NO;
+    SGLyricsStoreLoad(track, ^(NSArray *lines, NSString *credit, SGLyricsResult *metadata) {
+        HARNESS_CHECK([SGKaraokeLineText(lines.firstObject) isEqual:@"Offline copy"]);
+        loaded = YES;
+    });
+    pumpUntil(^BOOL { return loaded; });
+    SGKaraokeForgetLyrics(track);
+    return [cancelled isEqual:@[@1,@1]];
+}
+
 static void checkReload(void) {
     NSString *track = @"reload-song";
     NSDictionary *record = @{@"id": @456, @"syncedLyrics": @"[00:01]Before reload"};
@@ -2983,8 +3192,17 @@ static void checkHeaderOrigin(void) {
         @[@"https://spclient.wg.spotify.com/color-lyrics/v2/track/check", @"trusted", @"trusted"],
         @[@"https://spclient.evil.example/color-lyrics/v2/track/check", @"untrusted-host", @"trusted"],
         @[@"https://evilspclient.wg.spotify.com.example/color-lyrics/v2/track/check", @"untrusted-suffix", @"trusted"],
+        @[@"https://guc3-spclient.spotify.com.evil.com/", @"untrusted-regional-suffix", @"trusted"],
+        @[@"https://spclient.spotify.com.x/", @"untrusted-domain", @"trusted"],
+        @[@"https://evil-spclient.spotify.co/", @"untrusted-tld", @"trusted"],
         @[@"http://spclient.wg.spotify.com/color-lyrics/v2/track/check", @"insecure", @"trusted"],
         @[@"HTTPS://SPCLIENT.WG.SPOTIFY.COM/color-lyrics/v2/track/check", @"case-insensitive", @"case-insensitive"],
+        // The regional name some accounts use instead of the global one (9.2.0 phone).
+        @[@"https://guc3-spclient.spotify.com/remote-config-resolver/v3/configuration", @"regional", @"regional"],
+        @[@"https://-spclient.spotify.com/", @"untrusted-empty-region", @"regional"],
+        @[@"https://a.b-spclient.spotify.com/", @"untrusted-dotted-region", @"regional"],
+        @[@"https://guc3_x-spclient.spotify.com/", @"untrusted-region-character", @"regional"],
+        @[@"https://GUC3-SPCLIENT.SPOTIFY.COM/", @"regional-case", @"regional-case"],
     ];
     for (NSArray<NSString *> *row in cases) {
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:row[0]]];
@@ -3003,7 +3221,7 @@ static void checkHeaderOrigin(void) {
     }
     sg_spclientHeaders = previousHeaders;
     sg_headersWaiting = previousWaiting;
-    puts("header origin: exact HTTPS host, case-insensitivity, malicious hosts and HTTP rejection passed");
+    puts("header origin: exact HTTPS global or regional host, case-insensitivity, malicious hosts and HTTP rejection passed");
 }
 
 static void checkBackgroundTimedDelivery(void) {
@@ -3185,8 +3403,18 @@ int main(void) {
         checkLiveTranslations();
         checkMissingRecovery();
         checkSpicyCancellation();
+        checkCredentialFallback();
         checkCompletedBounds();
         checkImportedDelivery();
+        checkSongImport();
+        checkFileDeliveryReview();
+        BOOL currentImport = checkFileAfterPick(YES), releasedPages = checkHeldPagesOnImportChange();
+        if (!currentImport || !releasedPages) HARNESS_FAIL(@"current Automatic import=%d; both held pages cancelled exactly once=%d",
+                                                           currentImport,releasedPages);
+        puts("import invalidation: explicit pick retained, Automatic uses replacement; both held pages cancelled once, ordinary offline copy retained");
+        BOOL restored = checkFileAfterPick(NO), revisit = checkLocalRevisit();
+        if (!restored || !revisit) HARNESS_FAIL(@"restored file protected=%d; local revisit and gated path change=%d",restored,revisit);
+        puts("file authority and path sampling: Automatic protected; local revisit reused; background change deferred until activation");
         checkDirectInstrumentalFallback();
         const char *race = getenv("RETRINE_PICK_RACE");
         if (race) { checkPickRaces((NSUInteger)atoi(race)); return 0; }

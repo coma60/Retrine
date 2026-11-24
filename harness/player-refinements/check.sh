@@ -1,7 +1,8 @@
 #!/bin/sh
 # Rolling time digits and Star add button with Plain checkmark (Redesigned/Kit/SGRRefinements.h) as a Mac Catalyst
-# app; no simulator. SGRPlainCheck.x goes through Logos. Needs Theos ($THEOS, else ~/theos). Runs twice, the settings
-# as launch arguments: `both` (Plain checkmark and Star add button on) and `plain` (Plain checkmark alone). The
+# app; no simulator. SGRPlainCheck.x goes through Logos. Needs Theos ($THEOS, else ~/theos). Runs three times, the
+# settings as launch arguments: `both` (Plain checkmark's old switch and Star add button on), `plain` (the old switch
+# alone, Saved mark unset) and `dot` (Saved mark's Dot stored beside the old switch). The
 # build goes to a temporary folder (or OUT) and is removed on exit unless OUT is given.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -42,3 +43,5 @@ codesign -f -s - "$APP" >/dev/null 2>&1
     -spotifyglass.redesign.plainCheck YES -spotifyglass.redesign.player.starAdd YES
 "$APP/Contents/MacOS/player-refinements-check" -harness.mode plain \
     -spotifyglass.redesign.plainCheck YES
+"$APP/Contents/MacOS/player-refinements-check" -harness.mode dot \
+    -spotifyglass.redesign.plainCheck YES -spotifyglass.redesign.savedMark 2

@@ -71,15 +71,11 @@ if [ "$TWEAK" = 1 ]; then
   if otool -L "$DYLIB" | grep -q CydiaSubstrate; then echo "the tweak still loads CydiaSubstrate" >&2; exit 1; fi
   "$ROOT/scripts/insert-dylib.py" "$APP/Spotify" @rpath/spotifyglass.dylib
   # The Info.plist keys pipeline.sh merges in (UIDesignRequiresCompatibility off among them), the same way.
-  python3 -I - "$ROOT/plist/liquid-glass.plist" "$APP/Info.plist" <<'PY'
-import plistlib, sys
-overlay, app = (plistlib.load(open(p, 'rb')) for p in sys.argv[1:3])
-services = list(app.get('NSBonjourServices', []))
-overlay['NSBonjourServices'] = services + [s for s in overlay.get('NSBonjourServices', []) if s not in services]
-if app.get('NSLocalNetworkUsageDescription'): overlay.pop('NSLocalNetworkUsageDescription', None)
-app.update(overlay)
-plistlib.dump(app, open(sys.argv[2], 'wb'))
-PY
+  python3 -B "$ROOT/scripts/merge-overlay.py" --apply "$ROOT/plist/liquid-glass.plist" "$APP/Info.plist"
+  rsync -a --delete "$ROOT/tweak/layout/Library/Application Support/Retrine.bundle/" "$APP/Retrine.bundle/"
+  if [ "${WIREGUARD:-0}" = 1 ]; then
+    cp "$ROOT/WireGuard/THIRD_PARTY_LICENSES.txt" "$APP/Retrine.bundle/WireGuard-THIRD_PARTY_LICENSES.txt"
+  fi
 fi
 
 echo "==> iOS -> iOS Simulator"

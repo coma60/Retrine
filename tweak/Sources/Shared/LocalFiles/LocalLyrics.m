@@ -10,6 +10,7 @@
 #import "LocalFiles.h"
 #import "LocalLyrics.h"
 #import "LyricRetirement.h"
+#import "EmbeddedLyrics.h"
 
 NSString *const SGImportedLRCKey = @"importedLRC";
 NSString *const SGLyricsImportErrorDomain = @"spotifyglass.lrc";
@@ -17,7 +18,7 @@ NSNotificationName const SGImportedLRCDidChangeNotification = @"spotifyglass.loc
 
 static NSString *const kCredit = @"Imported LRC";
 // A song's lyrics are a few kilobytes; anything near this is not one.
-static const NSUInteger kMostBytes = 1024 * 1024;
+static const NSUInteger kMostBytes = SGLyricsImportMaxBytes;
 
 // The retired list, read and written in the defaults beside the links (SGKeyRetiredImportedLyrics).
 static NSString *const linkedIdentities = @"spotifyglass.localFiles.linkedLyricIdentities";
@@ -100,7 +101,12 @@ static void storeLinks(NSDictionary<NSString *, NSString *> *links) {
 // A lyrics key carries "#<number>" after the URI once the file's names are edited (LocalFiles.h); the
 // link is to the file, so it holds through a rename.
 static NSString *bareURI(NSString *uri) {
-    if (!SGLocalFileIs(uri)) return nil;
+    if (!SGLocalFileIs(uri)) {
+        if ([uri hasPrefix:@"spotify:track:"]) return uri;
+        // The engine and the source picker use the catalogue ID, not the full URI.
+        return uri.length && [uri rangeOfString:@":"].location == NSNotFound
+            ? [@"spotify:track:" stringByAppendingString:uri] : nil;
+    }
     NSRange mark = [uri rangeOfString:@"#" options:NSBackwardsSearch];
     return mark.location == NSNotFound ? uri : [uri substringToIndex:mark.location];
 }
@@ -138,6 +144,7 @@ static NSString *trimmed(NSString *text) {
 // The lines as Spotify's own page takes them, and whether they are timed at all. Lines with no time are
 // handed over as they are, one a row starting at 0: that is how the mod shows unsynced lyrics.
 static void finish(SGImportedLyrics *lyrics) {
+    for (SGKaraokeLine *line in lyrics.lines) line.fileOwned = YES;
     lyrics.synced = SGKaraokeLinesTiming(lyrics.lines) != SGKaraokeTimingNone;
     if (lyrics.synced) {
         NSArray<NSNumber *> *starts;
@@ -209,6 +216,7 @@ static SGImportedLyrics *sheetFrom(NSString *lrc) {
     NSInteger offset = 0;
     NSMutableArray<NSArray *> *stamped = [NSMutableArray array];   // [ms, text]
     NSMutableArray<NSString *> *plain = [NSMutableArray array];
+    NSUInteger plainChars = 0, stampedChars = 0;
     for (NSString *raw in [lrc componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
         NSString *row = trimmed([raw stringByReplacingOccurrencesOfString:@"﻿" withString:@""]);
         NSTextCheckingResult *named = [tag firstMatchInString:row options:0 range:NSMakeRange(0, row.length)];
@@ -228,11 +236,18 @@ static SGImportedLyrics *sheetFrom(NSString *lrc) {
             NSString *rest = lrcKind ? trimmed([leadingBrackets stringByReplacingMatchesInString:row options:0
                                                                                           range:NSMakeRange(0, row.length) withTemplate:@""])
                                      : row;
-            if (rest.length) [plain addObject:rest];
+            if (rest.length) {
+                if (plain.count >= SGFileLyricsMaxLines || rest.length > SGFileLyricsMaxCharacters - plainChars) return nil;
+                plainChars += rest.length;
+                [plain addObject:rest];
+            }
             continue;
         }
         NSString *text = trimmed([stamp stringByReplacingMatchesInString:row options:0 range:NSMakeRange(0, row.length) withTemplate:@""]);
         if (!text.length) continue;
+        if (found.count > SGFileLyricsMaxLines - stamped.count ||
+            text.length > (SGFileLyricsMaxCharacters - stampedChars) / found.count) return nil;
+        stampedChars += text.length * found.count;
         for (NSTextCheckingResult *match in found) {
             [stamped addObject:@[@(SGLyricsLRCStampMs(row, match)), text]];
         }
@@ -279,6 +294,12 @@ static SGImportedLyrics *sheetFromText(NSString *text) {
     if (looksLikeTTML(text)) {
         NSArray<SGKaraokeLine *> *lines = SGTTMLLines(text);
         if (lines.count) {
+            if (lines.count > SGFileLyricsMaxLines) return nil;
+            NSUInteger chars = 0;
+            for (SGKaraokeLine *line in lines) {
+                chars += SGKaraokeLineText(line).length + SGKaraokeLineText(line.backing).length;
+                if (chars > SGFileLyricsMaxCharacters) return nil;
+            }
             SGImportedLyrics *sheet = [SGImportedLyrics new];
             sheet.kind = SGLyricsImportKindTTML;
             sheet.lines = lines;
@@ -469,33 +490,46 @@ static SGLyricsResult *lookup(NSString *linked, NSString *title, NSArray<NSStrin
 }
 
 SGLyricsResult *SGImportedLRCFor(NSString *trackID, NSString *title, NSString *artist) {
+    NSString *linked = SGImportedLRCLinkedTo(trackID);
+    if (!SGLocalFileIs(trackID) && !linked) return nil;
     NSMutableArray<NSString *> *artists = [NSMutableArray array];
     if (SGLocalFileIs(trackID) && !title.length) localNames(trackID, &title, artists);
     else if (artist.length) [artists addObject:artist];
-    return lookup(SGImportedLRCLinkedTo(trackID), title, artists);
+    return lookup(linked, title, artists);
 }
 
-void SGImportedLRCFetch(NSString *trackID, NSString *title, NSString *artist, void (^done)(SGLyricsResult *)) {
+static void fetch(NSString *trackID, NSString *title, NSString *artist, NSString *path, void (^done)(SGLyricsResult *)) {
+    NSUInteger generation;
+    @synchronized (SGImportedLyrics.class) { generation = sg_sheetGeneration; }
     NSString *resolved = title, *linked = SGImportedLRCLinkedTo(trackID);
+    if (!linked && !SGLocalFileIs(trackID)) { done(nil); return; }
     NSMutableArray<NSString *> *artists = [NSMutableArray array];
     if (SGLocalFileIs(trackID) && !resolved.length) localNames(trackID, &resolved, artists);
     else if (artist.length) [artists addObject:artist];
-    NSUInteger generation;
-    @synchronized (SGImportedLyrics.class) { generation = sg_sheetGeneration; }
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ queue = dispatch_queue_create("app.retrine.imported-lyrics", DISPATCH_QUEUE_SERIAL); });
     dispatch_async(queue, ^{
         @autoreleasepool {
-            SGLyricsResult *result = lookup(linked, resolved, artists);
+            SGLyricsResult *result = linked ? resultOf(linkedSheet(linked), resolved, artists.firstObject) : nil;
+            if (!result && path) result = SGEmbeddedLyrics(path);
+            if (!result && !linked) result = lookup(nil, resolved, artists);
             dispatch_async(dispatch_get_main_queue(), ^{
                 BOOL changed;
                 @synchronized (SGImportedLyrics.class) { changed = generation != sg_sheetGeneration; }
-                if (changed) { SGImportedLRCFetch(trackID, title, artist, done); return; }
+                if (changed) { fetch(trackID, title, artist, path, done); return; }
                 done(result);
             });
         }
     });
+}
+
+void SGImportedLRCFetch(NSString *trackID, NSString *title, NSString *artist, void (^done)(SGLyricsResult *)) {
+    fetch(trackID, title, artist, nil, done);
+}
+
+void SGPlaybackLyricsFetch(NSString *trackID, NSString *path, void (^done)(SGLyricsResult *)) {
+    fetch(trackID, nil, nil, SGLocalFileIs(trackID) && [path isKindOfClass:NSString.class] ? path : nil, done);
 }
 
 SGLyricsAsk SGImportedLRCAsk = ^(SGLyricsQuery *query, void (^done)(SGLyricsResult *result)) {
@@ -515,10 +549,10 @@ static void moveToTop(void) {
 
 // The store changed: the lines read so far are dropped, and every listener is told on the main queue,
 // which is where the ones that touch UIKit and the lyrics state run.
-static void changed(void) {
+static void changed(NSArray<NSString *> *uris) {
     forgetSheets();
     dispatch_async(dispatch_get_main_queue(), ^{
-        [NSNotificationCenter.defaultCenter postNotificationName:SGImportedLRCDidChangeNotification object:nil];
+        [NSNotificationCenter.defaultCenter postNotificationName:SGImportedLRCDidChangeNotification object:uris];
     });
 }
 
@@ -574,11 +608,16 @@ static NSString *storeLyrics(SGImportedLyrics *lyrics, NSString *given, NSString
     }
     if (first || bare) moveToTop();
     SGLog(@"lyrics: imported %@%@", name, bare ? [@" for " stringByAppendingString:bare] : @"");
-    changed();
+    changed(bare ? @[bare] : @[]);
     return name;
 }
 
 void SGImportLRC(NSURL *url, NSString *uri, void (^completion)(NSString *, NSError *)) {
+    NSString *ext = url.pathExtension.lowercaseString;
+    if (![kLyricsExtensions containsObject:ext] && ![ext isEqual:@"xml"]) {
+        completion(nil, refusal(SGLyricsImportErrorType));
+        return;
+    }
     // The file's bytes and its lines are read before the store is touched, off the store queue.
     dispatch_async(importQueue(), ^{
         BOOL scoped = [url startAccessingSecurityScopedResource];
@@ -611,9 +650,11 @@ void SGImportPastedLyrics(NSString *text, NSString *uri, void (^completion)(NSSt
     NSString *pasted = [text copy], *linkedURI = [uri copy], *given = SGL(@"settings.locallyrics.paste.name", @"Pasted lyrics");
     dispatch_async(importQueue(), ^{
         // Through the data path, so a paste is held to the same size and content rules as a file.
-        NSData *data = pasted.length ? [pasted dataUsingEncoding:NSUTF8StringEncoding] : [NSData data];
         NSError *parseError = nil;
-        SGImportedLyrics *lyrics = data ? SGImportedLyricsFromData(data, &parseError) : nil;
+        SGImportedLyrics *lyrics = nil;
+        if ([pasted lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > kMostBytes) parseError = refusal(SGLyricsImportErrorTooLarge);
+        else if (pasted.length && ![pasted canBeConvertedToEncoding:NSUTF8StringEncoding]) parseError = refusal(SGLyricsImportErrorUnreadable);
+        else lyrics = SGImportedLyricsFromText(pasted, &parseError);
         dispatch_async(storeQueue(), ^{
             @autoreleasepool {
                 NSError *error = parseError;
@@ -636,6 +677,8 @@ BOOL SGDeleteImportedLRC(NSString *name, void (^completion)(BOOL deleted)) {
         @autoreleasepool {
             NSError *error = nil;
             BOOL deleted = [NSFileManager.defaultManager removeItemAtPath:[directory() stringByAppendingPathComponent:name] error:&error];
+            if (!deleted && [error.domain isEqual:NSCocoaErrorDomain] && error.code == NSFileNoSuchFileError &&
+                [allLinks() allKeysForObject:name].count) deleted = YES;
             if (deleted) {
                 NSMutableDictionary *links = [allLinks() mutableCopy];
                 NSArray *uris = [links allKeysForObject:name];
@@ -645,7 +688,7 @@ BOOL SGDeleteImportedLRC(NSString *name, void (^completion)(BOOL deleted)) {
                 [links removeObjectsForKeys:uris];
                 storeLinks(links);
                 unretire(name);
-                changed();
+                changed(uris);
             } else {
                 SGLog(@"lyrics: %@ not deleted: %@", name, error);
             }
@@ -706,7 +749,7 @@ static NSArray<NSString *> *retireNow(void) {
         }
     }
     storeRetired(kept);
-    if (removed.count) changed();
+    if (removed.count) changed(@[]);
     return removed;
 }
 

@@ -256,6 +256,7 @@
 "settings.album.notes.off" = "끔";
 "settings.album.notes.open" = "전체 앨범 소개 읽기";
 "settings.album.notes.title" = "앨범 소개";
+"settings.album.track_numbers" = "트랙 번호";
 "settings.album.notes.under_play" = "재생 버튼 아래";
 "settings.album.notes.under_tracks" = "트랙 아래";
 "settings.album.play_counts.choice.in_menu" = "메뉴에";
@@ -290,7 +291,22 @@
 "settings.appearance.amoled_background.title" = "AMOLED 배경";
 "settings.appearance.hide_explicit.subtitle" = "콘텐츠 제한이나 VoiceOver를 변경하지 않고 E 표시를 숨깁니다";
 "settings.appearance.hide_explicit.title" = "E 표시 숨기기";
-"settings.appearance.plain_checkmark.subtitle" = "원 없이 강조 색상으로 표시되는 저장된 노래의 체크표시";
+"settings.appearance.glass_material.clear" = "투명";
+"settings.appearance.glass_material.regular" = "기본";
+"settings.appearance.glass_material.subtitle" = "투명은 버튼 뒤가 더 많이 비쳐 보입니다. iOS 26에서 적용됩니다";
+"settings.appearance.glass_material.title" = "유리 재질";
+"settings.appearance.glass_tint.dark" = "어둡게";
+"settings.appearance.glass_tint.light" = "밝게";
+"settings.appearance.glass_tint.none" = "없음";
+"settings.appearance.glass_tint.subtitle" = "유리에 밝거나 어두운 색조를 더합니다. iOS 26에서 적용됩니다";
+"settings.appearance.glass_tint.title" = "유리 색조";
+"settings.appearance.glass_touch.subtitle" = "손가락이 닿으면 유리가 반응합니다. 버튼은 어느 쪽이든 그대로 작동합니다";
+"settings.appearance.glass_touch.title" = "유리 터치 반응";
+"settings.appearance.saved_mark.dot" = "점";
+"settings.appearance.saved_mark.plain_checkmark" = "단순 체크표시";
+"settings.appearance.saved_mark.spotify" = "Spotify 기본";
+"settings.appearance.saved_mark.subtitle" = "저장된 노래의 표시: Spotify의 원 안 체크표시, 또는 강조 색상의 체크표시나 점";
+"settings.appearance.saved_mark.title" = "저장 표시";
 "settings.appearance.play_page_color.subtitle" = "재생 버튼의 기호와 글자가 페이지 색상을 따릅니다. 끄면 강조 색상을 따릅니다";
 "settings.appearance.play_page_color.title" = "페이지 색상의 재생 버튼";
 "settings.appearance.round_artist_play.subtitle" = "아티스트 페이지에서 재생 버튼이 기호만 있는 원형 버튼으로 표시됩니다";
@@ -301,7 +317,6 @@
 "settings.appearance.scrolled_title.title" = "스크롤 시 페이지 제목";
 "settings.appearance.page_zoom.title" = "커버에서 페이지 열기";
 "settings.appearance.page_zoom.subtitle" = "누른 커버에서 앨범과 플레이리스트가 펼쳐지고, 뒤로 가면 커버로 돌아갑니다. 다시 시작하면 적용됩니다";
-"settings.appearance.plain_checkmark.title" = "단순 체크표시";
 "settings.appearance.title" = "화면 모양";
 
 "settings.appicon.choice.default" = "기본";
@@ -344,7 +359,7 @@
 "settings.artist.hide_in_header.header" = "헤더에서 숨기기";
 "settings.artist.hide_on_page.header" = "아티스트 페이지에서 숨기기";
 "settings.artist.hide_on_page.note" = "Spotify가 영어로 설정되어 있을 때만 작동합니다.";
-"settings.artist.listeners_in_about.subtitle" = "아티스트에게 정보 섹션이 있으면 이름 아래에 표시하지 않습니다";
+"settings.artist.listeners_in_about.subtitle" = "월별 리스너 수는 Spotify의 정보 섹션에 표시됩니다. 정보 섹션을 숨기면 아티스트 이름 아래에 그대로 표시됩니다.";
 "settings.artist.listeners_in_about.title" = "정보에 월별 청취자 표시";
 "settings.artist.logos.subtitle" = "아티스트 페이지에서 이름 대신 표시";
 "settings.artist.logos.title" = "아티스트 로고";
@@ -1237,18 +1252,20 @@
 "settings.locallyrics.error.pastefailed" = "가사를 가져올 수 없습니다";
 "settings.locallyrics.error.storage" = "가사를 저장할 수 없습니다. 기존 가사는 유지됩니다.";
 "settings.locallyrics.error.toolarge" = "가사 크기가 1MB를 초과합니다.";
+"settings.locallyrics.error.type" = "LRC, TTML, XML 또는 TXT 파일을 선택하세요.";
+"settings.locallyrics.clipboard.empty" = "클립보드에 텍스트가 없습니다.";
+"settings.locallyrics.embedded.credit" = "파일에 포함된 가사";
+"settings.locallyrics.song.notplaying" = "먼저 곡을 재생하세요";
+"settings.locallyrics.song.remove" = "현재 곡의 가져온 가사 삭제";
+"settings.locallyrics.song.footer" = "재생 중인 곡의 가사를 파일에서 가져오거나 붙여넣으세요. 로컬 파일은 ‘가사 가져오기…’로 제목과 아티스트가 일치하는 가사를 사용할 수도 있습니다. 파일을 왼쪽으로 쓸어넘겨 삭제할 수 있습니다.";
 "settings.locallyrics.error.unreadable" = "가사를 텍스트로 읽을 수 없습니다.";
 "settings.locallyrics.error.unreadablefile" = "파일을 읽을 수 없습니다.";
 "settings.locallyrics.files.empty" = "가져온 파일 없음";
 "settings.locallyrics.files.header" = "파일";
-"settings.locallyrics.footer" = "'현재 트랙용으로 가져오기'는 태그 내용과 관계없이 재생 중인 로컬 파일에 해당 파일을 연결합니다. '붙여넣기'는 클립보드의 가사를 해당 트랙에 보관합니다. '가사 가져오기…'는 제목 및 아티스트가 [ti:] 및 [ar:] 태그와 일치하거나 파일 이름이 \"Artist - Title\" 형식인 모든 트랙에 맞게 파일을 보관합니다. 파일은 TTML, LRC 또는 일반 텍스트일 수 있으며, 파일 내용에서 형식을 인식합니다. 파일을 왼쪽으로 쓸어넘겨 삭제할 수 있습니다.";
 "settings.locallyrics.importbyname.subtitle" = "제목 및 아티스트로 일치";
 "settings.locallyrics.importbyname.title" = "가사 가져오기…";
-"settings.locallyrics.importfortrack.defaulttitle" = "재생 중인 로컬 파일";
-"settings.locallyrics.importfortrack.notplaying" = "먼저 로컬 트랙을 재생하세요";
 "settings.locallyrics.importfortrack.title" = "현재 트랙용으로 가져오기…";
 "settings.locallyrics.linked.message" = "이제 %@ 파일이 %@의 가사로 표시됩니다.";
-"settings.locallyrics.linked.thislocalfile" = "이 로컬 파일";
 "settings.locallyrics.linked.title" = "가사 연결됨";
 "settings.locallyrics.paste.name" = "붙여넣은 가사";
 "settings.locallyrics.paste.title" = "붙여넣기";
@@ -2693,6 +2710,10 @@
 
 "settings.playlist.artwork_background.title" = "아트워크 배경";
 "settings.playlist.cover.header" = "커버";
+"settings.playlist.header_details" = "플레이리스트 정보";
+"settings.playlist.creator_line" = "만든 사람 및 재생 시간";
+"settings.playlist.creator_picture" = "만든 사람 사진";
+"settings.playlist.description" = "설명";
 "settings.playlist.cover_layout" = "커버 레이아웃";
 "settings.pages.cover_beside" = "제목 옆에 커버 표시";
 "settings.pages.cover_beside.subtitle" = "넓은 iPad 윈도우의 앨범과 플레이리스트에 바로 적용됩니다.";

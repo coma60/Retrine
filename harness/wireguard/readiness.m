@@ -3,12 +3,24 @@
 
 static unsigned notices, rebinds;
 static BOOL admitted = YES, patches = YES;
+static atomic_bool sharedImageLoaded;
+static int sessionPort;
+static CreateSocksFn realCreateSocks;
+static void *recordSocksEndpoint(void *endpoint) {
+    sessionPort = nw_endpoint_get_port((__bridge nw_endpoint_t)endpoint);
+    return realCreateSocks(endpoint);
+}
 static dispatch_semaphore_t admissionEntered, admissionContinue;
 #define CHECK(value) do { if (!(value)) { fprintf(stderr, "FAIL readiness:%d %s\n", __LINE__, #value); exit(1); } } while (0)
 
 BOOL SGWGInstallNativePatches(void) { return patches; }
+BOOL SGWGCheckAdmission(BOOL *pendingImages) {
+    BOOL ready = SGWGAdmissionReady();
+    if (pendingImages) *pendingImages = !ready && getenv("SGWG_TEST_DELAY_ADMISSION") != NULL;
+    return ready;
+}
 BOOL SGWGAdmissionReady(void) {
-    BOOL result = admitted;
+    BOOL result = admitted && (!getenv("SGWG_TEST_DELAY_ADMISSION") || sharedImageLoaded);
     if (admissionEntered) {
         dispatch_semaphore_signal(admissionEntered);
         dispatch_semaphore_wait(admissionContinue, DISPATCH_TIME_FOREVER);
@@ -24,13 +36,22 @@ void SGWGNotifyRecovery(void) { notices++; CHECK(!SGWGReady()); }
 int SGWGRebind(void) { rebinds++; return 0; }
 static void unexpected(void) { fputs("FAIL unexpected profile/Go status access\n", stderr); exit(1); }
 char *SGWGInspect(char *text) { unexpected(); return NULL; }
-int SGWGStart(char *text, char *user, char *pass, int fd, int port) { unexpected(); return -1; }
+int SGWGStart(char *text, char *user, char *pass, int fd, int port) {
+    if (!getenv("SGWG_TEST_DELAY_ADMISSION")) unexpected();
+    struct sockaddr_in address;
+    socklen_t size = sizeof(address);
+    CHECK(getsockname(fd, (struct sockaddr *)&address, &size) == 0);
+    CHECK(ntohs(address.sin_port) == port && port == sessionPort);
+    close(fd);
+    EngineChanged(SGWGEngineAvailable);
+    return port;
+}
 char *SGWGStatus(void) { unexpected(); return NULL; }
 char *SGWGLookup(char *host) { unexpected(); return NULL; }
 char *SGWGResolve(char *host) { unexpected(); return NULL; }
 char *SGWGRedact(char *text) { unexpected(); return NULL; }
 void SGWGFree(char *text) { free(text); }
-void SGWGSetStateCallback(uintptr_t callback) { unexpected(); }
+void SGWGSetStateCallback(uintptr_t callback) { if (!getenv("SGWG_TEST_DELAY_ADMISSION")) unexpected(); }
 
 static void drain(void) { dispatch_sync(gQueue, ^{}); }
 
@@ -196,9 +217,29 @@ static void checkStaleRefresh(void) {
     puts("PASS in-flight guard validation cannot restore readiness across recovery, unavailable or stopped events");
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     @autoreleasepool {
         CHECK(SGWGIsSupportedOS());
+        if (argc == 2 && !strcmp(argv[1], "--delayed-admission")) {
+            CHECK(!SGWGAdmissionReady() && !SGWGReady());
+            realCreateSocks = pCreateSocks;
+            pCreateSocks = recordSocksEndpoint;
+            NSURLSession *early = NSURLSession.sharedSession;
+            CHECK([[early.configuration valueForKey:@"proxyConfigurations"] count] == 1);
+            CHECK(sessionPort > 1);
+            sharedImageLoaded = true;
+            StartEngine();
+            drain();
+            CHECK(SGWGReady() && NSURLSession.sharedSession == early);
+            puts("PASS early shared session targets the same reserved port handed to the admitted engine");
+            return 0;
+        }
+        if (argc == 2 && !strcmp(argv[1], "--external-proxy")) {
+            CHECK([gKind isEqualToString:SGWGKindSOCKS5]);
+            CHECK(gListenerFD == -1 && !gBlockAll && SGWGCurrentState() == SGWGStateExternalProxy);
+            puts("PASS external proxy starts without reserving a loopback listener");
+            return 0;
+        }
         gActive = YES;
         gKind = SGWGKindWireGuard;
         gSessionGuards = YES;

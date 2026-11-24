@@ -2293,19 +2293,21 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
 // alphabet the Lyrics page chose, whether or not the page shows it now. Readings are made off the main thread, as
 // the layout's are; the card starts with them shown while the page shows them.
 - (void)shareCardFrom:(SGKaraokeLine *)held {
-    NSArray<SGKaraokeLine *> *lines = _lines;
+    if (!_lines.count || !heldLineText(held).length) return;
+    NSUInteger heldIndex = [_lines indexOfObjectIdenticalTo:held];
+    NSArray<SGKaraokeLine *> *lines = layoutSnapshots(_lines);
     NSString *track = _track;
-    if (!lines.count || !heldLineText(held).length) return;
     BOOL japanese = [[self songLanguage] isEqual:@"ja"];
     BOOL hangul = SGFlag(SGKeyLyricsPronunciationHangul, NO), hiragana = SGFlag(SGKeyLyricsJapaneseKana, NO);
     BOOL shown = _style.pronunciation != nil;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableArray<SGRLyricCardLine *> *cards = [NSMutableArray array];
         NSUInteger picked = NSNotFound;
-        for (SGKaraokeLine *line in lines) {
+        for (NSUInteger i = 0; i < lines.count; i++) {
+            SGKaraokeLine *line = lines[i];
             NSString *text = heldLineText(line);
             if (!text.length) continue;
-            if (line == held) picked = cards.count;
+            if (i == heldIndex) picked = cards.count;
             SGKaraokeLine *spoken = line.pronunciation ?: SGLyricsPrepareExtras(line, japanese, hangul, hiragana, YES, NO).pronunciation;
             NSString *reading = spoken ? SGKaraokeLineText(spoken) : nil;
             SGRLyricCardLine *card = [SGRLyricCardLine new];
@@ -2354,13 +2356,19 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
     for (SGRKaraokeLineView *view in _shown.allValues) view.blur = 0;
 }
 
+- (void)updateExtrasGlass {
+    UIView *shape = SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide);
+    SGRGlassBacks(shape, _extras);
+    SGRShowGlass(shape, !_extrasHidden);
+}
+
 // In the caller's animation: the glass dematerializes by its effect and the glyph fades by its alpha, the
 // one view of the two with no glass in it.
 - (void)setExtrasHidden:(BOOL)hidden {
     [self stir];
     _extrasHidden = hidden;
     if (_extrasBox) {
-        SGRShowGlass(SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide), !hidden);
+        [self updateExtrasGlass];
         _extras.alpha = hidden ? 0 : 1;
         _extrasBox.userInteractionEnabled = !hidden;
     }
@@ -2577,7 +2585,7 @@ static NSInteger plainRestPosition(SPTPlayerState *state) {
     _sing.frame = CGRectMake(self.bounds.size.width - _margin - kExtrasSide, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
     if (_extrasBox && !_extrasBox.hidden) {
         _extrasBox.frame = CGRectMake(_margin, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
-        SGRShowGlass(SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide), !_extrasHidden);
+        [self updateExtrasGlass];
     }
     if (_statusBox) {
         CGFloat left = _margin + kExtrasSide + 8;

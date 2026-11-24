@@ -449,11 +449,14 @@ static NSString *artistTitle(UIView *block) {
 // What the playlist's header shows: the name and the description from the page's model, the creator and the
 // length from Spotify's concealed labels. Save and download each keep their own button when both exist.
 // One's own playlists and Liked Songs keep their existing row with download alone.
+static BOOL sg_creatorLine, sg_creatorPicture, sg_description;
 static void showPlaylist(SGRHeaderInfo *info, UIView *block, UIView *root, id model) {
     BOOL artistPage = isCollectionArtist(root);
     NSString *title = modelString(model, @"playlistName") ?: (artistPage ? artistTitle(block) : firstText(block, nil, 2));
-    [info showTitle:title creator:creatorIn(block) length:lengthIn(block)
-              about:plainText(modelString(model, @"playlistDescription"))];
+    BOOL line = artistPage || sg_creatorLine;
+    NSString *name = line ? creatorIn(block) : nil, *length = line ? lengthIn(block) : nil;
+    [info showTitle:title creator:name length:length
+              about:(artistPage || sg_description) ? plainText(modelString(model, @"playlistDescription")) : nil];
 
     BOOL liked = [modelString(model, @"formatListType") isEqualToString:@"liked-songs"];
     BOOL own = modelFlag(model, @"isOwnedBySelf", YES) || liked;
@@ -480,10 +483,10 @@ static void showPlaylist(SGRHeaderInfo *info, UIView *block, UIView *root, id mo
     // Whoever made the playlist, opened from the line that names them. Spotify's own button carries the
     // facepile and the name and takes the tap to a profile -- or, for a playlist several people are on, to
     // the picker it opens itself (issue #56).
-    UIView *creator = SGRFindByIdentifier(block, @"Components.PlaylistHeader.collaboratorsButton", &kCreatorKey);
+    UIView *creator = name.length ? SGRFindByIdentifier(block, @"Components.PlaylistHeader.collaboratorsButton", &kCreatorKey) : nil;
     [info showCreatorLink:creator];
     // And their picture before their name, the first face of the facepile that button carries.
-    [info showCreatorPicture:SGRCreatorPicture(creator)];
+    [info showCreatorPicture:(creator && (artistPage || sg_creatorPicture)) ? SGRCreatorPicture(creator) : nil];
 
     // More, pinned over the page rather than left in the block, which is concealed and scrolls away; and
     // Spotify's own Sort, from the find-on-page toolbar this header conceals, for the ⋯ sheet to fire.
@@ -496,13 +499,13 @@ static void showPlaylist(SGRHeaderInfo *info, UIView *block, UIView *root, id mo
     if (!logged && info.window && (title || play)) {
         logged = YES;
         SGLog(@"redesign playlist: own block \"%@\" by %@, \"%@\"; shuffle %@, play %@, %@; model %@",
-              title, creatorIn(block) ?: @"nobody", lengthIn(block) ?: @"no length", shuffle ? @"found" : @"missing",
+              title, name ?: @"nobody", length ?: @"no length", shuffle ? @"found" : @"missing",
               play ? @"found" : @"missing", save ? @"save" : (download ? @"download" : @"nothing on the right"),
               model ? NSStringFromClass([model class]) : @"missing");
     }
 }
 
-static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewController *headerVC);
+static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewController *headerVC, CGRect *stacked);
 static void applyHeader(UIView *layout);
 
 // `view`'s own pass puts the block together again, installed once under `key`.
@@ -520,14 +523,14 @@ static void reapplyOnPass(UIView *view, const void *key, UIView *block, UIView *
             return;
         }
         if (info.superview != weakBlock) return;
-        applyInfo(weakBlock, weakRoot, weakVC);
+        applyInfo(weakBlock, weakRoot, weakVC, NULL);
     });
 }
 
 // The block's own content goes, whole, and the redesign's takes its place. Spotify adds to the block as the page
 // loads and shows parts of it again when Play is pressed, so everything of Spotify's in it is concealed on every
 // pass and again from the block's own pass; concealing is idempotent and costs nothing once done.
-static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewController *headerVC) {
+static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewController *headerVC, CGRect *stacked) {
     // One per page, kept on the header's root: if Spotify ever hands over another block, the same view moves
     // into it rather than a second one being drawn beside the first.
     SGRHeaderInfo *info = objc_getAssociatedObject(headerRoot, &kInfoKey);
@@ -546,8 +549,16 @@ static SGRHeaderInfo *applyInfo(UIView *block, UIView *headerRoot, UIViewControl
     // The page's width, centered on the screen: Spotify's block is 16pt narrower than the page (386 of 402).
     CGFloat x = -[block convertPoint:CGPointZero toView:headerRoot].x;
     CGRect frame = CGRectMake(round(x), 0, headerRoot.bounds.size.width, block.bounds.size.height);
-    if (!info.sgr_coverBeside && !CGRectEqualToRect(info.frame, frame)) info.frame = frame;
     showPlaylist(info, block, headerRoot, viewModelOf(headerVC));
+    // Spotify's block still reserves the hidden metadata. Fit the stacked Card to the
+    // remaining lines without moving its top away from the square or enlarging a collapsed header.
+    if ((!sg_creatorLine || !sg_description) && block.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
+        !SGRPageFullCover(SGRKeyPlaylistFullCover) &&
+        SGRFindByIdentifier(block.superview, @"Components.Header.UI.ArtworkImage", &kCoverKey)) {
+        frame.size.height = MIN(frame.size.height, [info contentHeightForWidth:frame.size.width] + SGRHeaderInfoBottom);
+    }
+    if (stacked) *stacked = frame;
+    if (!info.sgr_coverBeside && !CGRectEqualToRect(info.frame, frame)) info.frame = frame;
 
     reapplyOnPass(block, &kBlockWatchedKey, block, headerRoot, headerVC);
     // Save arrives after the header has laid out on a playlist opened for the first time, in a row that lays
@@ -691,7 +702,8 @@ static void applyHeader(UIView *layout) {
     UIView *plane = applyBackground(layout);
     applyToolbar(headerRoot);
     applyScrims(headerRoot);
-    SGRHeaderInfo *info = applyInfo(block, headerRoot, headerVC);
+    CGRect stacked;
+    SGRHeaderInfo *info = applyInfo(block, headerRoot, headerVC, &stacked);
 
     // How far the page is pulled down past the top: the plane grows by that much and the block moves with it,
     // so nothing is measured then. Rest is the smallest the plane has been.
@@ -715,8 +727,6 @@ static void applyHeader(UIView *layout) {
     CGFloat top = cover ? CGRectGetMinY(cover.frame) : 0;
     CGRect available = CGRectMake(20, top, layout.bounds.size.width - 40,
         CGRectGetMaxY(block.frame) - top - SGRHeaderInfoBottom);
-    CGFloat x = -[block convertPoint:CGPointZero toView:headerRoot].x;
-    CGRect stacked = CGRectMake(round(x), 0, headerRoot.bounds.size.width, block.bounds.size.height);
     UIView *page = SGRPlaylistPageOf(layout);
     // Artwork and metadata live in different planes. Fit both to their common
     // header footprint in content coordinates; neither can use space outside it.
@@ -808,6 +818,9 @@ static UIView *layoutIn(UIView *root) {
 %ctor {
     if (!SGRedesignedUI()) return;
     sg_coverViewer = SGEnabled(SGRKeyPlaylistCoverViewer);
+    sg_creatorLine = SGEnabled(SGRKeyPlaylistCreatorLine);
+    sg_creatorPicture = SGEnabled(SGRKeyPlaylistCreatorPicture);
+    sg_description = SGEnabled(SGRKeyPlaylistDescription);
     %init;
     SGRequireClasses(@[
         @"_TtC28EncoreConsumerMobile_BaseKit19HeaderContentLayout",

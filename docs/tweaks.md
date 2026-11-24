@@ -479,7 +479,8 @@ Shared:
                   sequentially for word timing; In order and All at once follow the rules above.
                   Automatic answers remain provisional while outstanding work or a failed eligible source
                   could change the selection. Each provider invocation carries its own failure outcome,
-                  including search/fetch subrequests; a normal missing-lyrics reply is not a failure.
+                  including search/fetch subrequests. Missing lyrics and an unconfigured Spicy Lyrics or Deezer
+                  credential are not failures; a credential read error or rejection is.
                   Each adapter (including a pinned LRCLIB lookup) has one five-second deadline across
                   its subrequests. Expiry cancels tracked tasks, falls through and ignores late delivery.
                   Sequential modes hedge an unanswered source after two seconds, showing a usable later
@@ -821,12 +822,15 @@ Shared:
                   with no source switched on, of LRCLIB alone, which then gets the file's title, artist, album and
                   length. A rename gives a new key (a cover alone does not), asked for at once while the file plays.
                   A miss is asked again a few times, in case it was a lost request. The user's own lyrics files
-                  (LocalLyrics.m, the Imported lyrics files page under Lyrics' sources), .lrc, .ttml or plain text and
-                  kept as UTF-8 in Documents/Retrine/Lyrics, come before any source: a file linked to the local file
-                  playing (Import for current track, or Paste for the clipboard's lyrics) is its lyrics whatever its
-                  tags say, and any other is matched by
-                  [ti:] and [ar:], or a name of "Artist - Title", folded; an import or a delete has the engine forget
-                  what it kept for local files and ask again. What a file holds is decided by its content, never by
+                  (LocalLyrics.m, Imported lyrics files under Lyrics' sources) accept .lrc, .ttml, .xml and .txt
+                  and stay as UTF-8 in Documents/Retrine/Lyrics. Import or paste links lyrics to the URI of the
+                  song playing when the listener taps. For Automatic, that link precedes offline and online
+                  lyrics without overwriting the ordinary offline copy. Replacing or deleting refreshes the
+                  affected track. Only local files can also match by folded [ti:]/[ar:] or "Artist - Title".
+                  Before that name match, the engine tries the playing file's `local_file_path`, off main:
+                  ID3v2.2 ULT/SLT, v2.3/2.4 USLT/SYLT, FLAC LYRICS/UNSYNCEDLYRICS, or M4A ©lyr.
+                  Timed lyrics take precedence over plain text; SYLT with MPEG-frame timestamps is skipped.
+                  An unreachable file or absent tag continues the ordinary lookup. What a file holds is decided by its content, never by
                   its name — a TTML document with timed lines, else LRC's stamped lines, else one untimed line after
                   another — and it is kept under the extension of what it turned out to be. A file or a paste over
                   1,048,576 bytes of text, an empty one, bytes that are neither UTF-8 nor UTF-16 with a BOM, or a
@@ -1388,8 +1392,8 @@ Native:
                   the cover's room are checked in the simulator against harness/native-player/
     Lyrics/       the full screen lyrics page on glass, and a tap on the lyrics' footer opening the pages a credit
                   links to (LyricsPage.x)
-    LocalFiles/   a lyrics button on the player's footer for a local file with an imported lyrics file linked to
-                  it, a fifth of the
+    LocalFiles/   a lyrics button on the player's footer for a song with a linked import, or a local file with
+                  embedded or name-matched lyrics. The viewer honors provider picks. The button sits a fifth of the
                   way in from the leading edge, which opens a page of lines on black. Player reports update the page
                   on track changes, seeks and resume; only advancing timed lyrics arm a line deadline, capped at a
                   quarter second because speed can change between reports
@@ -1737,7 +1741,7 @@ Redesigned:
                   it, the row's arranged views held in before it as for a row without the add button, the title and
                   its mark ending at the star (12 pt short of it beside the lyrics' thumbnail), and the ⋯ menu leaves
                   out its add item (issue #44; harness/player/title-style-check.sh, harness/system-menu `star`). In
-                  the player it wins over Plain checkmark, which
+                  the player it wins over Saved mark, which
                   keeps every other add button; a disabled player button goes back to Spotify's own glyph, which shows
                   it disabled, and gets the star again once enabled (SGRPlainCheck.x, which owns the add button's glyph
                   and finds the player's by the InformationElementsUnit its button answers to). A Free account gets it too: Spotify's Reinvented Free player mode, whose units none of
@@ -1875,7 +1879,7 @@ Redesigned:
                   fades and reinsertions, update the cover without a player layout or lyric clock. With the line on,
                   only visible chip content requires clearance. An empty strip leaves
                   the line directly above the title, with the same row budget and cover floor.
-                  The identified switch need not expose painted pixels; anonymous views still do. A changed
+                  The identified switch need not expose painted pixels; anonymous views still do. In driver builds a changed
                   floating-unit snapshot logs `lyrics unit:` even when nothing wins. The numbered parts
                   show the title top, stack frame, reserved natural side (zero if none), search area,
                   chosen top and view (`*`), and a bounded view/layer tree with default attributes omitted, never
@@ -2114,7 +2118,9 @@ Redesigned:
                   prominent Play capsule taking its glyph and its word from Spotify's own button, add; Play on the
                   middle of the page, and download, where a playlist has both, pinned beside ⋯), the find bar
                   and the curation pills gone, and the track rows on the field with a hairline between them
-                  (Playlist.h lists its files). Sort and Mix, the two of those pills the ⋯ menu does not already offer,
+                  (Playlist.h lists its files). Playlists › Playlist details has three launch-read switches,
+                  all on unless set: Creator and length, Creator picture (beside the tappable name), and Description.
+                  Sort and Mix, the two of those pills the ⋯ menu does not already offer,
                   are put on that menu's own sheet instead, above Spotify's rows, and fire Spotify's own buttons.
                   The chip row 9.2.0 gives the playlists Spotify makes itself (Video, Duplicate, Sort, Select; a view
                   beside the list, not a cell) stays, since Duplicate and Select are nowhere else, but goes with the list:
@@ -2194,7 +2200,11 @@ Redesigned:
                   line against Spotify's mocked sheet, are checked on the Mac by harness/ui-refinements/). A stored switch migrates: on or unset is In the row, off is
                   Off, and the key stays readable. Count source (spotifyglass.redesign.album.playCounts.source, 0 Your plays
                   unless set, 1 Spotify plays; the page's preview follows it) picks the numbers, apart from the place. Your
-                  plays are Listening stats', matched by the album's and the track's names. Spotify plays
+                  plays are Listening stats', matched by the album's and the track's names. Track numbers
+                  (`spotifyglass.redesign.album.trackNumbers`, off unless set, read at launch) uses the
+                  position in each disc's metadata track array. A loaded row's menu supplies the track URI;
+                  only a row without one can match an exact, unique title. Missing metadata leaves no number.
+                  Spotify plays
                   (AlbumSpotifyCounts.m, AlbumRows.x, over Shared/SpotifyMetadata/) are what Spotify's own metadata gives for
                   the album: one JSON GET for its track URIs (the metadata/4/album path, market from_token) and one batched
                   extended-metadata POST for all their play counts (extension 185), per miss, never one request per track and
@@ -2208,7 +2218,11 @@ Redesigned:
                   the count and the ⋯'s mark read its RetrievalRowKit TitleView and SubtitleView, and the artist line's change,
                   which needs the Granular wrapper the explicit badge sits beside, leaves such a row alone. A podcast's episode page is the same template, so it is given the same field, and what it
                   paints over it is taken off. Laid out on the Mac against harness/album/
-    Artist/       the artist page on the same field and header (Artist.h lists its files), its Music / Video / Merch
+    Artist/       Hold Play on the redesigned artist header, or use its Shuffle accessibility action, to play
+                  the displayed artist shuffled. A hold released outside the button does not act. The header's
+                  own Shuffle and Play controls supply the state and actions; an artist already playing is not
+                  paused. A normal tap stays Spotify's. See harness/artist/README.md for simulator coverage.
+                  The artist page on the same field and header (Artist.h lists its files), its Music / Video / Merch
                   strip gone so the Music list is the page, and off that list its videos (on until switched off) and,
                   off until switched on, the Artist pick, the Release Countdown and About
                   (spotifyglass.redesign.artist.hide.pick, .countdown, .about). Each is told apart by the identifier
@@ -2413,7 +2427,42 @@ launch like the accent, so turning it on needs a relaunch too); while installed 
 tokens even when the user switches back to Spotify's green, so the accent can return live. A launch with Spotify's
 green and Follow the cover off installs nothing, and choosing an accent then takes effect after a relaunch (the page's
 restart note). With Spotify's green and Follow the cover on, the tokens resolve to Spotify's own colors everywhere
-but the player's controls, which follow the cover (harness/appearance-accent/). Hide explicit badge
+but the player's controls, which follow the cover (harness/appearance-accent/). After the accent the redesign's
+list has its glass, every glass the redesign makes: the glass behind its buttons that Redesigned/Kit/SGRGlass.m makes
+(SGRGlassInside, SGRGlassCapsuleInside, SGRShowGlass), the glass tab bar's platters, main and split, expanded and
+minimized (Redesigned/Navbar/TabBar.x hands each platter UIKit draws to SGRGlassRestyle, which gives it the
+listener's glass through `-[UIView _setGlassEffect:]` only when they chose other than Regular, None and on, since any
+glass handed over comes out with UIKit's smoothness 6 lost), the now playing card's glass and its Jam strip's
+(Redesigned/NowPlayingBar/NowPlayingBar.x) and the glass behind both bars' stand-ins while the player opens and closes
+(BarTransition.x) and the search field's (Redesigned/Navbar/SearchField.x, once per pane), all through SGRGlassEffect().
+Search's category cards keep their Clear glass in the category's color, and the full screen lyrics page's
+(Redesigned/Lyrics/LyricsPage.x) stays Core's regular glass, for the words' legibility. The choices are each read once as the redesign starts (a constructor, not the first glass made,
+so a launch under Reduce Transparency that changes them and then switches it off still waits for a restart): Glass material (`spotifyglass.redesign.glass.material`,
+Regular or Clear, UIGlassEffect's two styles), Glass tint (`spotifyglass.redesign.glass.tint`, None, Light or Dark,
+white at 30% or black at 45% as the glass's tint color) and Glass touch response
+(`spotifyglass.redesign.glass.interactive`, on until switched off: interactive glass). Nothing stored is Regular, None
+and on, and a stored material or tint that is none of the choices reads as Regular or None. Under Reduce Transparency a
+shape is the solid fill whatever is chosen, and the bars keep UIKit's own opaque treatment of their glass (iOS 26.5
+simulator: Clear and Dark show no page through either bar), and below iOS 26 the dark blur stays as it was: the three
+apply to the iOS 26 glass only. The tab bar's platters answer touches as UIKit's do, and switched off their glass stays
+still while the tabs still take their taps; the card's glass takes no touch, its own press stays its answer
+(harness/tabbar glass-check.py). A shape takes no touch, the control it sits in does; interactive glass gives under the touches of the view
+UIKit asks `-_flexInteractionGestureView` for, so the shape (SGRGlassShape) names its control, as UIKit's own glass
+background behind a button names the button: the control SGRGlassBacks gave it, else the control it sits in (Home's
+pill keeps its glass in a holder beside the buttons, and Redesigned/Home/HomeHeader.x gives it the Filter button), and the glass answers the control's touches while the control keeps them,
+with its action, highlight and VoiceOver; a disabled control names nothing and its glass stays still. A shape that took
+touches itself left its button without a tap (iOS 26.5 simulator). Switched off, the glass is not interactive and the
+control works as ever. Saved mark (`spotifyglass.redesign.savedMark`; Spotify's, Plain checkmark or Dot) replaced the
+Plain checkmark switch: a saved song's circled tick stays Spotify's, becomes a plain checkmark in the accent, or a filled
+dot in the accent in the same place, only while the button is selected (saved), the unsaved plus always Spotify's
+(SGRPlainCheck.x, SGRAddGlyphFor). With nothing stored, or a value that is none of the three, it follows the old switch
+(`spotifyglass.redesign.plainCheck`: Plain checkmark when on, Spotify's when not; SGRSavedMarkFrom), which is read and
+never written or removed. The Player page's Star add button still wins in the player. The button's action, its selected
+state, size and accessibility label stay Spotify's, and the mark follows the selected state on every set and layout, so
+a reused row or a song unsaved gets the right glyph back. Checked against harness/appearance-page/ (rows-check: the
+defaults, out of range values, the old switch carried over and left alone), harness/player-refinements/ (`dot`) and
+harness/glass-choices/ (an iOS 26 simulator: each material and tint, touch response on and off judged from screenshots
+held against at rest, Reduce Transparency, and Dot over a list scrolled for reuse, unsaved and saved again). Hide explicit badge
 (off) ends either look's list (spotifyglass.hideExplicit native, spotifyglass.redesign.hideExplicit redesigned;
 Native/Appearance/ExplicitBadge.x, Redesigned/Kit/SGRExplicitBadge.x): a transparent mask over Spotify's own badge views,
 Components.UI.ExplicitIcon and the retrieval row's ExplicitBadge class, never an E label found by its text, so the layout,
@@ -2461,8 +2510,8 @@ beside it), Cut-out Play (`spotifyglass.redesign.artist.cutOutPlay`, off, only w
 or in the accent with Accent Play button, `spotifyglass.redesign.accentPlay`, off, its glyph cut out by an alpha mask
 redrawn only when the glyph, bounds or font change; Kit/SGRActionRow.m, harness/artist/cutout-check.sh), and Header:
 Picture-aware photo and Monthly listeners in About (`spotifyglass.redesign.artist.listenersInAbout`, off: the line
-under the name goes once the page's own diffable data source has configured Spotify's About card for this artist,
-which carries the count itself; without About, or with About hidden, it stays; ArtistSections.x,
+under the name is omitted from the first layout when enabled, since Spotify's About already shows the count.
+Turning on Hide About keeps the line under the name; ArtistSections.x,
 harness/artist/listeners-check.py). The Player page leads with a pinned miniature of the whole player showing the
 current or last song (480 pt, shrinking to 236 pt as the page scrolls, opaque above the rows; with Star add button on,
 the star before the ⋯ as the player draws it), whose Without a clip

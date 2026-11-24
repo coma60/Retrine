@@ -130,6 +130,16 @@ Before the fix the gap was -26 pt with nothing under the bar on an iPhone SE, an
 up on any phone: UIKit's glass bar is 83 pt, Spotify's bar was its 49 pt row with no inset under it,
 and the glass bar stood the difference above it, over the now playing bar.
 
+`glass-check.py` checks the listener's glass (Redesigned/Kit/SGRGlass.h) in a simulator of its own, over rows in color
+with the fade off: `glass` reads the glass of every platter shown and of the now playing card against literals given at
+launch (`-harness.wantMaterial`, `-harness.wantTint`, `-harness.wantInteractive`), expanded and minimized, each held for
+a screenshot, then taps Your Library's tab and a button on the card, which must both work. It runs Regular and None,
+Clear, Clear and Dark (also with `split`) and touch response off, and asks each platter and the card to look different
+on the screen in Clear, and in Clear and Dark, from Regular and None: a platter's material is read from its
+`_UIViewGlass`, the card's only shows on the screen, since an effect view hands its glass back as Regular.
+2026-11-23, iPhone 17 Pro on iOS 26.5: platters 14.6 to 56.3 and the card 14.6 to 66.7 per channel apart, and Regular
+and None with touch response off 0.0 apart from UIKit's own glass at rest. Needs Pillow.
+
 `fade-check.sh` checks the fade under the bars (`spotifyglass.redesign.navbar.fade`) in a simulator of its own:
 `fade toggle` (and `fade toggle split`) switches it off and on live the way the Tab bar page does, and asserts one
 `SGRBarFade` behind the glass from `SGRBarFadeAbovePt` over the glass bar's top to the tab bar container's foot and

@@ -158,7 +158,7 @@ static void enqueueClip(void (^job)(void), BOOL prefetch) {
 
 // The lock screen's last asks, as absolute times: lines are drawn ahead only while it is showing them, previews and
 // clips each by their own asks, as it asks for clips far less often.
-static CFAbsoluteTime sg_askedAt, sg_previewAskedAt;
+static _Atomic(CFAbsoluteTime) sg_askedAt, sg_previewAskedAt;
 // Previews drawn ahead, by artwork ID.
 static NSCache<NSString *, UIImage *> *sg_previews;
 // Keep the composed still with its animated offer. MediaPlayer falls back to the ordinary artwork
@@ -314,7 +314,7 @@ static MPMediaItemAnimatedArtwork *artworkFor(NSString *artworkID, SGLockLine *l
         return previous;
     }];
     sg_stillArtwork = still;
-    objc_setAssociatedObject(artwork, &sg_stillKey, still, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(artwork, &sg_stillKey, still, OBJC_ASSOCIATION_RETAIN);
     return artwork;
 }
 
@@ -344,7 +344,7 @@ static MPMediaItemAnimatedArtwork *artworkFor(NSString *artworkID, SGLockLine *l
     NSMutableDictionary *composed = [info mutableCopy];
     if (still) {
         // Artist-row ticks and Spotify/extras resends must not look like another still-artwork change.
-        objc_setAssociatedObject(still, &sg_nativeKey, native ?: NSNull.null, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(still, &sg_nativeKey, native ?: NSNull.null, OBJC_ASSOCIATION_RETAIN);
         composed[MPMediaItemPropertyArtwork] = still;
     } else if (native) {
         composed[MPMediaItemPropertyArtwork] = native;

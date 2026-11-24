@@ -101,6 +101,17 @@ int main(void) {
         check(!SGSpotifyAlbumMetadataPath(@"spotify:album:ZZZZZZZZZZZZZZZZZZZZZZ"), @"overflowing identity rejected");
         check(!SGSpotifyAlbumMetadataPath(one), @"a track cannot stand in for an album");
         check([SGRAlbumMetadataTracks(metadata()) isEqual:@[one, two, missing]], @"multi-disc and repeated tracks normalize by URI/GID");
+        SGRAlbumTrackIndex *index = [SGRAlbumTrackIndex fromMetadata:json(@{@"disc": @[
+            @{@"track": @[@{@"uri": one, @"name": @"Shared", @"available": @NO},
+                         @{@"uri": two, @"name": @"Unique"}]},
+            @{@"track": @[@{@"uri": missing, @"name": @"Shared"}]}]})];
+        check([[index numberForURI:one title:nil] isEqual:@1] && [[index numberForURI:two title:nil] isEqual:@2] &&
+              [[index numberForURI:missing title:nil] isEqual:@1], @"greyed rows count; disc position restarts");
+        check([[index numberForURI:nil title:@"Unique"] isEqual:@2] && ![index numberForURI:nil title:@"Shared"] &&
+              ![index numberForURI:@"spotify:track:0000000000000000000004" title:@"Unique"],
+              @"only a missing URI and a unique title can use title fallback");
+        check(![[SGRAlbumTrackIndex fromMetadata:metadata()] numberForURI:one title:nil],
+              @"ambiguous URI never picks a disc");
         check(!SGRAlbumMetadataTracks(json(@{@"disc": @[@{@"track": @[@{@"uri": one, @"gid": @"00000000000000000000000000000002"}]}]})),
               @"conflicting identities rejected");
         check(!SGRAlbumMetadataTracks(json(@{@"disc": @"wrong"})), @"malformed album response rejected");

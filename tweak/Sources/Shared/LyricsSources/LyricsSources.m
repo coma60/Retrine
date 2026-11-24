@@ -835,6 +835,16 @@ void SGLyricsForgetAnswer(NSString *track) {
     @synchronized (sg_missing) { [sg_missing removeObject:track]; }
 }
 
+void SGLyricsForgetAnswerForImportChange(NSString *track) {
+    // Detach the old consumers before retiring the walk. Their held responses see the
+    // invalidated generation; a reentrant fetch belongs to the new one.
+    NSMutableArray *pending = sg_waiting[track];
+    NSArray *waiting = [pending copy];
+    [pending removeAllObjects];
+    SGLyricsForgetAnswer(track);
+    for (void (^done)(SGLyricsResult *) in waiting) done(nil);
+}
+
 static void trimKept(NSString *track) {
     if (sg_kept.count < kKeptTracks || sg_kept[track]) return;
     for (NSString *other in sg_kept.allKeys) if (![other isEqualToString:track]) SGLyricsRetire(other);

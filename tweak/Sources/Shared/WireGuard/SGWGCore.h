@@ -57,6 +57,7 @@ BOOL SGWGActiveThisLaunch(void);
 BOOL SGWGReady(void);
 BOOL SGWGGuardsInstalled(void);
 BOOL SGWGAdmissionReady(void);
+BOOL SGWGCheckAdmission(BOOL * _Nullable pendingImages);
 void SGWGRefreshReadiness(void);
 void SGWGNotifyRecovery(void);
 NSString *SGWGStateDescription(SGWGState state);

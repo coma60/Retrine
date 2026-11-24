@@ -13,10 +13,11 @@ xcrun -sdk macosx clang -target arm64-apple-ios17.0-macabi -isysroot "$SDK" -ifr
 CFFIXED_USER_HOME="$OUT/home" "$OUT/check"
 # The imported lyrics files, with the lyrics engine's line timing and the TTML reader as the tweak has them.
 xcrun -sdk macosx clang -target arm64-apple-ios17.0-macabi -isysroot "$SDK" -iframework "$SDK/System/iOSSupport/System/Library/Frameworks" \
-    -fobjc-arc -g -Wall -Werror -I"$SRC" "$HERE/lrc.m" "$SRC/Shared/LocalFiles/LocalLyrics.m" "$SRC/Shared/LocalFiles/LyricRetirement.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \
+    -fobjc-arc -g -Wall -Werror -I"$SRC" "$HERE/lrc.m" "$SRC/Shared/LocalFiles/LocalLyrics.m" "$SRC/Shared/LocalFiles/EmbeddedLyrics.m" "$SRC/Shared/LocalFiles/LyricRetirement.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \
     "$SRC/Shared/Lyrics/KaraokeTiming.m" "$SRC/Shared/LyricsSources/SGTTML.m" "$SRC/Shared/AdBlock/Protobuf.m" \
     -framework UIKit -framework CoreGraphics -framework Foundation -framework ImageIO "$SRC/Core/SGDataRoot.m" -o "$OUT/lrc"
-CFFIXED_USER_HOME="$OUT/home" "$OUT/lrc"
+python3 "$HERE/embedded-fixtures.py" "$OUT/tags"
+CFFIXED_USER_HOME="$OUT/home" SG_TEST_TAGS="$OUT/tags" "$OUT/lrc"
 # Cover fallback, including the malformed image URI that crashed Spotify 9.1.90.
 xcrun -sdk macosx clang -target arm64-apple-ios17.0-macabi -isysroot "$SDK" -iframework "$SDK/System/iOSSupport/System/Library/Frameworks" \
     -fobjc-arc -g -Wall -Werror -I"$SRC" "$HERE/cover.m" "$SRC/Shared/LocalFiles/LocalCover.m" "$SRC/Shared/LocalFiles/LocalFiles.m" \

@@ -6,8 +6,9 @@
 // Reduce Motion a crossfade with no travel, the label's text and accessibility Spotify's. Star add button and Plain
 // checkmark: the mapping and SGRPlainCheck.x through Logos on a player's and a row's add button, enabled and disabled.
 //
-// The launch arguments are the settings, read at launch as on the phone: `both` has Plain checkmark and Star add
-// button on, `plain` Plain checkmark alone. Reduce Motion and the accent are test
+// The launch arguments are the settings, read at launch as on the phone: `both` has Plain checkmark's old switch and
+// Star add button on, `plain` the old switch alone (Saved mark unset, so it carries the switch's Plain checkmark),
+// `dot` Saved mark's Dot stored beside the old switch, on. Reduce Motion and the accent are test
 // doubles (the system's setting cannot be set from here); everything else is the tweak's own code.
 #import <objc/runtime.h>
 #import <CoreText/CoreText.h>
@@ -308,22 +309,27 @@ static void checkRollingLabel(UIWindow *window) {
 #pragma mark - the add button
 
 static void checkAddMapping(void) {
-    struct { BOOL saved, enabled, player, star, plain; SGRAddGlyph want; NSString *what; } cases[] = {
-        {NO, YES, YES, YES, NO, SGRAddGlyphStarOutline, @"player, unsaved, star"},
-        {YES, YES, YES, YES, NO, SGRAddGlyphStarFilled, @"player, saved, star"},
-        {YES, YES, YES, YES, YES, SGRAddGlyphStarFilled, @"player, saved, star and plain check: star wins"},
-        {NO, YES, YES, YES, YES, SGRAddGlyphStarOutline, @"player, unsaved, star and plain check: star wins"},
-        {NO, NO, YES, YES, NO, SGRAddGlyphSpotify, @"player, unsaved, star, disabled"},
-        {YES, NO, YES, YES, YES, SGRAddGlyphSpotify, @"player, saved, star and plain check, disabled"},
-        {YES, YES, NO, YES, YES, SGRAddGlyphPlainCheck, @"row, saved, both: plain check keeps the rows"},
-        {NO, YES, NO, YES, YES, SGRAddGlyphSpotify, @"row, unsaved, both"},
-        {YES, YES, NO, YES, NO, SGRAddGlyphSpotify, @"row, saved, star only"},
-        {YES, YES, YES, NO, YES, SGRAddGlyphPlainCheck, @"player, saved, plain check only"},
-        {NO, YES, YES, NO, YES, SGRAddGlyphSpotify, @"player, unsaved, plain check only"},
-        {YES, YES, YES, NO, NO, SGRAddGlyphSpotify, @"player, saved, neither"},
+    const SGRSavedMark spotify = SGRSavedMarkSpotify, plain = SGRSavedMarkPlainCheck, dot = SGRSavedMarkDot;
+    struct { BOOL saved, enabled, player, star; SGRSavedMark mark; SGRAddGlyph want; NSString *what; } cases[] = {
+        {NO, YES, YES, YES, spotify, SGRAddGlyphStarOutline, @"player, unsaved, star"},
+        {YES, YES, YES, YES, spotify, SGRAddGlyphStarFilled, @"player, saved, star"},
+        {YES, YES, YES, YES, plain, SGRAddGlyphStarFilled, @"player, saved, star and plain check: star wins"},
+        {NO, YES, YES, YES, plain, SGRAddGlyphStarOutline, @"player, unsaved, star and plain check: star wins"},
+        {YES, YES, YES, YES, dot, SGRAddGlyphStarFilled, @"player, saved, star and dot: star wins"},
+        {NO, NO, YES, YES, spotify, SGRAddGlyphSpotify, @"player, unsaved, star, disabled"},
+        {YES, NO, YES, YES, plain, SGRAddGlyphSpotify, @"player, saved, star and plain check, disabled"},
+        {YES, YES, NO, YES, plain, SGRAddGlyphPlainCheck, @"row, saved, both: plain check keeps the rows"},
+        {YES, YES, NO, YES, dot, SGRAddGlyphDot, @"row, saved, star and dot: the dot keeps the rows"},
+        {NO, YES, NO, YES, plain, SGRAddGlyphSpotify, @"row, unsaved, both"},
+        {YES, YES, NO, YES, spotify, SGRAddGlyphSpotify, @"row, saved, star only"},
+        {YES, YES, YES, NO, plain, SGRAddGlyphPlainCheck, @"player, saved, plain check only"},
+        {NO, YES, YES, NO, plain, SGRAddGlyphSpotify, @"player, unsaved, plain check only"},
+        {YES, YES, YES, NO, dot, SGRAddGlyphDot, @"player, saved, dot only"},
+        {NO, YES, NO, NO, dot, SGRAddGlyphSpotify, @"row, unsaved, dot: Spotify's plus"},
+        {YES, YES, YES, NO, spotify, SGRAddGlyphSpotify, @"player, saved, neither"},
     };
     for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
-        SGRAddGlyph got = SGRAddGlyphFor(cases[i].saved, cases[i].enabled, cases[i].player, cases[i].star, cases[i].plain);
+        SGRAddGlyph got = SGRAddGlyphFor(cases[i].saved, cases[i].enabled, cases[i].player, cases[i].star, cases[i].mark);
         CHECK(got == cases[i].want, @"add glyph %@: got %ld, want %ld", cases[i].what, (long)got, (long)cases[i].want);
     }
 }
@@ -366,7 +372,8 @@ static NSString *shownNow(UIButton *button, UIView *animation) {
     if (glyph.userInteractionEnabled || glyph.isAccessibilityElement) HARNESS_FAIL(@"the glyph takes touches or is an element");
     NSString *name = [glyph.image.description containsString:@"star.fill"] ? @"star.fill"
                    : [glyph.image.description containsString:@"star"] ? @"star"
-                   : [glyph.image.description containsString:@"checkmark"] ? @"checkmark" : glyph.image.description;
+                   : [glyph.image.description containsString:@"checkmark"] ? @"checkmark"
+                   : [glyph.image.description containsString:@"circle.fill"] ? @"dot" : glyph.image.description;
     BOOL accent = [glyph.tintColor isEqual:SGRAccent()] && [glyph.accessibilityIdentifier isEqualToString:SGRPlainCheckIdentifier];
     // UIKit can expose the symbol's identifier when the view's own identifier is unset.
     UIImageView *reference = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"star"]];
@@ -407,8 +414,10 @@ static void checkAddButtons(UIWindow *window) {
     UIButton *rowButton = addButton(row, &rowAnimation);
 
     BOOL star = [sg_mode isEqualToString:@"both"];
+    // `dot` stores Saved mark's Dot beside Plain checkmark's old switch, on: the stored mark wins.
+    NSString *mark = [sg_mode isEqualToString:@"dot"] ? @"dot accent" : @"checkmark accent";
     expectShown(player, playerAnimation, NO, star ? @"star primary" : @"spotify", @"the player's button, unsaved");
-    expectShown(player, playerAnimation, YES, star ? @"star.fill accent" : @"checkmark accent", @"the player's button, saved");
+    expectShown(player, playerAnimation, YES, star ? @"star.fill accent" : mark, @"the player's button, saved");
     expectShown(player, playerAnimation, NO, star ? @"star primary" : @"spotify", @"the player's button, unsaved again");
     // Disabled: Spotify's own glyph, which shows it disabled, in place of the star, at once (no layout pass); the
     // star again once enabled.
@@ -416,16 +425,27 @@ static void checkAddButtons(UIWindow *window) {
     NSString *got = shownNow(player, playerAnimation);
     CHECK([got isEqualToString:@"spotify"], @"the player's button, disabled: shows %@", got);
     player.selected = YES;
-    NSString *want = star ? @"spotify" : @"checkmark accent";
+    NSString *want = star ? @"spotify" : mark;
     got = shownNow(player, playerAnimation);
     CHECK([got isEqualToString:want], @"the player's button, saved and disabled: shows %@, want %@", got, want);
     CHECK([shown(player, playerAnimation) isEqualToString:want], @"the player's button, saved and disabled, laid out: changed");
     player.enabled = YES;
-    want = star ? @"star.fill accent" : @"checkmark accent";
+    want = star ? @"star.fill accent" : mark;
     got = shownNow(player, playerAnimation);
     CHECK([got isEqualToString:want], @"the player's button, enabled again: shows %@, want %@", got, want);
-    expectShown(rowButton, rowAnimation, YES, @"checkmark accent", @"a row's button, saved");
+    expectShown(rowButton, rowAnimation, YES, mark, @"a row's button, saved");
     expectShown(rowButton, rowAnimation, NO, @"spotify", @"a row's button, unsaved");
+    // A song saved again after it was unsaved gets the mark back.
+    expectShown(rowButton, rowAnimation, YES, mark, @"a row's button, saved again");
+    // Reuse can replace the whole state view while the old animation still has a superview.
+    UIView *oldState = rowAnimation.superview;
+    [oldState removeFromSuperview];
+    UIView *replacement = [[rowAnimation.class alloc] initWithFrame:rowButton.bounds];
+    UIView *newState = [[UIView alloc] initWithFrame:rowButton.bounds];
+    [newState addSubview:replacement];
+    [rowButton addSubview:newState];
+    expectShown(rowButton, replacement, YES, mark, @"a reused row with a new state view");
+    CHECK(rowAnimation.superview == oldState, @"reuse fixture lost the detached state view");
     [unit.view removeFromSuperview];
     [row removeFromSuperview];
 }
@@ -482,8 +502,8 @@ static void run(UIWindow *window) {
 int main(int argc, char *argv[]) {
     @autoreleasepool {
         sg_mode = [NSUserDefaults.standardUserDefaults stringForKey:@"harness.mode"];
-        if (![sg_mode isEqualToString:@"both"] && ![sg_mode isEqualToString:@"plain"]) {
-            fprintf(stderr, "usage: -harness.mode both|plain with the settings as launch arguments\n");
+        if (![@[@"both", @"plain", @"dot"] containsObject:sg_mode ?: @""]) {
+            fprintf(stderr, "usage: -harness.mode both|plain|dot with the settings as launch arguments\n");
             return 2;
         }
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(PlayerRefinementsApp.class));

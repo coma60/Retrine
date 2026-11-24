@@ -40,7 +40,7 @@ static os_unfair_lock gReadinessLock = OS_UNFAIR_LOCK_INIT;
 static uint64_t gReadinessGeneration;
 static BOOL gEngineAvailable;    // unvalidated engine event, protected by gReadinessLock
 static BOOL gSessionGuards;
-static int gPort = -1;            // local proxy port (fixed for the launch)
+static int gPort = -1;            // fixed before session hooks are installed
 static int gListenerFD = -1;      // reserved socket handed to Go on start
 static char gUser[33], gPass[33]; // per-launch random proxy credentials
 static dispatch_queue_t gQueue;
@@ -836,19 +836,28 @@ static void EngineChanged(int state) {
     dispatch_async(gQueue, ^{ SGWGRefreshReadiness(); });
 }
 
+static void RefuseListener(void) {
+    gBlockAll = YES;
+    if (gListenerFD >= 0) {
+        close(gListenerFD);
+        gListenerFD = -1;
+    }
+}
 static void StartEngine(void) {
     dispatch_async(gQueue, ^{
         SGWGState state = SGWGCurrentState();
-        if (atomic_load(&gEngineReady) || state == SGWGStateFailed) return;
+        if (atomic_load(&gEngineReady) || state == SGWGStateFailed || gBlockAll) return;
         OSStatus status = errSecSuccess;
         NSString *profile = ReadProfile(&status);
         if (!profile.length) {
             atomic_store(&gCredentialStatus, status);
-            atomic_store(&gState, (status == errSecInteractionNotAllowed || status == errSecNotAvailable)
-                ? SGWGStateWaitingProfile : SGWGStateBlocked);
+            BOOL retryable = status == errSecInteractionNotAllowed || status == errSecNotAvailable;
+            if (!retryable) RefuseListener();
+            atomic_store(&gState, retryable ? SGWGStateWaitingProfile : SGWGStateBlocked);
             return;
         }
         atomic_store(&gCredentialStatus, errSecSuccess);
+        if (gListenerFD < 0) return; // already handed to Go or definitively refused
         atomic_store(&gState, SGWGStateStarting);
         int fd = gListenerFD;
         gListenerFD = -1; // ownership moves to Go
@@ -1024,7 +1033,13 @@ __attribute__((constructor)) static void SGWGInit(void) {
         gKind = SGWGSettingKind();
         RandomHex(gUser);
         RandomHex(gPass);
-        if (!ReserveListener()) { gBlockAll = YES; gPort = 1; }
+        BOOL supported = SGWGIsSupportedOS();
+        BOOL tunnel = [gKind isEqualToString:SGWGKindWireGuard];
+        // A session created while SpotifyShared is still loading keeps its proxy for life.
+        if (supported && tunnel && !ReserveListener()) gBlockAll = YES;
+        BOOL pending = NO;
+        BOOL admitted = supported && SGWGCheckAdmission(&pending);
+        if (tunnel && !admitted && !pending) RefuseListener();
         gSessionGuards = InstallSessionHooks();
         SGWGRefreshReadiness();
         _dyld_register_func_for_add_image(ImageChanged);
@@ -1039,9 +1054,12 @@ __attribute__((constructor)) static void SGWGInit(void) {
                 else StartExternalProxy();
             } else if (SGWGCurrentState() == SGWGStateBlocked && !gBlockAll &&
                        !atomic_load(&gEngineReady) && !atomic_load(&gCredentialStatus) &&
-                       SGWGIsSupportedOS() && SGWGAdmissionReady()) {
-                if ([gKind isEqualToString:SGWGKindWireGuard]) StartEngine();
-                else StartExternalProxy();
+                       SGWGIsSupportedOS()) {
+                BOOL stillPending = NO;
+                if (SGWGCheckAdmission(&stillPending)) {
+                    if (tunnel) StartEngine();
+                    else StartExternalProxy();
+                } else if (tunnel && !stillPending) RefuseListener();
             } else if (SGWGCurrentState() == SGWGStateFailed && atomic_load(&gEngineRecoverable)) {
                 SGWGRequestRebind(@"engine unavailable");
             }
@@ -1050,14 +1068,14 @@ __attribute__((constructor)) static void SGWGInit(void) {
 #endif
         });
         dispatch_resume(recovery);
-        if (!SGWGIsSupportedOS()) {
+        if (!supported) {
             atomic_store(&gState, SGWGStateUnsupported);
             return;
         }
         // A saved opt-in may survive an app update. Do not start a tunnel or
         // touch Spotify's delegates on an uninspected version. The stable Apple
         // entry points still block their covered traffic, not the whole app.
-        if (!SGWGAdmissionReady()) {
+        if (!admitted) {
             atomic_store(&gState, SGWGStateBlocked);
             return;
         }
@@ -1066,10 +1084,7 @@ __attribute__((constructor)) static void SGWGInit(void) {
             StartExternalProxy();
             return;
         }
-        // Reserve the loopback port synchronously: hooks may run before the Go
-        // runtime of this image is initialized, and Go must never be entered
-        // from a constructor (it would wait for its own initializer).
-        atomic_store(&gState, SGWGStateStarting);
+        atomic_store(&gState, gBlockAll ? SGWGStateBlocked : SGWGStateStarting);
         ObserveLifecycle();
         StartEngine();
     }

@@ -93,7 +93,7 @@ their check executable in the workflow.
 | `album-notes/build.sh` | Album notes against replayed catalog fixtures, and the page's note placement and footer heights over Spotify collection doubles. |
 | `artist-artwork/build.sh` | Artist match and one-attempt identity rules against replayed catalog fixtures, plus the 30 MB clip cap and the Low Data policy. |
 | `appearance-accent/check.sh` | Catalyst Automatic accent ownership: page in front, playing cover, picked colour, real UIKit push/pop/tab/modal, and the player's Follow the cover combinations. |
-| `appearance-page/rows-check.sh` | Appearance rows of both looks, including the explicit-badge switches. |
+| `appearance-page/rows-check.sh` | Appearance rows of both looks, including the explicit-badge switches, the redesign's glass choices (unset and out-of-range values) and Saved mark carrying Plain checkmark's old switch over. |
 | `audio-effects/build.sh` | `route`, `presets` and `format`: isolated settings, preset-file and audio-format text assertions. |
 | `auto-translation-settings/check.sh` | Real Catalyst settings callbacks with fake providers. |
 | `autoeq/build.sh` | Default offline index/preset fixtures, not `online`. |
@@ -147,7 +147,7 @@ their check executable in the workflow.
 | `player-lyric-line/margin-check.sh` | Catalyst: both Spotify lyric preview classes reach the player's 32 pt margin in either layout direction, but keep their native width in a narrow column or outside the player. |
 | `adblock/build.sh` | The real `AdHubs.x` hook through Logos against a Hub builder double: explicit ad metadata is removed only with Hide ads on, upsells only with Hide upsells on, in all four switch combinations. |
 | `player-visualiser/build.sh` | Catalyst `PlayerVisualiser.m` under stubs: the Lyrics visualizer clears its words when the lyrics are replaced by unsynced ones, and the display link asks the screen's full rate while drawing skips to 60/30/15 Hz. With `PlayerLyricStages.m`: Poster's and Cut's word reveal, the untimed fallback, the parameters' defaults, clamping and removal, the halftone made once per artwork (a failed one final, an older job never replacing a newer), and Reduce Motion. `SHOTS=<folder>` writes `poster.png` and `cut.png`. |
-| `player-refinements/check.sh` | Catalyst rolling-digit rules, column reuse, repeated setters without attributed-text reads, repair after an external edit, detached visibility observers, and the real roll on a label in a window, plus Star add button and Plain checkmark through Logos. |
+| `player-refinements/check.sh` | Catalyst rolling-digit rules, column reuse, repeated setters without attributed-text reads, repair after an external edit, detached visibility observers, and the real roll on a label in a window, plus Star add button and Saved mark (the old Plain checkmark switch, and Dot) through Logos. |
 | `prefs/check.sh` | Foundation preference validation plus counter persistence and file-hash checks (`counters.m`), and the Load ahead gate read through `SGEnabled` for wrong kinds and stock reset (`optional-work.m`). |
 | `radio-modes/build.sh` | Foundation Spotify mocks, spoofing off/on. |
 | `settings-bars/build.sh` | Catalyst `SGInsetForBars` over a 6,000-view mock window: walks counted across repeated layouts, inset follows a bar resized, hidden, removed, added, or a table moved to another window. |
@@ -204,6 +204,7 @@ by merely compiling them.
 | `native-player/build.sh` | iOS simulator UI; `sponsorblock` checks SponsorBlock's progress bar marks (`../sponsorblock/markers-check.m`, also run by `player/`'s `sponsorblock` scenario). |
 | `onboarding/build.sh` | iOS simulator UI; generates fixture release notes only inside its output directory. |
 | `page-previews/build.sh` | iOS simulator: the five page settings with their preview cards, in a simulator of the run's own; asserts what VoiceOver reads and writes PNGs. |
+| `glass-choices/check.py` | iOS simulator screenshots judged with Pillow, in a simulator of the run's own: the redesign's glass in each material and tint, touch response on and off with the glass inside its button and in a holder beside it (Home's pill), Reduce Transparency, choices changed after a launch under Reduce Transparency staying the launch's, and Saved mark's Dot over reused, unsaved and saved-again rows. |
 | `player/build.sh` | iOS simulator player UI; `timerow` checks subpixel progress sets and the held scrub capsule; `seek` checks the exact value delivered by a same-pixel tap; `lyric-line-chip-live` checks the idle lyric clock, paused seeks, late chip movement and the first visible line after full lyrics close; `lyric-line-long` checks that crossing the final portion boundary during placement does not skip the last words. |
 | `playlist/build.sh` | iOS simulator UI. |
 | `search/check.sh` | iOS simulator UI: the Browse page's cards closed up under the header and the list's end moved up with them. |
@@ -218,6 +219,7 @@ by merely compiling them.
 | `tabbar/build.sh` | iOS simulator UI. |
 | `tabbar/capture.sh` | iOS simulator screen recording, for a visual review frame by frame. |
 | `tabbar/fade-check.sh` | iOS simulator UI. |
+| `tabbar/glass-check.py` | iOS simulator screenshots judged with Pillow: the listener's glass on the tab bar's platters (main and split, expanded and minimized) and the now playing card, against Regular and None, and the tabs and the card's button taking taps with touch response on and off. |
 | `tabbar/ipad-check.sh` | iPad simulator UI: tab names whole beside their glyphs, the fade down to the container's foot. |
 | `update/build.sh` | iOS simulator and live GitHub requests. |
 

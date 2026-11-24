@@ -33,8 +33,12 @@ static NSString *storedARL(SGLyricsRequestContext *context) {
     sg_arlLoaded = YES;
     if (status == errSecItemNotFound || !data) return nil;
     id value = CFBridgingRelease(data);
-    if (![value isKindOfClass:NSData.class] || [value length] > 4096) return nil;
-    sg_arl = [[NSString alloc] initWithData:value encoding:NSUTF8StringEncoding];
+    if ([value isKindOfClass:NSData.class] && [value length] <= 4096)
+        sg_arl = [[NSString alloc] initWithData:value encoding:NSUTF8StringEncoding];
+    if (!sg_arl) {
+        sg_arlLoaded = NO;
+        [context noteFailure:YES];
+    }
     return sg_arl;
 }
 
@@ -221,6 +225,7 @@ static void lyrics(SGLyricsRequestContext *context, NSString *song, NSString *ar
 void SGDeezerAskWith(NSString *arl, SGLyricsQuery *query, void (^done)(SGLyricsResult *));
 void SGDeezerAskWith(NSString *arl, SGLyricsQuery *query, void (^done)(SGLyricsResult *)) {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ SGDeezerAskWith(arl, query, done); }); return; }
+    if (!arl.length) { done(nil); return; }
     if (!safeARL(arl) || NSProcessInfo.processInfo.systemUptime < sg_authRefusedUntil) {
         [query.requestContext noteFailure:YES];
         done(nil);

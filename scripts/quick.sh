@@ -5,7 +5,7 @@
 #   scripts/quick.sh            (make quick)
 #
 # The last out/*.ipa from scripts/pipeline.sh is kept unpacked in out/quick/, and unpacked again when a
-# newer one is built. Only spotifyglass.dylib changes: a change to the extension, the App Group shim, a
+# newer one is built. Only spotifyglass.dylib and Retrine.bundle change: the extension, the App Group shim, a
 # plist or an icon needs the full pipeline (make install).
 set -euo pipefail
 export WIREGUARD="${WIREGUARD-1}"
@@ -40,7 +40,6 @@ if [ ! -f "$CACHE/.from" ] || [ "$IPA" -nt "$CACHE/.from" ] || [ "$(cat "$CACHE/
   printf '%s' "$IPA" > "$CACHE/.from"
 fi
 APP="$(ls -d "$CACHE"/Payload/*.app | head -1)"
-[ -d "$APP/Retrine.bundle" ] || { echo "cached IPA lacks Retrine.bundle: run the full build once (make install)" >&2; exit 1; }
 
 cached_pixie=0
 [ ! -f "$APP/Frameworks/SpotifyAudioProbe.dylib" ] || cached_pixie=1
@@ -77,12 +76,10 @@ install_name_tool -change /Library/Frameworks/CydiaSubstrate.framework/CydiaSubs
 
 # The license notice tweak/Makefile stages beside the strings, which a cache unpacked from a build
 # without WireGuard lacks; a build without it carries no notice.
+rsync -a --delete "$ROOT/tweak/layout/Library/Application Support/Retrine.bundle/" "$APP/Retrine.bundle/"
 NOTICE="$APP/Retrine.bundle/WireGuard-THIRD_PARTY_LICENSES.txt"
 if [ "$WIREGUARD" = 1 ]; then
-  mkdir -p "$(dirname "$NOTICE")"
   cp "$ROOT/WireGuard/THIRD_PARTY_LICENSES.txt" "$NOTICE"
-else
-  rm -f "$NOTICE"
 fi
 
 exec "$ROOT/scripts/install.sh" "$APP"

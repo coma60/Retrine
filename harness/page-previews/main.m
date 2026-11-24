@@ -450,6 +450,38 @@ static void runMirrors(void) {
 }
 
 static void runChecks(void) {
+    reset();
+    SGRPagePreview *details = show(^UIViewController *{ return SGRPlaylistSettingsPage(); });
+    UIView *controls = identified(details, @"retrine.preview.header.controls");
+    if (!controls) HARNESS_FAIL(@"missing playlist preview controls");
+    CGFloat full = CGRectGetMinY(controls.frame), headerHeight = controls.superview.bounds.size.height;
+    UIView *face = identified(details, @"retrine.preview.header.creatorPicture");
+    UIView *name = identified(details, @"retrine.preview.header.detail");
+    if (!face || face.hidden || !name || name.hidden) HARNESS_FAIL(@"missing preview creator or picture");
+    SGSetEnabled(SGRKeyPlaylistCreatorPicture, NO);
+    spin(0.5);
+    CGFloat noPicture = CGRectGetMinY(controls.frame);
+    if (!face.hidden || name.hidden || noPicture != full)
+        HARNESS_FAIL(@"hiding the picture must preserve the name and controls position");
+    writePNG(details, @"playlist-picture-off");
+    SGSetEnabled(SGRKeyPlaylistCreatorLine, NO);
+    SGSetEnabled(SGRKeyPlaylistCreatorPicture, YES);
+    spin(0.5);
+    CGFloat noLine = CGRectGetMinY(controls.frame);
+    if (noLine >= noPicture) HARNESS_FAIL(@"hiding creator and length left the controls in place");
+    writePNG(details, @"playlist-line-off");
+    SGSetEnabled(SGRKeyPlaylistCreatorLine, YES);
+    SGSetEnabled(SGRKeyPlaylistDescription, NO);
+    spin(0.5);
+    if (CGRectGetMinY(controls.frame) != full || controls.superview.bounds.size.height >= headerHeight)
+        HARNESS_FAIL(@"description must close below controls independently");
+    writePNG(details, @"playlist-description-off");
+    SGSetEnabled(SGRKeyPlaylistCreatorLine, NO);
+    SGSetEnabled(SGRKeyPlaylistCreatorPicture, NO);
+    spin(0.5);
+    if (CGRectGetMinY(controls.frame) != noLine || CGRectGetMaxY(controls.frame) != controls.superview.bounds.size.height)
+        HARNESS_FAIL(@"all off must leave no metadata space");
+    writePNG(details, @"playlist-all-off");
     runCoverChoices();
     runPage(@"playlist", ^UIViewController *{ return SGRPlaylistSettingsPage(); },
             @"Open cover on tap and Sort and Mix",

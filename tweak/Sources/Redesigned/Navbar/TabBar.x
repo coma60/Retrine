@@ -14,6 +14,7 @@
 #import "Core/SGCore.h"
 #import "Navbar.h"
 #import "Redesigned/Kit/SGRTokens.h"
+#import "Redesigned/Kit/SGRGlass.h"
 #import "Redesigned/NowPlayingBar/NowPlayingBar.h"
 #import "Settings/SGPage.h"
 #import "Headers/SPTEncoreIconView.h"
@@ -397,10 +398,14 @@ static UITabBarItem *itemOfButton(UITabBar *bar, UIView *button) {
 
 @implementation SGRSystemTabBar
 
-// UIKit makes the labels as it lays the items out, so they are shrunk after each pass.
+// UIKit makes the labels as it lays the items out, so they are shrunk after each pass, and its platters, which take
+// the listener's glass (SGRGlass.h).
 - (void)layoutSubviews {
     [super layoutSubviews];
     SGRShrinkTabTitles(self);
+    for (UIView *sub in self.subviews) {
+        if ([NSStringFromClass(sub.class) hasSuffix:@"PlatterView"]) SGRGlassRestyle(sub);
+    }
     noteGlassRow();
 }
 

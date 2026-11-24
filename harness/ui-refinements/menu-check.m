@@ -88,6 +88,8 @@ SGRLab SGRLabFromRGB(CGFloat red, CGFloat green, CGFloat blue) { return (SGRLab)
 void SGRLabToRGB(SGRLab lab, CGFloat *red, CGFloat *green, CGFloat *blue) { *red = *green = *blue = 0; }
 SGRLab SGRLabInSRGB(CGFloat L, CGFloat chroma, CGFloat hue) { return (SGRLab){L, 0, 0}; }
 BOOL SGRObserveImage(UIImageView *view, void (^changed)(UIImageView *view)) { return NO; }
+// Track numbers (the only layout observer AlbumRows.x asks for) stay off here.
+BOOL SGRObserveLayout(UIView *view, void (^laidOut)(UIView *view)) { return NO; }
 
 #pragma mark - an album's track cell
 

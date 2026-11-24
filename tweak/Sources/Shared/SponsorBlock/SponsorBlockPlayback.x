@@ -73,7 +73,7 @@ static dispatch_block_t scheduleBoundary(double delay, dispatch_block_t fire) {
               isRTL:(BOOL)isRTL properties:(id)properties messageOrchestrator:(id)orchestrator {
     id result = %orig;
     dispatch_async(dispatch_get_main_queue(), ^{ sg_presenter = result; });
-    return (__bridge id)CFBridgingRetain(result);
+    return result;
 }
 %end
 %end

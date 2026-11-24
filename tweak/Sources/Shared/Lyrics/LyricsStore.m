@@ -61,7 +61,7 @@ static NSArray<SGLyricsLink *> *decodeLinks(id records) {
 }
 
 static NSDictionary *encodeLine(SGKaraokeLine *line, NSUInteger depth) {
-    if (![line isKindOfClass:SGKaraokeLine.class] || depth > kStoreDepth) return nil;
+    if (![line isKindOfClass:SGKaraokeLine.class] || line.fileOwned || depth > kStoreDepth) return nil;
     NSMutableArray *words = [NSMutableArray array];
     for (SGKaraokeWord *word in line.words) {
         if (![word isKindOfClass:SGKaraokeWord.class] || ![word.text isKindOfClass:NSString.class]) return nil;
@@ -263,6 +263,7 @@ void SGLyricsStoreSaveWithLease(NSString *track, NSArray<SGKaraokeLine *> *lines
     // The keeper calls on main, where the provider credit registry lives. Snapshot before
     // generated translations/pronunciation can be attached; serialization and I/O stay off main.
     NSMutableDictionary *record = [SGLyricsStoreEncode(lines, credit) mutableCopy];
+    if (!record) return;
     NSArray *links = encodeLinks(SGLyricsCreditLinks(credit));
     if (links) record[@"creditLinks"] = links;
     if (SGLyricsCreditRequired(credit)) record[@"creditRequired"] = @YES;

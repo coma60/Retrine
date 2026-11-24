@@ -37,6 +37,7 @@
 #import "Redesigned/Album/Album.h"
 #import "Artist.h"
 #import "ArtistArtwork.h"
+#import "ArtistShuffleHold.h"
 
 // A picture shorter than this is one mid load.
 static const CGFloat kMinHero = 120;
@@ -327,8 +328,6 @@ static void applyHero(UIView *container, UIView *artwork, CGFloat bottom, UIColo
 
 static void applyHeader(UIView *header, BOOL full);
 static void applyContent(UIView *header, UIView *container, SGRHeaderInfo *info, NSString *name, UIView *listeners, UIColor *fieldColor);
-// ArtistSections.x owns About's membership and invalidation, not its visibility.
-extern BOOL SGRArtistListenersInAbout(UIView *header, UIView *metadata, UIView *more);
 
 // Spotify's navigation bar, the one part of the header kept: collapsed, it is where the name is. Its gradient
 // is a flat dark band over the field, as the album's was (Album/AlbumHeader.x); the soft top edge every
@@ -392,11 +391,9 @@ static void applyHeader(UIView *header, BOOL full) {
     setFrame(info, container.bounds);
 
     UIView *title = SGRFindByIdentifier(header, @"Encore.AdaptiveTitle", &kTitleKey);
-    UIView *listeners = SGRFindByIdentifier(header, @"Components.Header.UI.Metadata", &kMetaKey);
+    UIView *listeners = SGRArtistListenersInAbout() ? nil : SGRFindByIdentifier(header, @"Components.Header.UI.Metadata", &kMetaKey);
     NSString *name = SGRFirstLabelText(title) ?: SGRFirstLabelText(bar);
-    UIView *listenersIdentity = SGRFindByIdentifier(header, @"Components.UI.ContextMenuButton*", &kMoreKey);
-    BOOL inAbout = SGRArtistListenersInAbout(header, listeners, listenersIdentity);
-    full |= [info showTitle:name creator:nil length:inAbout ? nil : SGRFirstLabelText(listeners) about:nil];
+    full |= [info showTitle:name creator:nil length:SGRFirstLabelText(listeners) about:nil];
     // Play's glyph and word are drawn in the field's color, which lands whenever the photo's has been read.
     UIColor *fieldColor = SGRArtistFieldColor(container);
     full |= ![fieldColor isEqual:info.handedPlayColor];
@@ -447,6 +444,7 @@ static void applyContent(UIView *header, UIView *container, SGRHeaderInfo *info,
     // with the photo: pinned there it is the same button in the same place on the album and the playlist,
     // and the page keeps it however far down the list one is (issue #57).
     UIView *more = SGRFindByIdentifier(header, @"Components.UI.ContextMenuButton*", &kMoreKey);
+    artistBindHold(info, header, play, shuffle, more.accessibilityIdentifier);
     SGRPinnedMore(SGRArtistPageOf(container), &kMoreButtonKey, more);
 
     // The buttons arrive after the header has laid out, in a row that keeps its size and so lays nothing out

@@ -176,6 +176,8 @@ void SGKaraokeDeferPersistence(NSString *track);
 BOOL SGLyricsRecovering(NSString *track);
 void SGLyricsRetire(NSString *track);
 void SGLyricsForgetAnswer(NSString *track);
+// Import edits retire the old walk and complete its consumers with nil. Disk is untouched.
+void SGLyricsForgetAnswerForImportChange(NSString *track);
 // Main queue, only authoritative player reports, not state getters or seeks.
 void SGLyricsPlaybackChanged(NSString *track);
 void SGKaraokeCancelStoreWrite(NSString *track);
@@ -499,6 +501,8 @@ void SGLyricsChooseSource(NSString *trackID, NSString *key);
 void SGLyricsChooseAutomatic(NSString *trackID);
 // A walk under way at the track's first pick has ended with `lyrics`: that is what Automatic puts back.
 void SGLyricsNoteOrderChoice(NSString *trackID, SGLyricsResult *lyrics);
+// The next switch to Automatic must resolve again, without changing the current pick.
+void SGLyricsForgetAutomaticFallback(NSString *trackID);
 // A walk found the track's pick `key` answering no lines, or switched off: the pick goes, so the menu shows
 // Automatic over the order's answer the walk goes on to. Nothing when the track's pick is another by now.
 void SGLyricsDropChoice(NSString *trackID, NSString *key);

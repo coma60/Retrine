@@ -89,6 +89,7 @@ enum { kMaxOutputs = 8, kMaxWatchers = 4 };
 static float sg_speed = 1, sg_semitones;     // main thread
 NSNotificationName const SGPlayerSpeedDidChangeNotification = @"spotifyglass.player.speedChanged";
 static atomic_uint sg_speedBits;             // sg_speed for SPTPlayerState, read on any thread
+static atomic_uint sg_semitoneBits;          // sg_semitones, for resetUnit() on whichever thread seeks
 
 typedef struct {
     atomic_uint_fast64_t rateBits;
@@ -1114,7 +1115,7 @@ static void report(void) {
 
 // Hands the render thread to the unit's other half, reset, when the speed, the pitch or Pitch follows speed
 // now call for it. That costs the unit's delay once (93 ms going to the stretch), the same as putting it in,
-// where rendering the other half as it was left would play what it held from last time.
+// where rendering the other half as it was left would play what it held from last time. Under sg_buildLock.
 static void switchIfAsked(SGTimePitch *unit) {
     if (!atomic_load(&sg_engaged) || !SGTimePitchSwitchPending(unit)) return;
     disengage();
@@ -1131,7 +1132,9 @@ static void apply(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kOffAfter * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (thisChange != change || sg_speed != 1 || sg_semitones != 0 || !atomic_load(&sg_engaged)) return;
             report();
+            pthread_mutex_lock(&sg_buildLock);
             disengage();
+            pthread_mutex_unlock(&sg_buildLock);
         });
     }
     SGTimePitch *unit = unitForFormat();
@@ -1140,6 +1143,8 @@ static void apply(void) {
         if (!normal && logged++ < 3) SGLog(@"redesign speed: Spotify's output has not started, or is in a format the unit does not take; nothing to change yet");
         return;
     }
+    // A seek's resetUnit() may run on Spotify's own thread: the unit is reset and engaged by one side at a time.
+    pthread_mutex_lock(&sg_buildLock);
     SGTimePitchSetRate(unit, tapped() ? sg_speed : 1);
     SGTimePitchSetSemitones(unit, sg_semitones);
     if (!normal && !atomic_load(&sg_engaged)) {
@@ -1148,6 +1153,7 @@ static void apply(void) {
         atomic_store(&sg_engaged, true);
     }
     switchIfAsked(unit);
+    pthread_mutex_unlock(&sg_buildLock);
 }
 
 // A speed or pitch chosen before the output started, or kept across a new format or another output, applies
@@ -1237,7 +1243,7 @@ static void resetUnit(void) {
     if (unit) {
         disengage();
         SGTimePitchReset(unit);
-        if (sg_speed != 1 || sg_semitones != 0) atomic_store(&sg_engaged, true);
+        if (loadFloat(&sg_speedBits) != 1 || loadFloat(&sg_semitoneBits) != 0) atomic_store(&sg_engaged, true);
     }
     pthread_mutex_unlock(&sg_buildLock);
 }
@@ -1278,6 +1284,7 @@ float SGPlayerPitch(void) {
 void SGSetPlayerPitch(float semitones) {
     if (!sg_reachable && !tapped()) return;
     sg_semitones = semitones;
+    storeFloat(&sg_semitoneBits, semitones);
     apply();
     SGSpeedPitchSongValuesChanged(@"pitch");
 }

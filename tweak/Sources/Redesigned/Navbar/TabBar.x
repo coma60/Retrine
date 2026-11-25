@@ -277,18 +277,14 @@ static UIImage *musicHomeGlyph(void) {
     return image;
 }
 
-// The Music app's tab bar draws its symbols a weight heavier than this bar's own (its magnifying glass's ring 2 pt
-// across, this bar's 1.75 at the same 22 pt): medium.
 static UIImage *symbolGlyph(NSString *symbol, BOOL active) {
     static NSCache<NSString *, UIImage *> *cache;
     if (!cache) cache = [NSCache new];
-    if ([symbol isEqualToString:@"house"]) return musicHomeGlyph();
     NSString *filled = [symbol stringByAppendingString:@".fill"];
     NSString *name = active && [UIImage systemImageNamed:filled] ? filled : symbol;
     UIImage *image = [cache objectForKey:name];
     if (image) return image;
-    image = [[[UIImage systemImageNamed:name] imageByApplyingSymbolConfiguration:[UIImageSymbolConfiguration configurationWithWeight:UIImageSymbolWeightMedium]]
-             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    image = [[UIImage systemImageNamed:name] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     if (image) [cache setObject:image forKey:name];
     return image;
 }
@@ -342,6 +338,23 @@ static NSString *stockSymbol(NSString *title) {
     return kOtherTabSymbol;
 }
 
+// A glyph Apple symbols gives one of Spotify's tabs (stockSymbol): Home's is the house drawn to the Music app's
+// measure, every other its SF Symbol at the medium weight the Music app's bar draws with (its magnifying glass's ring
+// 2 pt across where this bar's regular one is 1.75, both 22 pt). Only Apple symbols draws them so; a tab of the
+// mod's own keeps its symbol as it is.
+static UIImage *stockGlyph(NSString *symbol, BOOL active) {
+    if ([symbol isEqualToString:pageSymbols()[@"spotify:home"]]) return musicHomeGlyph();
+    static NSCache<NSString *, UIImage *> *cache;
+    if (!cache) cache = [NSCache new];
+    NSString *key = [NSString stringWithFormat:@"%@|%d", symbol, active];
+    UIImage *image = [cache objectForKey:key];
+    if (image) return image;
+    image = [[symbolGlyph(symbol, active) imageByApplyingSymbolConfiguration:[UIImageSymbolConfiguration configurationWithWeight:UIImageSymbolWeightMedium]]
+             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    if (image) [cache setObject:image forKey:key];
+    return image;
+}
+
 // Spotify's own Search tab, known by the page it opens in Spotify's list of tabs, never by its name or its place. A tab
 // of the mod's own is not, whatever it opens.
 static BOOL isSearch(UIView *item) {
@@ -363,7 +376,7 @@ static NSString *tabTitle(UIView *item) {
 UIImage *SGRNavbarGlyph(NSDictionary *entry, BOOL active) {
     if (entry[SGRNavbarURI]) return iconGlyph(entry[SGRNavbarIcon], [entry[SGRNavbarIconSet] isEqual:SGTabIconSetSymbols], active);
     NSString *symbol = stockSymbol(entry[SGRNavbarID]);
-    if (symbol) return symbolGlyph(symbol, active);
+    if (symbol) return stockGlyph(symbol, active);
     for (UIView *item in SGRowIn(sg_stockBar).arrangedSubviews) {
         if (isOwnTab(item)) continue;
         if ([labelIn(item).text isEqualToString:entry[SGRNavbarID]]) return glyphOf(item, active);
@@ -760,7 +773,8 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
         NSArray<NSString *> *keys = symbol ? nil : glyphKeysOf(live);
         if (!item.image || !item.selectedImage || (keys && ![objc_getAssociatedObject(item, &kGlyphKeysKey) containsObject:keys.firstObject])) {
             BOOL bare = !item.image;
-            if (symbol) setGlyphs(item, symbolGlyph(symbol, NO), symbolGlyph(symbol, YES));
+            if (symbol && own) setGlyphs(item, symbolGlyph(symbol, NO), symbolGlyph(symbol, YES));
+            else if (symbol) setGlyphs(item, stockGlyph(symbol, NO), stockGlyph(symbol, YES));
             else setGlyphs(item, glyphOfIcon(live, NO), glyphOfIcon(live, YES));
             drew |= bare && item.image;
             if (item.image && item.selectedImage) objc_setAssociatedObject(item, &kGlyphKeysKey, keys, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

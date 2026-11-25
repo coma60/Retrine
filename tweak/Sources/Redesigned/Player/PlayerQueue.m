@@ -1314,9 +1314,10 @@ static UIImage *mixGlyph(void) {
         [[UIColor colorWithWhite:1 alpha:alpha] setFill];
         [[UIBezierPath bezierPathWithRoundedRect:(CGRect){CGPointZero, bounds.size} cornerRadius:bounds.size.height / 2] fill];
         if (!glyph) return;
-        if (!contrast) CGContextSetBlendMode(context.CGContext, kCGBlendModeDestinationOut);
+        // drawInRect:blendMode:alpha:, not drawInRect:, which draws in the normal mode whatever the context's is.
         CGSize size = glyph.size;
-        [glyph drawInRect:CGRectMake((bounds.size.width - size.width) / 2, (bounds.size.height - size.height) / 2, size.width, size.height)];
+        [glyph drawInRect:CGRectMake((bounds.size.width - size.width) / 2, (bounds.size.height - size.height) / 2, size.width, size.height)
+                blendMode:contrast ? kCGBlendModeNormal : kCGBlendModeDestinationOut alpha:1];
     }];
 }
 

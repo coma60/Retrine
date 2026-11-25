@@ -72,13 +72,15 @@ static CGFloat sg_slide;             // how far the lyrics slide the title towar
 
 static void placeRow(void);
 
-// The Music app's sizes: Title 3 in the player, Headline and Body beside the lyrics' thumbnail (PlayerLyrics.x), the
+// The Music app's sizes: Title 3 in the player, Headline and Subheadline beside the lyrics' thumbnail (PlayerLyrics.x;
+// its NowPlayingViewController.LayoutSpecs collapsedTitleFont and collapsedSubtitleFont, built in Music 24B156 at
+// 0x1005eb9c8 with _preferredFontForTextStyle:maximumContentSizeCategory: Extra Extra Extra Large), the
 // two column player keeping the player's. Capped where the player's row still holds two lines of it. In the family the
 // app draws in: the system font, which Fonts.x draws in the chosen one, unless Spotify's is drawn (Shared/Fonts,
 // SGAppFontDrawn); then the family of `given`, the font Spotify set, at the Music app's size and weight.
 static UIFont *shownFont(BOOL title, UIFont *given) {
     BOOL lyrics = SGRPlayerPageOpen() && !SGRPlayerTwoColumns();
-    UIFontTextStyle style = lyrics ? (title ? UIFontTextStyleHeadline : UIFontTextStyleBody) : UIFontTextStyleTitle3;
+    UIFontTextStyle style = lyrics ? (title ? UIFontTextStyleHeadline : UIFontTextStyleSubheadline) : UIFontTextStyleTitle3;
     UIFontWeight weight = title ? UIFontWeightSemibold : UIFontWeightRegular;
     UIFont *system = SGCategoryCappedFont(style, weight, UIContentSizeCategoryExtraExtraExtraLarge);
     NSString *family = given.familyName;

@@ -252,14 +252,21 @@ static void renderGlyph(UIView *drawn, UIView *disc) {
             CGSize size = image.size;
             rect = CGRectMake(CGRectGetMidX(bounds) - size.width / 2, CGRectGetMidY(bounds) - size.height / 2, size.width, size.height);
         }
-        [image drawInRect:rect];
+        // drawInRect: alone draws in the normal blend mode, whatever the context was set to, which filled the hole back
+        // in: the glyph is taken out of the disc with the blend given here.
+        [image drawInRect:rect blendMode:kCGBlendModeDestinationOut alpha:1];
     } else if ([drawn isKindOfClass:%c(SPTEncoreIconView)]) {
         SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
         UIColor *color = encore.foregroundColor;
         encore.foregroundColor = UIColor.blackColor;
         [encore layoutIfNeeded];
-        [encore.layer renderInContext:context];
+        // Drawn into a picture of its own first, then taken out of the disc with the blend, as the symbol is.
+        UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:encore.traitCollection];
+        format.opaque = NO;
+        UIImage *shape = [[[UIGraphicsImageRenderer alloc] initWithSize:encore.bounds.size format:format]
+                          imageWithActions:^(UIGraphicsImageRendererContext *inner) { [encore.layer renderInContext:inner.CGContext]; }];
         encore.foregroundColor = color;
+        [shape drawInRect:encore.bounds blendMode:kCGBlendModeDestinationOut alpha:1];
     }
     CGContextRestoreGState(context);
 }

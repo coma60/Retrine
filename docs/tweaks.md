@@ -1730,7 +1730,14 @@ Redesigned:
                   the slot (shown or hidden by Spotify) rather than from where the ⋯ was drawn, so the pass in which
                   Spotify takes the pill away and brings the slot back already ends the title before it. Where
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
-                  in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
+                  in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. Queue (the
+                  Player page's Controls, spotifyglass.redesign.player.queueStyle: 0 Spotify, the default, 1 Apple Music)
+                  puts that glyph in place of Spotify's queue button too: it opens the Music app's queue in the player
+                  (PlayerLyrics.x's page with PlayerQueue.m's SGRPlayerQueuePage in its stage, the cover a thumbnail as for
+                  the lyrics): shuffle, repeat and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
+                  Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. The footer's lyrics and queue
+                  glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, the Music
+                  app's _NowPlayingFooterActiveIndicatingView), white landing where 0.46 added would. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
                   the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.40 alpha (0.7 with Increase Contrast; 0.85 over a light backdrop, see Backdrop ink) added to what is behind it, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,

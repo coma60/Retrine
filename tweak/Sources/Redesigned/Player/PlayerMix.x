@@ -374,7 +374,7 @@ static BOOL seen(UIView *view) {
 
 // What holds the stage back, cheap enough to ask on every frame: `view` is the stage or the cover.
 static BOOL heldBack(UIView *view) {
-    return !sg_artworkOn || !seen(view) || SGRReduceMotion() || SGRPlayerIsTransitioning() || SGRPlayerLyricsOpen()
+    return !sg_artworkOn || !seen(view) || SGRReduceMotion() || SGRPlayerIsTransitioning() || SGRPlayerPageOpen()
         || SGRPlayerCoverHidden() || UIApplication.sharedApplication.applicationState != UIApplicationStateActive || wideLayout(view.traitCollection);
 }
 

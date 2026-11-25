@@ -1302,13 +1302,13 @@ void SGRPlayerVisualiserUpdate(void) {
     [sg_view layOutStage];
     if (made) {
         sg_view.ownsCover = YES;
-        [sg_view setBlurred:SGRPlayerLyricsOpen() animated:NO];
+        [sg_view setBlurred:SGRPlayerPageOpen() animated:NO];
         [sg_view appear:field.window != nil];
         SGRPlayerHoldField();
         SGLog(@"redesign player: visualizer on the field");
         [sg_shuffle viewMade];
     } else {
-        BOOL open = SGRPlayerLyricsOpen();
+        BOOL open = SGRPlayerPageOpen();
         if (open != sg_view.blurred) [sg_view setBlurred:open animated:sg_view.window != nil];
     }
 }

@@ -1743,7 +1743,7 @@ static void showBehind(NSString *track, NSString *name, void (^draw)(SGRPlayerMo
     SGRPlayerLyricClipChanged();
     layOut();
     SGRPlayerHoldField();
-    [motion setBlurred:SGRPlayerLyricsOpen() animated:NO];
+    [motion setBlurred:SGRPlayerPageOpen() animated:NO];
     BOOL animated = seen(motion);
     [motion appear:animated then:^{
         if (sg_motion == motion) cover(YES);
@@ -1828,7 +1828,7 @@ BOOL SGRPlayerVisualiserFallbackWanted(void) {
 }
 
 void SGRPlayerMotionLyricsChanged(void) {
-    [sg_motion setBlurred:SGRPlayerLyricsOpen() animated:sg_motion.window != nil];
+    [sg_motion setBlurred:SGRPlayerPageOpen() animated:sg_motion.window != nil];
     SGRPlayerBackdropLyricsChanged();
 }
 

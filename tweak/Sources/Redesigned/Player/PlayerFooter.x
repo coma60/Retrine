@@ -15,12 +15,13 @@
 // for the stand-in and Spotify's drawn clear. Music app icons on the Player page (SGRKeyPlayerMusicIcons) switches the
 // stand-ins off and on while the player is open; the row's places, the hidden device name and the touch square stay.
 // Spotify has no lyrics control down here, so that one is the Kit's glyph button, and it turns the
-// lyrics in the player on and off (PlayerLyrics.x): filled while they are up, dimmed and dead for a
+// lyrics in the player on and off (PlayerLyrics.x): on its disc while they are up, dimmed and dead for a
 // track that has none. With Music app icons off it draws Spotify's Encore microphone instead
 // (SGRPlayerFooterGlyph), lit and dimmed the same way. In the iPad two column player (PlayerLyrics.x) Lyrics picks the
 // side column's lines and a queue glyph of the Kit's, where the row puts Spotify's queue button, picks its queue; each
-// is lit while its side shows. The same glyph stands in a row Spotify builds without a queue button (a Free account's)
-// and opens Playing Next (PlayerQueue.m), as the Music app's row always has its queue.
+// is on while its side shows. The same glyph stands in a row Spotify builds without a queue button (a Free account's)
+// and opens Playing Next (PlayerQueue.m), as the Music app's row always has its queue, and in place of Spotify's with the
+// Music app's queue style (SGRKeyPlayerQueueStyle), where it opens the queue page in the player and is on while it shows.
 //
 // The bottom stack keeps the Music app's rhythm (keepRhythm): its gaps from the title row down to the footer row are
 // Apple's, set as the stack's own spacing, which raises the title row into the cover's band.
@@ -49,7 +50,7 @@ static const CGFloat kLyricsGlyphSize = 20;
 static const UIImageSymbolWeight kFooterGlyphWeight = UIImageSymbolWeightSemibold;
 // The platter a pressed glyph of the row sinks into (SGRPress.h), the row's touch square.
 static const CGFloat kFooterPlatter = 44;
-// Filled and at full strength while the lyrics are up, the way the Music app marks the control that is on.
+// Filled while the lyrics are up, and cut out of the disc the Music app marks the control that is on with (markActive).
 static NSString *const kLyricsSymbol = @"quote.bubble", *const kLyricsSymbolOpen = @"quote.bubble.fill";
 // Spotify's lyrics glyph, the microphone its other apps mark Lyrics with, drawn instead with Music app icons off.
 // SPTEncoreIcon has no "lyrics" in 9.1.90 (its 571 class methods, SpotifyShared's metadata).
@@ -106,12 +107,6 @@ static UIColor *footerRest(UIView *view) {
     footerFilter(view, nil);
     CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkAdd;
     return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
-}
-
-// Lit, a glyph is the primary color as it is, not light added.
-static UIColor *footerLit(UIView *view) {
-    footerFilter(view, nil);
-    return SGRPrimary();
 }
 
 // The row's own glyph buttons in the row's weight (the Kit's are regular).
@@ -185,24 +180,20 @@ static void paintEncore(SGRGlyphButton *button) {
     if (encore && ![encore.layer.compositingFilter isEqual:filter]) encore.layer.compositingFilter = filter;
 }
 
+static void markQueueGlyph(BOOL animated);
+static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated);
+static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated);
+
 // The rest color again on every glyph that wears it: Lyrics while it is off, Queue while it is not shown, the stand-ins.
 static void refreshFooterInk(void) {
+    // A glyph that is on keeps its glyph clear, and its disc takes the new reading.
     SGRGlyphButton *lyrics = sg_lyricsGlyph;
-    if (lyrics && ![lyrics.glyph.symbol isEqualToString:kLyricsSymbolOpen]) {
-        UIColor *ink = footerRest(lyrics);
-        if (![lyrics.glyph.tintColor isEqual:ink]) {
-            lyrics.glyph.tintColor = ink;
-            paintEncore(lyrics);
-        }
+    if (lyrics) {
+        BOOL open = [lyrics.glyph.symbol isEqualToString:kLyricsSymbolOpen];
+        tintFooterGlyph(lyrics, open, NO);
+        markActive(lyrics, SGRPlayerFooterGlyph(lyrics, kLyricsEncore), open, NO);
     }
-    SGRGlyphButton *queue = sg_queueGlyph;
-    if (queue && !SGRPlayerQueueSideShown()) {
-        UIColor *ink = footerRest(queue);
-        if (![queue.glyph.tintColor isEqual:ink]) {
-            queue.glyph.tintColor = ink;
-            paintEncore(queue);
-        }
-    }
+    markQueueGlyph(NO);
     for (SGRGlyphView *glyph in sg_standIns.allObjects) {
         UIColor *ink = footerRest(glyph);
         if (![glyph.tintColor isEqual:ink]) glyph.tintColor = ink;
@@ -231,25 +222,125 @@ UIView *SGRPlayerFooterGlyph(SGRGlyphButton *button, NSString *encoreName) {
     return encore;
 }
 
+#pragma mark - the disc of the control that is on
+
+// The Music app marks the footer control that is on (its lyrics, its queue) with a disc behind the glyph and the glyph
+// cut out of it, so the backdrop shows through the glyph's shape (MediaCoreUI's _NowPlayingFooterActiveIndicatingView:
+// a Circle filled white at 0.8 behind the label, the label's foreground blended out of it in a compositing group; under
+// Increase Contrast a white disc with the label in black). The disc is an image of the redesign's own here, the glyph's
+// shape drawn out of a filled circle, and the glyph itself is drawn clear while it shows. Its white lands where the Music
+// app's does: measured on its player 115 of 255 over the backdrop, the footer's rest ink (kFooterInkAdd), and 38 pt
+// across (its footer frame). It comes and goes with a fade, as the Music app animates it on the value.
+static const CGFloat kActiveDisc = 38;
+static char kDiscKey, kDiscDrawnKey;
+
+// The glyph's shape in opaque black, the size of the view that draws it, centered: the symbol's own image, or Spotify's
+// Encore glyph drawn once in black and given its color back.
+static void drawGlyphShape(UIView *drawn, CGRect into) {
+    if ([drawn isKindOfClass:SGRGlyphView.class]) {
+        UIImage *image = ((SGRGlyphView *)drawn).image;
+        if (!image) return;
+        CGSize size = image.size;
+        CGRect rect = CGRectMake(CGRectGetMidX(into) - size.width / 2, CGRectGetMidY(into) - size.height / 2, size.width, size.height);
+        [[image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal] drawInRect:rect];
+        return;
+    }
+    if (![drawn isKindOfClass:%c(SPTEncoreIconView)]) return;
+    SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
+    UIColor *color = encore.foregroundColor;
+    encore.foregroundColor = UIColor.blackColor;
+    [encore layoutIfNeeded];
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context, CGRectGetMidX(into) - CGRectGetMidX(encore.bounds), CGRectGetMidY(into) - CGRectGetMidY(encore.bounds));
+    [encore.layer renderInContext:context];
+    CGContextRestoreGState(context);
+    encore.foregroundColor = color;
+}
+
+static UIImage *discImage(UIView *drawn, UIColor *fill, BOOL contrast) {
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:drawn.traitCollection];
+    CGRect disc = CGRectMake(0, 0, kActiveDisc, kActiveDisc);
+    return [[[UIGraphicsImageRenderer alloc] initWithSize:disc.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        [fill setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:disc] fill];
+        // Out of the disc, or in black on it under Increase Contrast.
+        if (!contrast) CGContextSetBlendMode(context.CGContext, kCGBlendModeDestinationOut);
+        drawGlyphShape(drawn, disc);
+    }];
+}
+
+// The disc behind `button`'s glyph while `on`, and the glyph drawn clear in it; gone again while off. Called on every
+// change of the glyph's state and of the backdrop's reading; a disc already drawn for the same glyph, color and
+// contrast is kept.
+static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated) {
+    if (!button || !drawn) return;
+    UIImageView *disc = objc_getAssociatedObject(button, &kDiscKey);
+    if (!disc && !on) return;
+    if (!disc) {
+        disc = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, kActiveDisc, kActiveDisc)];
+        disc.userInteractionEnabled = NO;
+        disc.isAccessibilityElement = NO;
+        disc.alpha = 0;
+        objc_setAssociatedObject(button, &kDiscKey, disc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (disc.superview != button) [button insertSubview:disc atIndex:0];
+    else if (button.subviews.firstObject != disc) [button sendSubviewToBack:disc];
+    CGPoint middle = [button convertPoint:CGPointMake(CGRectGetMidX(drawn.bounds), CGRectGetMidY(drawn.bounds)) fromView:drawn];
+    // The glyph's sink on a press is not the disc's: it is placed by the glyph's untransformed middle.
+    if (CGAffineTransformIsIdentity(drawn.transform) && !CGPointEqualToPoint(disc.center, middle)) disc.center = middle;
+    if (on) {
+        BOOL contrast = SGRIncreaseContrast();
+        UIColor *fill = contrast ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(button, kFooterInkAdd, kFooterInkAdd)];
+        NSString *symbol = [drawn isKindOfClass:SGRGlyphView.class] ? ((SGRGlyphView *)drawn).symbol : NSStringFromClass(drawn.class);
+        NSArray *key = @[symbol ?: @"", fill, @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight)];
+        if (![objc_getAssociatedObject(disc, &kDiscDrawnKey) isEqual:key] || !disc.image) {
+            disc.image = discImage(drawn, fill, contrast);
+            objc_setAssociatedObject(disc, &kDiscDrawnKey, key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+    CGFloat alpha = on ? 1 : 0;
+    if (disc.alpha == alpha) return;
+    if (animated) SGRAnimate(SGRMotionFade, ^{ disc.alpha = alpha; }, nil);
+    else disc.alpha = alpha;
+}
+
+// The glyph's color: clear while its disc shows (the disc draws it), the rest ink otherwise. Changed with a crossfade
+// when animated, as the disc fades.
+static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated) {
+    UIColor *tint = on ? UIColor.clearColor : footerRest(button);
+    if ([button.glyph.tintColor isEqual:tint]) return;
+    void (^paint)(void) = ^{
+        button.glyph.tintColor = tint;
+        paintEncore(button);
+    };
+    if (animated && !SGRReduceMotion()) {
+        [UIView transitionWithView:button duration:SGRCrossfade options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction
+                        animations:paint completion:nil];
+    } else {
+        paint();
+    }
+}
+
 #pragma mark - lyrics
 
-// The queue glyph of the redesign's own, lit while the side column shows the queue, the way Lyrics is lit while it shows
-// the lines; never lit in the one column, where it opens a sheet.
-static void markQueueGlyph(void) {
+// The queue glyph of the redesign's own, on while the player shows the queue (the two columns' side column, the one
+// column's queue page), the way Lyrics is on while it shows the lines; never on where it opens a sheet.
+static void markQueueGlyph(BOOL animated) {
     SGRGlyphButton *queue = sg_queueGlyph;
     if (!queue) return;
-    BOOL shown = SGRPlayerQueueSideShown();
-    UIColor *tint = shown ? footerLit(queue) : footerRest(queue);
-    if (![queue.glyph.tintColor isEqual:tint]) queue.glyph.tintColor = tint;
+    BOOL shown = SGRPlayerQueueShown();
+    animated = animated && queue.window && !SGRPlayerIsTransitioning();
+    tintFooterGlyph(queue, shown, animated);
     queue.accessibilityTraits = UIAccessibilityTraitButton | (shown ? UIAccessibilityTraitSelected : 0);
-    paintEncore(queue);
+    markActive(queue, SGRPlayerFooterGlyph(queue, @"queue"), shown, animated);
 }
 
 void SGRPlayerLyricsChanged(void) {
     SGRPlayerMotionLyricsChanged();
     SGRPlayerVisualiserUpdate();
     SGRShownTitleRestyle();
-    markQueueGlyph();
+    markQueueGlyph(YES);
     SGRGlyphButton *glyph = sg_lyricsGlyph;
     if (!glyph) return;
     BOOL enabled = SGRPlayerLyricsAvailable() || SGRPlayerLyricsOpen(), open = SGRPlayerLyricsOpen();
@@ -259,13 +350,10 @@ void SGRPlayerLyricsChanged(void) {
     // While the player opens or closes the glyph and the lyrics come and go together, so nothing animates.
     BOOL animated = glyph.window && !SGRPlayerIsTransitioning();
     [glyph.glyph setSymbol:open ? kLyricsSymbolOpen : kLyricsSymbol animated:animated];
-    void (^mark)(void) = ^{
-        glyph.enabled = enabled;
-        glyph.glyph.tintColor = open ? footerLit(glyph) : footerRest(glyph);
-        paintEncore(glyph);
-    };
-    if (animated) SGRAnimate(SGRMotionFade, mark, nil);
-    else mark();
+    if (animated) SGRAnimate(SGRMotionFade, ^{ glyph.enabled = enabled; }, nil);
+    else glyph.enabled = enabled;
+    tintFooterGlyph(glyph, open, animated);
+    markActive(glyph, SGRPlayerFooterGlyph(glyph, kLyricsEncore), open, animated);
 }
 
 SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {
@@ -844,7 +932,10 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     SGRGlyphButton *glyph = objc_getAssociatedObject(host, &kQueueGlyphKey);
     if (!sg_queueStoodIn) sg_queueStoodIn = [NSHashTable weakObjectsHashTable];
     BOOL columns = SGRPlayerTwoColumns();
-    if (!columns) {
+    // The Music app's queue (SGRKeyPlayerQueueStyle) is the player's own page, which Spotify's button cannot open: the
+    // redesign's glyph stands in its place as in the two columns.
+    BOOL ours = columns || SGRPlayerQueueStyle() == SGRPlayerQueueStyleMusic;
+    if (!ours) {
         for (UIView *view in sg_queueStoodIn) {
             view.alpha = 1;
             view.userInteractionEnabled = YES;
@@ -852,7 +943,7 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
         }
         [sg_queueStoodIn removeAllObjects];
     }
-    if (!columns && spotifyQueue) {
+    if (!ours && spotifyQueue) {
         [glyph removeFromSuperview];
         return;
     }
@@ -863,6 +954,7 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
         __weak SGRGlyphButton *weakGlyph = glyph;
         glyph.onTap = ^{
             if (SGRPlayerTwoColumns()) SGRPlayerToggleQueueSide();
+            else if (SGRPlayerQueueStyle() == SGRPlayerQueueStyleMusic) SGRPlayerToggleQueuePage();
             else SGRPlayerShowQueue(weakGlyph);
         };
         objc_setAssociatedObject(host, &kQueueGlyphKey, glyph, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -870,13 +962,13 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     if (glyph.superview != host) [host addSubview:glyph];
     glyph.bounds = CGRectMake(0, 0, kFooterPlatter, kFooterPlatter);
     glyph.center = center;
-    if (columns && spotifyQueue) {
+    if (ours && spotifyQueue) {
         SGRVanish(spotifyQueue);
         [sg_queueStoodIn addObject:spotifyQueue];
     }
     sg_queueGlyph = glyph;
     UIView *drawn = SGRPlayerFooterGlyph(glyph, @"queue");
-    markQueueGlyph();
+    markQueueGlyph(NO);
     SGRPressGlyph(glyph, drawn, host, kFooterPlatter, drawn == glyph.glyph ? 0 : SGRPressScale);
 }
 
@@ -918,7 +1010,8 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     UIView *glyph = SGRPlayerConnectGlyphIn(host, connect);
     CGFloat connectFrom = glyph ? moveTo(arrangedAround(connect, host), glyph, CGPointMake(CGRectGetMidX(glyph.bounds), CGRectGetMidY(glyph.bounds)), host, round(width * kMiddle)) : -1;
 
-    standInForQueue((SPTEncoreIconView *)SGRFindByIdentifier(queue, @"Encore.IconView", &kQueueIconKey));
+    UIView *queueIcon = SGRFindByIdentifier(queue, @"Encore.IconView", &kQueueIconKey);
+    standInForQueue((SPTEncoreIconView *)queueIcon);
     CGFloat queueX = round(width * (rtl ? kLeading : kTrailing));
     CGFloat queueFrom = moveTo(arrangedAround(queue, host), queue, queueMiddle, host, queueX);
     placeQueueGlyph(host, arrangedAround(queue, host), CGPointMake(queueX, rowY));
@@ -932,7 +1025,9 @@ static void placeQueueGlyph(UIView *host, UIView *spotifyQueue, CGPoint center) 
     UIView *lyricsDrawn = SGRPlayerFooterGlyph(lyrics, kLyricsEncore);
     SGRPressGlyph(lyrics, lyricsDrawn, host, kFooterPlatter, lyricsDrawn == lyrics.glyph ? 0 : SGRPressScale);
     if (connect && glyph) SGRPressGlyph(connect, glyph, host, kFooterPlatter, SGRPressScale);
-    UIView *queueGlyph = connectGlyphIn(queue);
+    // Under Spotify's glyph, not the middle of its control: the control is wider and taller than the glyph, which it does
+    // not center, so a platter at its middle stood off the glyph, down and toward the leading side.
+    UIView *queueGlyph = queueIcon ?: connectGlyphIn(queue);
     if (queue) SGRPressGlyph(queue, queueGlyph ?: queue, host, kFooterPlatter, queueGlyph ? SGRPressScale : 0);
 
     static dispatch_once_t once;

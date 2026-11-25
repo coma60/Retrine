@@ -77,7 +77,7 @@ static void placeRow(void);
 // app draws in: the system font, which Fonts.x draws in the chosen one, unless Spotify's is drawn (Shared/Fonts,
 // SGAppFontDrawn); then the family of `given`, the font Spotify set, at the Music app's size and weight.
 static UIFont *shownFont(BOOL title, UIFont *given) {
-    BOOL lyrics = SGRPlayerLyricsOpen() && !SGRPlayerTwoColumns();
+    BOOL lyrics = SGRPlayerPageOpen() && !SGRPlayerTwoColumns();
     UIFontTextStyle style = lyrics ? (title ? UIFontTextStyleHeadline : UIFontTextStyleBody) : UIFontTextStyleTitle3;
     UIFontWeight weight = title ? UIFontWeightSemibold : UIFontWeightRegular;
     UIFont *system = SGCategoryCappedFont(style, weight, UIContentSizeCategoryExtraExtraExtraLarge);

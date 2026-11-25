@@ -195,6 +195,20 @@ BOOL SGRPlayerTwoColumns(void);
 BOOL SGRPlayerQueueSideShown(void);
 // The footer's queue glyph selects the queue in the side column.
 void SGRPlayerToggleQueueSide(void);
+// How the footer's queue button shows the queue (Player > Controls > Queue): 0, Spotify's own queue screen; 1, the
+// Music app's, in the player itself, the cover a thumbnail over it as for the lyrics (PlayerLyrics.x, PlayerQueue.m).
+// Read on every pass of the footer, so a change reaches the open player.
+#define SGRKeyPlayerQueueStyle @"spotifyglass.redesign.player.queueStyle"
+typedef NS_ENUM(NSInteger, SGRPlayerQueueStyleKind) { SGRPlayerQueueStyleSpotify, SGRPlayerQueueStyleMusic };
+SGRPlayerQueueStyleKind SGRPlayerQueueStyle(void);
+// The one column's queue page: opens it, turns the page from the lines to it, or puts the cover back while it shows.
+// In the two columns it picks the side column's queue.
+void SGRPlayerToggleQueuePage(void);
+// Whether the player shows the queue: the side column's, or the one column's page.
+BOOL SGRPlayerQueueShown(void);
+// Whether the page over the cover is up in the one column, with the lines or the queue: what the cover's thumbnail and
+// the title beside it follow. In the two columns, whether the side column shows the lines.
+BOOL SGRPlayerPageOpen(void);
 // The mini player's lyrics button: the player, opened next, shows the lyrics once it is up (both layouts; nothing for
 // a track without lyrics). Called before the player is asked to open.
 void SGRPlayerShowLyricsOnOpen(void);
@@ -203,7 +217,7 @@ void SGRPlayerShowLyricsOnOpen(void);
 BOOL SGRPlayerLyricsAvailable(void);
 // Whether the playing track has none: its grace is over and nothing is looking for them any more.
 BOOL SGRPlayerLyricsNone(void);
-// Whether the player is showing them.
+// Whether the player is showing them (not the queue page in their place).
 BOOL SGRPlayerLyricsOpen(void);
 // Hides a control without room or while lyrics are alone; only fitting controls return when they wake.
 BOOL SGRPlayerLyricsFadeView(UIView *view, BOOL fits);

@@ -1,7 +1,8 @@
 // Player redesign: Playing Next, the tracks the player has to come (SPTPlayerState.future), as a dark sheet opened
 // from the player's ⋯ menu (PlayerMenu.m), the footer's queue glyph where Spotify's row has no queue button
 // (PlayerFooter.x) and the iPad mini player's queue button (NowPlayingBar.x), and as the iPad two column player's side
-// column (PlayerLyrics.x). Spotify's own Queue button in the footer stays Spotify's.
+// column (PlayerLyrics.x). Spotify's own Queue button in the footer stays Spotify's, unless the Music app's queue style is
+// picked (SGRKeyPlayerQueueStyle): then the footer's glyph opens the Music app's page in the player.
 //
 // Threading: main thread only.
 #import <UIKit/UIKit.h>
@@ -15,3 +16,7 @@ void SGRPlayerShowQueue(UIView *from);
 // The same list for the two column player's side column (PlayerLyrics.x): no Close and no sheet, a pick skips ahead
 // and the list stays. Added as a child of the player's controller by its caller.
 UIViewController *SGRPlayerQueueList(void);
+// The Music app's queue as a page in the player (SGRKeyPlayerQueueStyle, PlayerLyrics.x puts it under the cover's
+// thumbnail): shuffle, repeat and AutoMix toggles over the list drawn its way. A pick skips ahead and the page stays.
+// Added as a child of the player's controller by its caller.
+UIViewController *SGRPlayerQueuePage(void);

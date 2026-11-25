@@ -1217,6 +1217,16 @@ UIViewController *SGRPlayerSettingsPage(NSArray *more) {
                                                  SGL(@"settings.player.music_icons.subtitle", @"The Music app's lyrics, AirPlay and queue icons under the controls, and the AI DJ's button as a waveform, in place of Spotify's."),
                                                  SGRKeyPlayerMusicIcons), @"playerMusicIcons");
     musicIcons.changed = ^(BOOL on) { SGRPlayerLookChanged(); };
+    // Where the footer's queue button shows the queue: Spotify's own screen, or the Music app's page in the player
+    // (PlayerQueue.m, PlayerLyrics.x). The footer reads it on every pass, so the open player follows at once.
+    SGModRow *queueStyle = SGWithNew(SGChoiceRow(SGL(@"settings.player.queue_style.title", @"Queue"),
+                                                 SGL(@"settings.player.queue_style.subtitle", @"How the queue button under the controls shows what plays next."),
+                                                 SGRKeyPlayerQueueStyle,
+                                                 @[SGL(@"settings.player.queue_style.spotify", @"Spotify"), SGL(@"settings.player.queue_style.music", @"Apple Music")],
+                                                 SGRPlayerQueueStyleSpotify), @"playerQueueStyle");
+    queueStyle.choiceNotes = @[SGL(@"settings.player.queue_style.spotify_note", @"Spotify's own queue screen opens over the player, where songs can be reordered and removed."),
+                               SGL(@"settings.player.queue_style.music_note", @"The queue opens inside the player under a small cover, with shuffle, repeat and AutoMix above it, as in Apple Music. Tap the button again to bring the cover back.")];
+    queueStyle.chosen = ^(NSInteger index) { SGRPlayerLookChanged(); };
     // On until switched off, as the Music app's header has only the grabber over the cover.
     SGModRow *hideContext = SGSwitchRow(SGL(@"settings.player.hide_context.title", @"Hide where it plays from"),
                                       SGL(@"settings.player.hide_context.subtitle", @"Hide the artist, album or playlist name at the top of the player."),
@@ -1259,7 +1269,7 @@ UIViewController *SGRPlayerSettingsPage(NSArray *more) {
                                       SGWithNew(SGSwitchRow(SGL(@"settings.player.rolling_digits.title", @"Rolling time digits"),
                                                   SGL(@"settings.player.rolling_digits.subtitle", @"The digits that change under the progress bar roll into place."),
                                                   SGRKeyPlayerRollingDigits), @"playerRollingDigits"),
-                                      starAdd, musicIcons, landscape,
+                                      starAdd, musicIcons, queueStyle, landscape,
                                       SGOptionRow(SGL(@"settings.player.music_close.title", @"Music-like player close"),
                                                   SGL(@"settings.player.music_close.subtitle", @"Close into the mini player in stages. Applies after restarting Spotify."),
                                                   SGRKeyPlayerMusicClose)],

@@ -32,13 +32,14 @@ static const float kHistoryWeight[4] = {0.1f, 0.2f, 0.3f, 0.4f};
 static const float kPeakFall[3] = {1.0f / 50, 1.0f / 100, 1.0f / 1000};
 static const float kContrastPerBass = 0.076f, kSaturationPerTreble = 0.166f, kGrowth = 0.33f, kGrowthMiddle = 0.1f;
 // Its clock and settling count frames, not seconds: each of its frames is 1/60 s (1/600 under Reduce Motion), at 60
-// frames a second on a phone (its app does not opt in to more), so real time. Going from held to flowing takes 2/60 s
-// of its clock per frame over 0.8 s, eased (0.42, 0, 0.58, 1).
+// frames a second on a phone (its app does not opt in to more), so real time. The clock runs on every frame it draws,
+// playing or paused: only its settling follows the playback. Going from held to flowing takes 2/60 s of its clock per
+// frame over 0.8 s, eased (0.42, 0, 0.58, 1).
 static const double kFrameClock = 1.0 / 60, kFrameClockReduced = 1.0 / 600, kSettleClock = 0.8;
 static const float kHeldZoom = 1.25f;
 static const double kBreathPeriod = 3.5;
 static const CFTimeInterval kRunIn = 1.4;
-static const double kDrawFramesPerSecond = 30;
+static const double kDrawFramesPerSecond = 60;
 enum { kLUTSide = 32, kMeshCells = 24 };
 static const struct { float side, x, y, turn, orbit; } kCopy[3] = {
     {1.4f, 0, 0, 120, 0},
@@ -320,7 +321,6 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
     BOOL _resigning;
-    int _misses;
     int _firstFailures;
 }
 
@@ -523,12 +523,7 @@ static float easeInOut(float x) {
     }
 }
 
-// Going from held to flowing or back.
-- (BOOL)settling {
-    return _moving ? _settle < 1 : _settle > 0;
-}
-
-// Ticks while it flows, settles or a cover comes in; otherwise a change waiting to be seen is drawn once.
+// Ticks whenever it may draw, as the Music app's view does: its clock turns the copies while the music is paused too.
 - (void)update {
     if ((_held || _resigning) && _progress < 1) {
         _fromPicture = nil;
@@ -537,15 +532,14 @@ static float easeInOut(float x) {
         _dirty = YES;
     }
     BOOL eligible = _ready && _toPicture && [self mayDraw] && _firstFailures < 3;
-    BOOL wants = eligible && (_moving || _progress < 1 || [self settling]);
+    BOOL wants = eligible;
     SGMusicSpectrumSetWanted(eligible && _moving);
-    if (eligible && !wants && _dirty && self.bounds.size.width >= 1 && self.bounds.size.height >= 1)
-        wants = ![self draw] && _misses < 30;
     if (wants && !_link) {
         SGRFluidTicker *ticker = [SGRFluidTicker new];
         ticker.layer = self;
         _link = [CADisplayLink displayLinkWithTarget:ticker selector:@selector(tick:)];
-        _link.preferredFrameRateRange = CAFrameRateRangeMake(15, 120, kDrawFramesPerSecond);
+        // 120 Hz stays allowed so the player's own transitions are not held to this; it draws at 60.
+        _link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
         _last = 0;
         [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     } else if (!wants && _link) {
@@ -560,14 +554,16 @@ static float easeInOut(float x) {
         return;
     }
     CFTimeInterval now = link.timestamp;
-    // The display's 120 Hz cadence is accepted without drawing more than 30 times a second.
-    if (_last > 0 && floor(now * kDrawFramesPerSecond) == floor(_last * kDrawFramesPerSecond)) return;
+    // The display's 120 Hz cadence is accepted without drawing more than 60 times a second.
+    // A frame is skipped only when it comes well inside one sixtieth of a second, so 60 Hz draws every frame and
+    // 120 Hz every other one, evenly.
+    if (_last > 0 && now - _last < 0.75 / kDrawFramesPerSecond) return;
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
     // Its frames in this step, and its clock's advance over them.
     double frames = step * _framesPerSecond;
     double clock = frames * (SGRReduceMotion() ? kFrameClockReduced : kFrameClock);
-    if (_moving) _time += clock * _rate;
+    _time += clock * _rate;
     _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock / kSettleClock));
     [self hearFor:frames];
     if (_progress < 1) {
@@ -578,12 +574,7 @@ static float easeInOut(float x) {
         }
     }
     _dirty = YES;
-    BOOL drew = [self draw];
-    if (_moving || _progress < 1 || [self settling]) return;
-    // The last frame of a change is tried again for a moment if no drawable was free.
-    if (!drew && ++_misses < 30) return;
-    [self update];
-    _misses = 0;
+    [self draw];
 }
 
 - (BOOL)draw {

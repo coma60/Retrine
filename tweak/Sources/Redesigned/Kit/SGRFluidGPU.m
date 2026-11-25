@@ -14,7 +14,7 @@
 //      Rec. 709 luma by the music (kContrastPerBass, kCopySaturation), on the cover's encoded values. The unit is half the visible
 //      rect's longer side (its aspect matrix scales x by height / width on a phone); the copies are 1.4, 0.7 and 0.7
 //      units across, at (0, 0), (-0.25, 0.15) and (0.7, 0.7) (y up), each turning clockwise about its own center once
-//      in 120, 70 and 90 s, the third also carried about the middle by the first's turn.
+//      in 120, 70 and 90 s, the third also carried about the middle by the first's turn, which turns it as well.
 //   2. That picture blurred, a Gaussian of kBlurPoints standard deviation on screen.
 //   3. Shown through a mesh: held still, flat and a quarter larger; flowing, bent and breathing between none and its
 //      full reach once in 2 pi * 3.5 s of its clock; going from one to the other eased in and out (kSettleClock).
@@ -624,7 +624,8 @@ static float easeInOut(float x) {
             .center = middle + simd_make_float2(x, y) * scale,
             .scale = scale,
             .half = kCopy[i].side,
-            .angle = (float)(2 * M_PI * fmod(_time, kCopy[i].turn) / kCopy[i].turn),
+            // A carried copy is turned by its carrier too: the Music app turns its whole model, not only its place.
+            .angle = (float)(2 * M_PI * fmod(_time, kCopy[i].turn) / kCopy[i].turn) + (kCopy[i].orbit > 0 ? orbit : 0),
             .scrim = kCopyScrim + kCopyScrimStep * i,
             .saturation = (kCopySaturation + kSaturationPerTreble * heard[2]) * _saturation,
             .contrast = 1 + kContrastPerBass * heard[0],

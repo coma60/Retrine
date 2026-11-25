@@ -147,7 +147,8 @@ static void makeMesh(MeshUniforms *mesh) {
     }
 }
 
-static const float kGrainStandardSteps = 1, kGrainMostSteps = 24;
+// At its standard the Grain setting adds no noise, as the Music app's backdrop has none; above it, up to 24 steps.
+static const float kGrainStandardSteps = 0, kGrainMostSteps = 24;
 
 static float grainSteps(float factor) {
     SGRFluidLimits limits = SGRFluidLimitsOf(SGRFluidGrain);

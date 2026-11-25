@@ -2638,8 +2638,8 @@ until its first frame, or where Metal cannot draw. Checked by simulation only, n
 Speed (25-300 %, how fast the three blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
 far from the middle the two smaller copies sit and how much they show, opaque at 100; at none the large copy turns alone), Blur (2-32, 160 pt at the standard 24 and in proportion), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
 light that the luminance ceiling, 0.17 or 0.04 with Increase Contrast, still caps; the shade over the lower part, not the ceiling, keeps the text's 4.5:1: see Backdrop ink) and Grain (0-200 %, 100 standard, shown only while Smooth
-is the style, spotifyglass.redesign.fluid.grain: the noise that breaks up banding, half an eight-bit step either way at 100
-and none at 0, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the
+is the style, spotifyglass.redesign.fluid.grain: noise over the picture, none at 100 or below, as the Music app's backdrop has
+none, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the
 text keeps its contrast; the Light copies have no grain to scale); the
 card and the player follow each step at once through SGRFluidSettingsDidChangeNotification, the last three by
 blurring the cover again off the main thread, and Animated and Visualizer's Fluid with them,

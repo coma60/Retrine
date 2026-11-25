@@ -1938,8 +1938,9 @@ Redesigned:
                   which the player shows in itself too, Player/PlayerLyrics.x, where with Hide the controls set to
                   Everything, everything else -- the header row, the thumbnail, the title row and the controls --
                   fades a few seconds after the last touch and the lines take the whole safe area until a tap; set
-                  to Keep the title, only the controls under the title row and the lyrics' own button fade and the
-                  lines grow down into their room): line views only for the lines in and near sight, built nearest
+                  to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
+                  and the mic (kept while Sing is on) fade, the thumbnail, the title row and its ⋯ rise 22 pt with
+                  the title 12 pt from the cover, and the lines start 16 pt under them and grow down the safe area): line views only for the lines in and near sight, built nearest
                   the middle first, at most four a pass and none after the first once the pass has spent 1 ms, the
                   next pass picking up the rest (a work budget; the display link is never slowed); lines sung over each other lit together, the stack moving on
                   once the first is sung out; an instrumental break of 7 s or more held by three dots

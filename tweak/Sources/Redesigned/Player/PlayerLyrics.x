@@ -63,6 +63,10 @@ static const NSTimeInterval kLyricsGrace = 3;
 static const CGFloat kLivingHeight = 200;
 // The lines on their own: the controls under them fade after this long without a touch.
 static const NSTimeInterval kRest = 4;
+// Keeping the title, the lines alone the way the Music app's are (its player on an iPhone 17 Pro, 2026-11-25): the
+// cover, the title row and its ⋯ rise 22 pt together, the title then 12 pt from the cover rather than kThumbGap, and
+// the lines start 16 pt under them and run down the whole safe area, its mic gone with the controls.
+static const CGFloat kAloneRise = 22, kAloneTitleGap = 12, kAloneLinesTop = 16;
 // The two columns: the leading one never narrower than the narrowest iPhone Spotify lays its controls out for, the
 // side one never narrower than this, this far apart, so a player is wide enough for both from their sum on. The
 // leading column takes this share of the safe width: half on a window taller than wide, less on its side, where the
@@ -466,6 +470,13 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
     l.lift = top - CGRectGetMinY(row);
     l.shift = title ? (rtl ? -1 : 1) * (kThumbSide + kThumbGap) : 0;
     CGFloat lines = MAX(CGRectGetMaxY(l.thumb), top + row.size.height) + kLyricsTop;
+    if (sg_alone && keepsTitle()) {
+        l.thumb.origin.y -= kAloneRise;
+        top -= kAloneRise;
+        l.lift = top - CGRectGetMinY(row);
+        if (title) l.shift = (rtl ? -1 : 1) * (kThumbSide + kAloneTitleGap);
+        lines = MAX(CGRectGetMaxY(l.thumb), top + row.size.height) + kAloneLinesTop;
+    }
     // The artwork band belongs to a paging cell: on a skip its x can still be between pages.
     // Only its vertical room belongs to the lyrics. The lyric viewport and its controls belong
     // to the stationary player, not the outgoing or incoming cover.
@@ -796,6 +807,11 @@ static void setAlone(BOOL alone, BOOL animated) {
     static NSUInteger fadeGeneration;
     NSUInteger generation = ++fadeGeneration;
     sg_alone = alone;
+    // Keeping the title, the header itself moves as the lines go alone (layoutIn), so it is measured again.
+    if (keepsTitle()) {
+        SGRLyricsLayout moved = layoutIn(host, sg_wide);
+        if (moved.ok) l = moved;
+    }
     if (!alone) SGRProgressControlsFaded(NO);
     if (alone) {
         [sg_rest invalidate];
@@ -806,6 +822,7 @@ static void setAlone(BOOL alone, BOOL animated) {
     // Layout and opacity have their own timing; Reduce Motion dissolves the layout in place.
     void (^move)(void) = ^{
         if (!overlay.superview || !l.ok) return;
+        if (keepsTitle()) placeTitleRow(l);
         place(overlay, host, l);
         overlay.thumb.transform = thumbTransform(l);
         // The lines take the new height in this same spring, so the sung line rides with the stage rather than
@@ -813,7 +830,12 @@ static void setAlone(BOOL alone, BOOL animated) {
         [overlay.lyrics layoutIfNeeded];
     };
     void (^fade)(void) = ^{
-        if (overlay.superview) overlay.lyrics.extrasHidden = alone;
+        if (overlay.superview) {
+            // Keeping the title, the mic goes with the controls as the Music app's does, unless Sing is on.
+            SGSingState sing = SGSingCurrentState();
+            overlay.lyrics.keepsSing = !keepsTitle() || sing >= SGSingStateWaiting;
+            overlay.lyrics.extrasHidden = alone;
+        }
         fadeControls(alone);
     };
     sg_wake.enabled = alone;

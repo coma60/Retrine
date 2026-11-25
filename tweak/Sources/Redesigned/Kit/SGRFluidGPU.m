@@ -317,7 +317,6 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     float _history[4][3];   // the last four readings of the bands, oldest first
     float _peak[3], _follow[3];
     uint64_t _reading;      // the last reading of the music taken in
-    double _framesPerSecond;
     simd_float4 _seed;
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
@@ -334,9 +333,6 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     _gain = 1;
     _blur = 1;
     _progress = 1;
-    // Its view asks for the screen's most, but the Music app's Info.plist lacks CADisableMinimumFrameDurationOnPhone, so a
-    // phone holds it to 60: its clock runs at real time.
-    _framesPerSecond = MIN(60, MAX(30, UIScreen.mainScreen.maximumFramesPerSecond));
     for (int i = 0; i < 4; i++) _seed[i] = (float)(arc4random_uniform(62832) / 10000.0);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;
@@ -520,19 +516,22 @@ static float easeInOut(float x) {
     memcpy(_history[3], levels, sizeof(float) * 3);
 }
 
-// A new reading of the music, if there is one, into the last four (each taken once, as the Music app takes each
-// report), then the peak and the follow over `frames` of its frames. Paused, no readings come: the average of the last
-// four holds, and so does what the music had grown, as the Music app's does.
-- (void)hearFor:(double)frames {
-    float levels[3];
-    uint64_t reading = SGMusicSpectrumRead(levels);
-    if (_moving && reading != _reading) [self take:levels];
-    _reading = reading;
+// Each new reading of the music into the last four, in order (each taken once, as the Music app's main queue takes
+// each report), then one of its frames of the peak and the follow: the peak let down by its share of itself, held up
+// to the average of the last four, and followed half way. Paused, no readings come: the average of the last four
+// holds, and so does what the music had grown, as the Music app's does.
+- (void)hear {
+    uint64_t readings = SGMusicSpectrumReadings();
+    if (_reading > readings) _reading = readings;
+    for (; _reading < readings; _reading++) {
+        float levels[3];
+        if (_moving && SGMusicSpectrumReading(_reading, levels)) [self take:levels];
+    }
     for (int b = 0; b < 3; b++) {
         float average = 0;
         for (int k = 0; k < 4; k++) average += kHistoryWeight[k] * _history[k][b];
-        _peak[b] = MAX(average, _peak[b] * powf(1 - kPeakFall[b], (float)frames));
-        _follow[b] += (1 - powf(0.5f, (float)frames)) * (_peak[b] - _follow[b]);
+        _peak[b] = MAX(_peak[b] - _peak[b] * kPeakFall[b], average);
+        _follow[b] += 0.5f * (_peak[b] - _follow[b]);
     }
 }
 
@@ -573,12 +572,11 @@ static float easeInOut(float x) {
     if (_last > 0 && now - _last < 0.75 / kDrawFramesPerSecond) return;
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
-    // Its frames in this step, and its clock's advance over them.
-    double frames = step * _framesPerSecond;
-    double clock = frames * (SGRReduceMotion() ? kFrameClockReduced : kFrameClock);
+    // One of its frames per frame drawn, as the Music app counts them: a late frame does not catch up.
+    double clock = SGRReduceMotion() ? kFrameClockReduced : kFrameClock;
     _time += clock * _rate;
     _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock / kSettleClock));
-    [self hearFor:frames];
+    [self hear];
     if (_progress < 1) {
         _progress = (float)MIN(1.0, _progress + step / MAX(0.05, _length));
         if (_progress >= 1) {

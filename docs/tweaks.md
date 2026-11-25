@@ -1943,7 +1943,9 @@ Redesigned:
                   finger lifts, a flick on toward the lines to come sending the controls away at once (playing or not) and a
                   flick back bringing them back, a scroll that stops dead changing nothing, and after a flick on a tap brings
                   nothing back until the lines follow the song again; a tap on a line seeks there, flashing the Music app's
-                  plate behind it, white at 8 % with 16 pt corners, and changes nothing else; set
+                  plate behind it, white at 8 % with 16 pt corners, the line's own box grown 16 pt, and changes nothing
+                  else (in a song for two voices every line is set in 85 % of the width against its voice's side, LyricsX's
+                  vocalGroupWidthCoefficient, so the plate stops short of the far edge as the Music app's does); set
                   to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
                   and the mic fade (the mic, under either choice, stays with Keep the mic,
                   spotifyglass.redesign.lyrics.keepMic, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with

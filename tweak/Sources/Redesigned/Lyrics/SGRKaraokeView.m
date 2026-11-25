@@ -36,9 +36,13 @@ static const CGFloat kDimAlpha = 0.3, kFillEdge = 22, kLift = 2.5, kDimScale = 0
 static const CGFloat kAnchor = 0.28;   // where the sung line rests, as a share of the height
 // A tapped line flashes a plate behind it, the Music app's line highlight (LyricsX.LyricsSpecs as its lyrics view
 // makes them: highlightViewBackgroundColor white at 0.08, corners of 16, the plate 16 pt out from the line): it comes
-// up at once and fades as the line glides to the anchor.
+// up at once and fades as the line glides to the anchor. It is the line's own box grown by the margin, as LyricsX's
+// SyncedLyricsLineLayer lays its backgroundLayer out, so in a song for two voices it is as narrow as the line is.
 static const CGFloat kTapPlateAlpha = 0.08, kTapPlateRadius = 16, kTapPlateOut = 16, kTapPlateOutY = 8;
 static const NSTimeInterval kTapPlateHold = 0.12, kTapPlateFade = 0.45;
+// A song for two voices sets each line in this share of the width, against its voice's side (LyricsX.LyricsSpecs'
+// vocalGroupWidthCoefficient), so the two sides stand apart and a line's plate stops short of the far edge.
+static const CGFloat kVocalGroupShare = 0.85;
 static const CGFloat kEdgeFade = 0.1;  // the lines fade out over this share at the top and bottom
 // The Music app's, scaled by the Lyrics page's blur: no line next to what is sung is sharp. A line coming up is
 // blurred by one more than its distance and a line gone by by two more, up to kMaxBlur, the radius its lyrics view
@@ -1871,6 +1875,8 @@ typedef struct {
     SGRTranslationStatusView *_status;
     UIButton *_loadFailure;
     CGFloat _builtWidth, _placedHeight;
+    NSArray<SGKaraokeLine *> *_voicesOf;   // the lines _twoVoices was settled for
+    BOOL _twoVoices;
     BOOL _showing;
     CAGradientLayer *_fade;
     SGRCreditLabel *_credit;
@@ -2800,7 +2806,7 @@ static NSArray<SGKaraokeLine *> *withoutMade(NSArray<SGKaraokeLine *> *lines) {
     _browsing = NO;
     _scroll.contentOffset = CGPointZero;
     _builtWidth = self.bounds.size.width;
-    CGFloat width = _builtWidth - 2 * _margin;
+    CGFloat width = [self lineWidth];
     if (width <= 0) return;
     _font = [UIFont systemFontOfSize:_fontSize weight:UIFontWeightBold];
     SGRKaraokeStyle *style = _style = [self styleNow];
@@ -2850,7 +2856,7 @@ static NSArray<SGKaraokeLine *> *withoutMade(NSArray<SGKaraokeLine *> *lines) {
     }
     SGRKaraokeStyle *style = [self styleNow];
     NSArray<SGKaraokeLine *> *lines = layoutSnapshots(_lines);
-    CGFloat width = _builtWidth - 2 * _margin, gap = _lineGap;
+    CGFloat width = [self lineWidth], gap = _lineGap;
     NSUInteger build = ++_build;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
         NSArray<NSNumber *> *tops = topsOf(lines, width, style, gap);
@@ -3600,13 +3606,29 @@ static char kTranslationCoverContext;
     return nearest;
 }
 
+// The width a line is set in: the page's, less its margins, or kVocalGroupShare of that in a song where a second voice
+// keeps to the far side.
+- (CGFloat)lineWidth {
+    CGFloat width = _builtWidth - 2 * _margin;
+    if (_voicesOf != _lines) {
+        _voicesOf = _lines;
+        _twoVoices = NO;
+        for (SGKaraokeLine *line in _lines) {
+            if (line.align != SGKaraokeAlignTrailing) continue;
+            _twoVoices = YES;
+            break;
+        }
+    }
+    return _twoVoices ? floor(width * kVocalGroupShare) : width;
+}
+
 // The view of a line, made the first time it is asked for and placed where the stack has it.
 - (SGRKaraokeLineView *)viewForLine:(NSInteger)index {
     __block SGRKaraokeLineView *view = _shown[@(index)];
     if (view || !_tops || index < 0 || index >= (NSInteger)_tops.count) return view;
     // Made where it belongs even inside an animation of the page's (a new height), not flown in from the corner.
     [UIView performWithoutAnimation:^{
-        view = [[SGRKaraokeLineView alloc] initWithLine:self->_lines[index] width:self->_builtWidth - 2 * self->_margin style:self->_style under:nil
+        view = [[SGRKaraokeLineView alloc] initWithLine:self->_lines[index] width:[self lineWidth] style:self->_style under:nil
                                                 blurred:self->_maxBlur > 0 && !self->_plain sweepsEstimates:self->_sweepsEstimates];
         __weak SGRKaraokeView *page = self;
         SGKaraokeLine *line = view.line;
@@ -3713,7 +3735,8 @@ static char kTranslationCoverContext;
 - (void)placeLine:(SGRKaraokeLineView *)view at:(NSInteger)index animated:(BOOL)animated {
     CGFloat height = self.bounds.size.height;
     NSInteger distance = [self distanceOf:index], below = index - _focus;
-    CGRect frame = CGRectMake(_margin, [self topOfLine:index], view.bounds.size.width, view.bounds.size.height);
+    CGFloat left = view.right ? _builtWidth - _margin - view.bounds.size.width : _margin;
+    CGRect frame = CGRectMake(left, [self topOfLine:index], view.bounds.size.width, view.bounds.size.height);
     CGPoint center = CGPointMake(view.right ? CGRectGetMaxX(frame) : _margin, CGRectGetMidY(frame));
     CGFloat scale = distance == 0 ? 1 : kDimScale;
     CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);

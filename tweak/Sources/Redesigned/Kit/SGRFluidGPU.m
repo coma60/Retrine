@@ -184,7 +184,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    rgb = mix(rgb, float3(0.0), c.scrim);\n"
 "    rgb = (rgb - 0.5) * c.contrast + 0.5;\n"
 "    float l = dot(rgb, float3(0.2126, 0.7152, 0.0722));\n"
-"    return float4(saturate(l + c.saturation * (rgb - l)), 1.0);\n"
+"    return float4(l + c.saturation * (rgb - l), 1.0);\n"
 "}\n"
 // One triangle past the corners covers the target; uv runs 0 to 1 down and across it.
 "vertex V fullVertex(uint id [[vertex_id]]) {\n"
@@ -284,11 +284,16 @@ static void finish(NSError *error) {
     });
 }
 
-static id<MTLRenderPipelineState> pipeline(id<MTLLibrary> library, NSString *vertex, NSString *fragment, NSError **error) {
+// The pictures between the copies and the screen are half floats, as the Music app's are (its renderer's
+// colorPixelFormat, RGBA16Float): what the saturation pushes below 0 or above 1 is kept through the blur, which
+// leaves a strong color deeper than an 8-bit picture, clamped first, would.
+static const MTLPixelFormat kPictureFormat = MTLPixelFormatRGBA16Float;
+
+static id<MTLRenderPipelineState> pipeline(id<MTLLibrary> library, NSString *vertex, NSString *fragment, MTLPixelFormat format, NSError **error) {
     MTLRenderPipelineDescriptor *described = [MTLRenderPipelineDescriptor new];
     described.vertexFunction = [library newFunctionWithName:vertex];
     described.fragmentFunction = [library newFunctionWithName:fragment];
-    described.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    described.colorAttachments[0].pixelFormat = format;
     return [sDevice newRenderPipelineStateWithDescriptor:described error:error];
 }
 
@@ -329,9 +334,9 @@ static void whenReady(void (^ready)(void)) {
     [device newLibraryWithSource:kShader options:nil completionHandler:^(id<MTLLibrary> library, NSError *error) {
         if (!library) { finish(error); return; }
         NSError *failure = nil;
-        sCopy = pipeline(library, @"copyVertex", @"copyFragment", &failure);
-        if (sCopy) sBlur = pipeline(library, @"fullVertex", @"blurFragment", &failure);
-        if (sBlur) sShow = pipeline(library, @"showVertex", @"showFragment", &failure);
+        sCopy = pipeline(library, @"copyVertex", @"copyFragment", kPictureFormat, &failure);
+        if (sCopy) sBlur = pipeline(library, @"fullVertex", @"blurFragment", kPictureFormat, &failure);
+        if (sBlur) sShow = pipeline(library, @"showVertex", @"showFragment", MTLPixelFormatBGRA8Unorm, &failure);
         finish(failure);
     }];
 }
@@ -358,7 +363,7 @@ static id<MTLTexture> textureOf(id picture) {
 }
 
 static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
-    MTLTextureDescriptor *described = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+    MTLTextureDescriptor *described = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:kPictureFormat
                                                                                          width:MAX(1u, width) height:MAX(1u, height) mipmapped:NO];
     described.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
     described.storageMode = MTLStorageModePrivate;

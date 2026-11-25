@@ -2616,7 +2616,8 @@ its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesig
 (its key is kept, unread). Fluid is drawn on the GPU as the Music app draws its backdrop (Redesigned/Kit/SGRFluidGPU.m):
 three copies of the cover, 1.4, 0.7 and 0.7 units across (a unit half the visible rect's height on a phone) at (0, 0),
 (-0.25, 0.15) and (0.7, 0.7), each turning clockwise about its own center once in 120, 70 and 90 s, the third carried
-about the middle by the first's turn, drawn opaque into a quarter-size picture after a mix toward black, a contrast
+about the middle by the first's turn, drawn opaque into a quarter-size half-float picture (as the Music app's, so what the saturation pushes past 0 or 1 is
+kept through the blur) after a mix toward black, a contrast
 about middle gray and a saturation about Rec. 709 luma; the picture blurred by a two-pass Gaussian; then shown through a
 24 x 24 mesh, flat and a quarter larger while held still; flowing (0.8 s between, eased), bent by one of two 6 x 6 grids
 of Retrine's own, made at random per layer like the Music app's phone meshes (the inner points well off the even grid,

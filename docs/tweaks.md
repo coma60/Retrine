@@ -1937,9 +1937,13 @@ Redesigned:
     Lyrics/       the full screen lyrics page on glass with Apple Music style lyrics over it, always on (SGRKaraokeView,
                   which the player shows in itself too, Player/PlayerLyrics.x, where with Hide the controls set to
                   Everything, everything else -- the header row, the thumbnail, the title row and the controls --
-                  fades a few seconds after the last touch and the lines take the whole safe area until a tap off the lines or a
-                  scroll (a tap on a line seeks there, flashing the Music app's plate behind it, white at 8 % with 16 pt corners,
-                  and the lines stay alone); set
+                  fades 4 s after the last touch while the song plays (5 s when it starts again with Sing on) and the lines take
+                  the whole safe area, as the Music app's NowPlayingViewController and SyncedLyricsViewController do it
+                  (decoded): a tap under the lines' place, where the controls were, brings it all back; a scroll decides as the
+                  finger lifts, a flick on toward the lines to come sending the controls away at once (playing or not) and a
+                  flick back bringing them back, a scroll that stops dead changing nothing, and after a flick on a tap brings
+                  nothing back until the lines follow the song again; a tap on a line seeks there, flashing the Music app's
+                  plate behind it, white at 8 % with 16 pt corners, and changes nothing else; set
                   to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
                   and the mic fade (the mic, under either choice, stays with Keep the mic,
                   spotifyglass.redesign.lyrics.keepMic, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with

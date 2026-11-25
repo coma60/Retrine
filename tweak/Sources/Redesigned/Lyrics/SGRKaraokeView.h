@@ -21,6 +21,11 @@
 - (void)syncSiblings;
 // Called as a finger starts to scroll the lines, for a host that hides its controls then.
 @property (nonatomic, copy) void (^browsingBegan)(void);
+// Called as the finger lifts from a scroll of the lines, with the scroll's vertical velocity (positive toward the
+// lines still to come), for a host that hides or brings back its controls by the flick, as the Music app does.
+@property (nonatomic, copy) void (^browsingFlicked)(CGFloat velocity);
+// Called once the lines go back to following the song after a scroll by hand, or after a tap on a line.
+@property (nonatomic, copy) void (^browsingEnded)(void);
 // The pronunciation and translation button goes with the host's controls when they are hidden, and Sing's
 // mic with it unless keepsSing is set.
 @property (nonatomic) BOOL extrasHidden;

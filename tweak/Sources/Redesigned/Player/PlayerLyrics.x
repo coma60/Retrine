@@ -62,7 +62,7 @@ static const NSTimeInterval kLyricsGrace = 3;
 // Below this the player has not laid out yet and nothing can be measured from it.
 static const CGFloat kLivingHeight = 200;
 // The lines on their own: the controls under them fade after this long without a touch.
-static const NSTimeInterval kRest = 4;
+static const NSTimeInterval kRest = 4, kRestSinging = 5;
 // Keeping the title, the lines alone the way the Music app's are (its player on an iPhone 17 Pro, 2026-11-25): the
 // cover, the title row and its ⋯ rise 22 pt together, the title then 12 pt from the cover rather than kThumbGap, and
 // the lines start 16 pt under them and run down the whole safe area, its mic gone with the controls.
@@ -93,6 +93,9 @@ static BOOL sg_alone;                       // the lines have the player to them
 static BOOL sg_touching;                    // a finger is on the player, which holds the clock (SGRPlayerTouchWatcher)
 static NSTimer *sg_rest;
 static __weak UIGestureRecognizer *sg_wake; // on the player, on while alone: the tap that brings the controls back
+// A flick on through the lines put them on their own, and they have not gone back to the song yet: until then a tap
+// under them brings nothing back, only a flick back does (the Music app's SyncedLyricsViewController keeps the same).
+static BOOL sg_flickedAlone;
 // The two column player: up, the footer's last pick of its side column (kept while the player stays open), and the
 // mini player's ask for the lyrics, until when it holds.
 typedef NS_ENUM(NSInteger, SGRSidePick) { SGRSidePickNone, SGRSidePickLyrics, SGRSidePickQueue };
@@ -554,17 +557,20 @@ static CGFloat thumbRadius(SGRLyricsLayout l, BOOL open) {
 
 #pragma mark - the lines on their own
 
-// After kRest without a touch while the song plays, everything but the lines fades -- the header row, the
-// thumbnail, the title row and the controls -- and the lines grow up and down into the whole safe area, the
-// way the Music app leaves its lyrics alone. As the Music app's, a tap on a line seeks there and leaves the lines
-// alone; a tap anywhere else, or a scroll through the lines, brings it all back. A pause brings it back and keeps it;
-// VoiceOver, a sheet over the player and the app in the background keep it up.
+// After kRest without a touch while the song plays (kRestSinging while Sing is on), everything but the lines fades
+// -- the header row, the thumbnail, the title row and the controls -- and the lines grow up and down into the whole
+// safe area, the way the Music app leaves its lyrics alone. What brings it back or sends it away is the Music app's
+// (NowPlayingViewController and SyncedLyricsViewController, decoded): a tap on a line seeks there and changes
+// nothing; a tap under the lines, where the controls were, brings it all back; a scroll decides as the finger lifts,
+// a flick on toward the lines to come sending the controls away at once and a flick back bringing them back, while
+// a scroll that stops dead changes nothing. A pause brings it back and keeps it; VoiceOver, a sheet over the
+// player and the app in the background keep it up.
 // Sing's mic stays with the lines only with Keep the mic or while Sing is on, and a touch on it is the mic's.
 //
 // The tap is a recognizer on the player that recognizes with any other, and a button takes its own tap:
 // UIKit gives a control its tap over a tap recognizer above it. A faded view takes no touch (UIKit's hit
-// test skips it), so a tap where the thumbnail or a button was only wakes. A drag or a second finger fails
-// it, and so does a touch on a line, which is the lines' own tap to seek with (SGRKaraokeView's touchIsOnLine:).
+// test skips it), so a tap where a button was only wakes. A drag or a second finger fails it, and so does a touch
+// over the lines' own place or on a line, which is the lines' own tap to seek with (SGRKaraokeView's touchIsOnLine:).
 
 // What fades: every view of Spotify's bottom stack but the chips (gone while the lines are up), which is the
 // title row, the progress bar, the buttons, the footer and a volume row where the phone has one; the header
@@ -689,15 +695,42 @@ static BOOL mayRest(void) {
 
 // The clock starts again at every touch. Run out while something keeps the controls up (a sheet, Sing getting
 // ready, lines still being measured), it starts over, so they fade once that has gone.
-static void restartRest(void) {
+static void restartRestAfter(NSTimeInterval wait) {
     [sg_rest invalidate];
     sg_rest = nil;
     if (!mayCount()) return;
-    sg_rest = [NSTimer scheduledTimerWithTimeInterval:kRest repeats:NO block:^(NSTimer *timer) {
+    sg_rest = [NSTimer scheduledTimerWithTimeInterval:wait repeats:NO block:^(NSTimer *timer) {
         sg_rest = nil;
         if (mayRest()) setAlone(YES, YES);
-        if (!sg_alone) restartRest();
+        if (!sg_alone) restartRestAfter(kRest);
     }];
+}
+
+static void restartRest(void) {
+    restartRestAfter(kRest);
+}
+
+// Sing on, the vocals down: the Music app gives the controls a second longer when the song starts playing again.
+static BOOL singing(void) {
+    SGSingState sing = SGSingCurrentState();
+    return sing >= SGSingStateWaiting && sing <= SGSingStateHot;
+}
+
+// A scroll through the lines decides as the finger lifts. Going on toward the lines to come, the controls go at once
+// (whether the song plays or not, as the Music app's do) and stay gone until a flick back or the lines go back to the
+// song; going back, they come back and the clock starts again.
+static void linesFlicked(CGFloat velocity) {
+    if (velocity > 0) {
+        if (sg_flickedAlone) return;
+        sg_flickedAlone = YES;
+        if (sg_wide || SGRLyricsHideMode() == SGRLyricsHideOff || !sg_open || UIAccessibilityIsVoiceOverRunning() || coveredBySheet()
+            || SGSingCurrentState() == SGSingStatePreparing) return;
+        setAlone(YES, YES);
+    } else if (velocity < 0) {
+        sg_flickedAlone = NO;
+        setAlone(NO, YES);
+        restartRest();
+    }
 }
 
 @interface SGRPlayerTouchWatcher : UIGestureRecognizer <UIGestureRecognizerDelegate>
@@ -787,13 +820,19 @@ static void forgetPreview(void) {
     return YES;
 }
 // Sing's mic and its slider stay while the lines are alone, and a touch on them is theirs alone. So is a tap on a
-// line: it seeks there and the lines stay alone, as the Music app's do; anywhere else brings the controls back.
+// line: it seeks there and the lines stay alone. As the Music app's (SyncedLyricsViewController's tapHandler:), only
+// a tap under the lines' place with the controls up, where the controls were, brings them back, and not while a
+// flick on sent them away (sg_flickedAlone).
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
+    UIView *host = sg_host;
+    if (!host || sg_flickedAlone) return NO;
     for (UIView *v = touch.view; v; v = v.superview) {
         if ([v isKindOfClass:SGRSingButton.class]) return NO;
     }
-    SGRPlayerLyricsOverlay *overlay = sg_host ? objc_getAssociatedObject(sg_host, &kOverlayKey) : nil;
+    SGRPlayerLyricsOverlay *overlay = objc_getAssociatedObject(host, &kOverlayKey);
     if (overlay.superview && [overlay.lyrics touchIsOnLine:touch]) return NO;
+    SGRLyricsLayout l = layoutIn(host, sg_wide);
+    if (l.ok && [touch locationInView:host].y <= CGRectGetMaxY(l.stage)) return NO;
     return YES;
 }
 - (void)sgr_woke {
@@ -904,11 +943,12 @@ static void setOpen(BOOL open, BOOL animated) {
         overlay.cover.image = SGRNowPlayingArtwork(NULL, NULL);
         overlay.stage.alpha = 0;
         overlay.stage.transform = entering;
-        // Not under VoiceOver, which keeps the controls up, nor under a sheet.
-        // A scroll through the lines brings the controls back, as the Music app's does.
-        overlay.lyrics.browsingBegan = ^{
-            if (sg_alone) setAlone(NO, YES);
-        };
+        // A scroll decides by its flick as the finger lifts (linesFlicked); once the lines follow the song again, a
+        // tap under them can bring the controls back.
+        sg_flickedAlone = NO;
+        overlay.lyrics.browsingBegan = nil;
+        overlay.lyrics.browsingFlicked = ^(CGFloat velocity) { linesFlicked(velocity); };
+        overlay.lyrics.browsingEnded = ^{ sg_flickedAlone = NO; };
         // Spotify's cover goes the moment the redesign's own takes its place: the same picture at the
         // same size with the same corners, so there is nothing to see in the swap. Coming back it waits
         // for the thumbnail to land on it, or the two would be on screen at once, one of them half size.
@@ -1473,13 +1513,13 @@ static void durationUnitLaidOut(UIViewController *unit) {
 }
 
 - (void)playerStateDidChange:(SPTPlayerState *)state {
-    // A pause brings the controls back and keeps them; playing again starts the clock.
+    // A pause brings the controls back and keeps them; playing again starts the clock, a second longer with Sing on.
     if (state.isPaused) {
         setAlone(NO, YES);
         [sg_rest invalidate];
         sg_rest = nil;
     } else if (!sg_rest && !sg_alone) {
-        restartRest();
+        restartRestAfter(singing() ? kRestSinging : kRest);
     }
     NSString *track = SGURIString(state.track.URI);
     if (sg_pendingPreview && ![track isEqualToString:_track]) forgetPreview();

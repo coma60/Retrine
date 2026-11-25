@@ -2425,6 +2425,12 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
     [self showLinesInSight];
 }
 
+// The Music app decides on its controls here, by the flick the finger leaves (SyncedLyricsViewController's
+// scrollViewWillEndDragging): toward the lines to come hides them, back toward the ones sung brings them back.
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)target {
+    if (self.browsingFlicked) self.browsingFlicked(velocity.y);
+}
+
 // Plain text has no song to follow back to: it stays where it was scrolled to, as a page of text does.
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (!decelerate && !_plain) [self performSelector:@selector(followSong) withObject:nil afterDelay:kBrowseHold];
@@ -2442,6 +2448,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
                         options:UIViewAnimationOptionAllowUserInteraction
                      animations:^{ self->_scroll.contentOffset = CGPointZero; } completion:nil];
     [self placeLinesAnimated:YES];
+    if (self.browsingEnded) self.browsingEnded();
 }
 
 // A tapped line glides to the anchor at once, and the stack with it: the clock is held at the line until
@@ -2457,6 +2464,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
         [UIView animateWithDuration:0.7 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0
                             options:UIViewAnimationOptionAllowUserInteraction
                          animations:^{ self->_scroll.contentOffset = CGPointZero; } completion:nil];
+        if (self.browsingEnded) self.browsingEnded();
     }
     if (!_tops) return;
     NSUInteger arrangement = _arrangement;

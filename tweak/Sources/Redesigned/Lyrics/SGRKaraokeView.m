@@ -68,6 +68,10 @@ static const CGFloat kCreditSize = 12, kCreditGap = 12, kCreditSlop = 8;
 // has it, and the gap between it and the credit beside it. The translate glyph is half again as wide as the
 // mic's across from it, so it is drawn smaller to weigh the same: 14 pt is about the mic's 17 pt in area.
 static const CGFloat kExtrasSide = 44, kExtrasBottom = 12, kExtrasGlyph = 14;
+// In the player, the Music app's: its translation button and Sing's slider are 38 pt across and stand 32 pt over the
+// bottom of its lyrics view (NowPlayingLyricsViewController's layout, Music 24B156 0x1002a510c, with the constants its
+// lazy statics make at 0x10029e304: 38, 18, 32 and 12).
+static const CGFloat kPlayerExtrasSide = 38, kPlayerExtrasBottom = 32;
 static char kExtrasGlassKey;
 static const NSTimeInterval kRestyleFade = 0.3;
 // Furigana at a third of the words' size, as print sets them over kanji; a cultural note at the size of a third line.
@@ -2405,7 +2409,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
 }
 
 - (void)updateExtrasGlass {
-    UIView *shape = SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide);
+    UIView *shape = SGRGlassInside(_extrasBox, &kExtrasGlassKey, _sizePlace == SGRLyricsPlacePlayer ? kPlayerExtrasSide : kExtrasSide);
     SGRGlassBacks(shape, _extras);
     SGRShowGlass(shape, !_extrasHidden);
 }
@@ -2638,15 +2642,17 @@ static NSInteger plainRestPosition(SPTPlayerState *state) {
     CGFloat failureHeight = MAX(44, [_loadFailure sizeThatFits:CGSizeMake(failureWidth, CGFLOAT_MAX)].height + 24);
     _loadFailure.frame = CGRectMake(_margin, (self.bounds.size.height - failureHeight) / 2, failureWidth, failureHeight);
     _scroll.contentSize = self.bounds.size;
-    _sing.frame = CGRectMake(self.bounds.size.width - _margin - kExtrasSide, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
+    BOOL player = _sizePlace == SGRLyricsPlacePlayer;
+    CGFloat side = player ? kPlayerExtrasSide : kExtrasSide, bottom = player ? kPlayerExtrasBottom : kExtrasBottom;
+    _sing.frame = CGRectMake(self.bounds.size.width - _margin - side, self.bounds.size.height - side - bottom, side, side);
     if (_extrasBox && !_extrasBox.hidden) {
-        _extrasBox.frame = CGRectMake(_margin, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
+        _extrasBox.frame = CGRectMake(_margin, self.bounds.size.height - side - bottom, side, side);
         [self updateExtrasGlass];
     }
     if (_statusBox) {
-        CGFloat left = _margin + kExtrasSide + 8;
+        CGFloat left = _margin + side + 8;
         CGFloat right = _sing && !_sing.hidden ? CGRectGetMinX(_sing.frame) - 8 : self.bounds.size.width - _margin;
-        _statusBox.frame = CGRectMake(left, self.bounds.size.height - kExtrasSide - kExtrasBottom, MAX(0, right - left), kExtrasSide);
+        _statusBox.frame = CGRectMake(left, self.bounds.size.height - side - bottom, MAX(0, right - left), side);
     }
     [self clearBottomRow];
     if (_lines && self.bounds.size.width != _builtWidth) {

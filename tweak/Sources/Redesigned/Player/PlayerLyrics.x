@@ -90,7 +90,10 @@ static const CGFloat kColumnCoverInset = 16;
 // The mini player's lyrics button asks for the lyrics of a player that is about to open: the ask holds this long.
 static const NSTimeInterval kLyricsOnOpenWindow = 3;
 
-static char kOverlayKey, kPlateKey, kTitleKey, kStackKey, kQueueKey, kQueuePageKey;
+static char kOverlayKey, kPlateKey, kTitleKey, kStackKey, kQueueKey, kQueuePageKey, kSliderKey;
+// The Music app's lyrics view ends 3 pt over its time control's bar and its sung line rests 130 pt under the collapsed
+// artwork's bottom, measured on its player (402 x 874 pt, 2026-11-25).
+static const CGFloat kLyricsOverBar = 3, kLineUnderArtwork = 130;
 // The page over the cover is up: in the one column with the lines or the queue, in the two columns the lines picked.
 static BOOL sg_open;
 // The one column's page shows the queue (SGRKeyPlayerQueueStyle's Apple Music style) rather than the lines: the same
@@ -529,7 +532,15 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
         stageTop = CGRectGetMinY(l.thumb);
         l.head = lines - stageTop;
     }
-    l.stage = CGRectMake(CGRectGetMinX(host.bounds), stageTop, host.bounds.size.width, CGRectGetMinY(bar) - kLyricsBottom - stageTop);
+    // The page reaches down to just over the bar itself, the slider inside the duration unit, as the Music app's lyrics
+    // reach its time control; without the slider, kLyricsBottom over the unit.
+    CGFloat bottom = CGRectGetMinY(bar) - kLyricsBottom;
+    UIView *slider = SGRFindByIdentifier(duration, @"SPTNowPlayingSliderV2", &kSliderKey);
+    if (slider.window && slider.bounds.size.height >= 1) {
+        CGRect drawn = SGFrameIn(slider, host);
+        bottom = CGRectGetMinY(drawn) - duration.transform.ty - kLyricsOverBar;
+    }
+    l.stage = CGRectMake(CGRectGetMinX(host.bounds), stageTop, host.bounds.size.width, bottom - stageTop);
     l.ok = l.stage.size.height - l.head > kLivingHeight / 2 && l.lift < 0;
     return l;
 }
@@ -733,7 +744,7 @@ static void setAlone(BOOL alone, BOOL animated);
 // their own share of the height.
 static void anchorLines(SGRPlayerLyricsOverlay *overlay, SGRLyricsLayout l) {
     BOOL fixed = sg_alone && keepsTitle() && !l.wide;
-    overlay.lyrics.anchorTop = fixed ? MAX(1, kAloneLineTop - CGRectGetMinY(l.stage)) : 0;
+    overlay.lyrics.anchorTop = fixed ? MAX(1, kAloneLineTop - CGRectGetMinY(l.stage)) : l.wide || sg_alone ? 0 : kLineUnderArtwork;
 }
 
 // A sheet, a menu or an alert over the player: the top controller on screen is not one the player is drawn

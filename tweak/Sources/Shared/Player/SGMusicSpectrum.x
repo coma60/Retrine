@@ -1,29 +1,26 @@
 // The music's spectrum in three bands (SGMusicSpectrum.h).
 #import <Accelerate/Accelerate.h>
 #import <AudioToolbox/AudioToolbox.h>
-#import <mach/mach_time.h>
 #import <stdatomic.h>
 #import "Core/SGCore.h"
 #import "Shared/Player/SpeedPitch.h"
 #import "Shared/Player/SGPCMRead.h"
 #import "SGMusicSpectrum.h"
 
-enum { kLog2N = 10, kN = 1 << kLog2N, kHalf = kN / 2, kBands = 3 };
+// The Music app's analyzer takes its tap's buffers whole, 4096 frames as a rule, unwindowed.
+enum { kLog2N = 12, kN = 1 << kLog2N, kHalf = kN / 2, kBands = 3 };
 // The Music app's bands, in hertz: each a lower and an upper edge (a bin counts when lower < its frequency <= upper).
 static const float kBandEdge[kBands][2] = {{20, 300}, {300, 3500}, {3500, 24000}};
-// A share is stale this long after it was heard.
-static const double kFresh = 0.5;
 
 static atomic_bool sg_wanted;
 static _Atomic uint64_t sg_layout;              // format flags | channels << 32 | bytes << 48, 0 for none
 static _Atomic uint64_t sg_sampleRateBits;
-static _Atomic uint32_t sg_shareBits[kBands];
-static _Atomic uint64_t sg_heardAt;             // mach time of the newest shares
-static double sg_secondsPerTick;
+static _Atomic uint32_t sg_levelBits[kBands];
+static _Atomic uint64_t sg_readings;            // how many readings there have been; bumped after the levels are stored
 
 // Render-thread state: only the notify touches it, under the output's admission.
 static FFTSetup sg_fft;
-static float sg_window[kN], sg_frame[kN], sg_real[kHalf], sg_imag[kHalf], sg_power[kHalf];
+static float sg_frame[kN], sg_real[kHalf], sg_imag[kHalf], sg_power[kHalf];
 static UInt32 sg_fill;
 
 static double loadDouble(_Atomic uint64_t *bits) {
@@ -39,19 +36,20 @@ static void storeDouble(_Atomic uint64_t *bits, double value) {
     atomic_store_explicit(bits, raw, memory_order_relaxed);
 }
 
-// One full frame: the power of each bin as a share of the whole, summed over each band.
+// One full frame, as the Music app's analyzer reads it: the power of each bin (unscaled, the first holding the DC and
+// Nyquist terms) as a share of the whole, summed over each band, then scaled by the whole's loudness, 20 log10 of it
+// over 120, and held to 0 to 1.
 static void analyze(double sampleRate) {
-    vDSP_vmul(sg_frame, 1, sg_window, 1, sg_frame, 1, kN);
     DSPSplitComplex split = {sg_real, sg_imag};
     vDSP_ctoz((const DSPComplex *)sg_frame, 2, &split, 1, kHalf);
     vDSP_fft_zrip(sg_fft, &split, 1, kLog2N, kFFTDirection_Forward);
-    sg_imag[0] = 0;   // the Nyquist bin packed there is left out
     vDSP_zvmags(&split, 1, sg_power, 1, kHalf);
     float total = 0;
     vDSP_sve(sg_power, 1, &total, kHalf);
     if (!(total > 0)) return;
+    float loudness = 20 * log10f(total) / 120;
     float shares[kBands] = {0};
-    for (int k = 1; k < kHalf; k++) {
+    for (int k = 0; k < kHalf; k++) {
         float frequency = (float)(k * sampleRate / kN);
         for (int b = 0; b < kBands; b++) {
             if (frequency > kBandEdge[b][0] && frequency <= kBandEdge[b][1]) shares[b] += sg_power[k] / total;
@@ -59,11 +57,11 @@ static void analyze(double sampleRate) {
     }
     for (int b = 0; b < kBands; b++) {
         uint32_t bits;
-        float share = MIN(1.0f, MAX(0.0f, shares[b]));
-        memcpy(&bits, &share, sizeof bits);
-        atomic_store_explicit(&sg_shareBits[b], bits, memory_order_relaxed);
+        float level = MIN(1.0f, MAX(0.0f, shares[b] * loudness));
+        memcpy(&bits, &level, sizeof bits);
+        atomic_store_explicit(&sg_levelBits[b], bits, memory_order_relaxed);
     }
-    atomic_store_explicit(&sg_heardAt, mach_absolute_time(), memory_order_relaxed);
+    atomic_fetch_add_explicit(&sg_readings, 1, memory_order_release);
 }
 
 // `refCon` is the unit; only the music's output is heard, mixed to mono.
@@ -125,24 +123,16 @@ void SGMusicSpectrumSetWanted(BOOL wanted) {
     atomic_store(&sg_wanted, wanted);
 }
 
-BOOL SGMusicSpectrumRead(float shares[3]) {
-    uint64_t heard = atomic_load_explicit(&sg_heardAt, memory_order_relaxed);
-    BOOL fresh = heard && (mach_absolute_time() - heard) * sg_secondsPerTick < kFresh;
+uint64_t SGMusicSpectrumRead(float levels[3]) {
+    uint64_t readings = atomic_load_explicit(&sg_readings, memory_order_acquire);
     for (int b = 0; b < kBands; b++) {
-        uint32_t bits = atomic_load_explicit(&sg_shareBits[b], memory_order_relaxed);
-        float share;
-        memcpy(&share, &bits, sizeof share);
-        shares[b] = fresh ? share : 0;
+        uint32_t bits = atomic_load_explicit(&sg_levelBits[b], memory_order_relaxed);
+        memcpy(&levels[b], &bits, sizeof bits);
     }
-    return fresh;
+    return readings;
 }
 
 %ctor {
-    mach_timebase_info_data_t timebase;
-    mach_timebase_info(&timebase);
-    sg_secondsPerTick = (double)timebase.numer / timebase.denom / 1e9;
     sg_fft = vDSP_create_fftsetup(kLog2N, kFFTRadix2);
-    // A Hann window, so a frame's edges do not spread power across the bands.
-    vDSP_hann_window(sg_window, kN, vDSP_HANN_NORM);
     if (!SGPlayerWatchMusicOutput(listenTo)) SGLog(@"music spectrum: Spotify's output cannot be reached");
 }

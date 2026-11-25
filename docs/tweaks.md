@@ -2623,10 +2623,12 @@ about middle gray and a saturation about Rec. 709 luma; the picture blurred by a
 Retrine's own grade (SGRFluidGradeTable), and its lowest channel taken down by a share of the spread. With the Music
 app's own numbers throughout (0.5 toward black, 2.4 saturation, 0.1 toward white, a 160 pt blur), it lands within 0.4
 of 255 of a simulation of its pipeline. As its does, it hears the music (Shared/Player/SGMusicSpectrum.x: each band's
-share of the spectral power of Spotify's output, bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz, from a
-1024-point FFT): the shares averaged over four readings, held at their peak and let fall, followed and eased, bass
-raising the contrast (0.076), treble the saturation (0.166) and bass and middle growing the picture (0.33 m^2); and its
-clock counts the Music app's frames, 1/60 s each at the screen's most frames a second (twice real time at 120 Hz).
+share of the spectral power of Spotify's output, bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz, from an
+unwindowed 4096-point FFT, scaled by the frame's loudness, 20 log10 of its power over 120): each reading taken once into
+the last four and averaged, held at its peak and let fall, followed and eased, bass raising the contrast (0.076), treble
+the saturation (0.166) and bass and middle growing the picture (0.33 m^2). Paused, one empty reading goes in and no
+more, so the average of the last four, and what the music grew, holds. Its clock counts the Music app's frames, 1/60 s
+each at 60 frames a second, playing or paused, and it draws at 60.
 The Core Animation copies (Light) show only
 until its first frame, or where Metal cannot draw. Checked by simulation only, not on a device
 (both styles, switched both ways while moving, a cover change mid-flow). The sliders:

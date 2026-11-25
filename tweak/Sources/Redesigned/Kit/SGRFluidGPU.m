@@ -24,7 +24,7 @@
 static const float kCopyScrim = 0.5f, kCopyScrimStep = 0.0075f, kWhite = 0.1f;
 static const float kCopySaturation = 2.4f;
 static const float kBlurPoints = 160;
-// The music, as the Music app's backdrop hears it (SGMusicSpectrum.h): the bands' shares, averaged over the last four
+// The music, as the Music app's backdrop hears it (SGMusicSpectrum.h): the bands' levels, averaged over the last four
 // readings by these weights (oldest first), held at their peak and let down by these shares of themselves each of its
 // frames, followed half way each frame, and eased (smootherstep). Bass raises the copies' contrast about middle gray,
 // treble their saturation, and a mix of bass and middle grows the whole picture about the middle by 0.33 m^2.
@@ -316,6 +316,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     float _settle;
     float _history[4][3];   // the last four readings of the bands, oldest first
     float _peak[3], _follow[3];
+    uint64_t _reading;      // the last reading of the music taken in
     double _framesPerSecond;
     simd_float4 _seed;
     CADisplayLink *_link;
@@ -407,6 +408,11 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 - (void)setMoving:(BOOL)moving {
     if (moving == _moving) return;
     _moving = moving;
+    // Stopping, the Music app's analyzer sends one empty report and then none.
+    if (!moving) {
+        static const float silence[3] = {0, 0, 0};
+        [self take:silence];
+    }
     [self update];
 }
 
@@ -508,13 +514,20 @@ static float easeInOut(float x) {
     return 3 * u * t * t + t * t * t;
 }
 
-// The newest reading of the music into the four-reading average, then the peak and the follow, over `frames` of the
-// Music app's frames. Silent or paused, the readings are zeros and everything falls away.
-- (void)hearFor:(double)frames {
-    float shares[3];
-    SGMusicSpectrumRead(shares);
+// A reading into the last four, the oldest let go.
+- (void)take:(const float *)levels {
     memmove(_history[0], _history[1], sizeof(float) * 3 * 3);
-    memcpy(_history[3], shares, sizeof shares);
+    memcpy(_history[3], levels, sizeof(float) * 3);
+}
+
+// A new reading of the music, if there is one, into the last four (each taken once, as the Music app takes each
+// report), then the peak and the follow over `frames` of its frames. Paused, no readings come: the average of the last
+// four holds, and so does what the music had grown, as the Music app's does.
+- (void)hearFor:(double)frames {
+    float levels[3];
+    uint64_t reading = SGMusicSpectrumRead(levels);
+    if (_moving && reading != _reading) [self take:levels];
+    _reading = reading;
     for (int b = 0; b < 3; b++) {
         float average = 0;
         for (int k = 0; k < 4; k++) average += kHistoryWeight[k] * _history[k][b];

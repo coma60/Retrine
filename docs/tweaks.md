@@ -2728,7 +2728,7 @@ stands, the split tabs on a bar of their own, and changing with every change on 
 bar (off, the bar is Spotify's own tabs in Spotify's order, the list kept); two picture cards for the labels,
 Icons and names or Icons only (Icons and names the default, as the Music app's bar has; applying straight away); Apple symbols (on
 until switched off, applying straight away to the bar, the preview, the cards and the list: Spotify's tabs take SF
-Symbols at the Music app's medium weight, Home the Music app's own private home.fill, the tabs you added keep their
+Symbols at the Music app's medium weight, Home a house Retrine draws to the Music app's measure (no chimney, rounded apex and foot, the door open at the foot), the tabs you added keep their
 icons); Search's tab always titled Search (검색), as the Music app's is; Fade under the bar (on until switched off, applying straight away, the preview showing the
 fade over a page's rows); the tabs, each with a
 check circle that shows or hides it, its glyph (TabBar.x draws Spotify's own off their items on the bar, or with Apple symbols' symbol) and

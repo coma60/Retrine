@@ -339,20 +339,11 @@ static NSString *stockSymbol(NSString *title) {
 }
 
 // A glyph Apple symbols gives one of Spotify's tabs (stockSymbol): Home's is the house drawn to the Music app's
-// measure, every other its SF Symbol at the medium weight the Music app's bar draws with (its magnifying glass's ring
-// 2 pt across where this bar's regular one is 1.75, both 22 pt). Only Apple symbols draws them so; a tab of the
-// mod's own keeps its symbol as it is.
+// measure, every other its SF Symbol. Only Apple symbols draws that house; a tab of the mod's own given the house
+// symbol keeps the symbol.
 static UIImage *stockGlyph(NSString *symbol, BOOL active) {
     if ([symbol isEqualToString:pageSymbols()[@"spotify:home"]]) return musicHomeGlyph();
-    static NSCache<NSString *, UIImage *> *cache;
-    if (!cache) cache = [NSCache new];
-    NSString *key = [NSString stringWithFormat:@"%@|%d", symbol, active];
-    UIImage *image = [cache objectForKey:key];
-    if (image) return image;
-    image = [[symbolGlyph(symbol, active) imageByApplyingSymbolConfiguration:[UIImageSymbolConfiguration configurationWithWeight:UIImageSymbolWeightMedium]]
-             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    if (image) [cache setObject:image forKey:key];
-    return image;
+    return symbolGlyph(symbol, active);
 }
 
 // Spotify's own Search tab, known by the page it opens in Spotify's list of tabs, never by its name or its place. A tab

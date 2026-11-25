@@ -2621,7 +2621,7 @@ kept through the blur) after a mix toward black, a contrast
 about middle gray and a saturation about Rec. 709 luma; the picture blurred by a two-pass Gaussian; then shown through a
 24 x 24 mesh, flat and a quarter larger while held still; flowing (0.8 s between, eased), bent by one of two 6 x 6 grids
 of Retrine's own, made at random per layer like the Music app's phone meshes (the inner points well off the even grid,
-the second the first with a few points moved), and breathing from one to the other once in 2 pi * 3.5 s; mixed toward white, read through a 32^3 color table made from
+the second the first with a few points moved, never folding over itself), and breathing from one to the other once in 2 pi * 3.5 s; mixed toward white, read through a 32^3 color table made from
 Retrine's own grade (SGRFluidGradeTable), and its lowest channel taken down by a share of the spread. With the Music
 app's own numbers throughout (0.5 toward black, 2.4 saturation, 0.1 toward white, a 160 pt blur), it lands within 0.4
 of 255 of a simulation of its pipeline. As its does, it hears the music (Shared/Player/SGMusicSpectrum.x: each band's
@@ -2728,7 +2728,7 @@ stands, the split tabs on a bar of their own, and changing with every change on 
 bar (off, the bar is Spotify's own tabs in Spotify's order, the list kept); two picture cards for the labels,
 Icons and names or Icons only (Icons and names the default, as the Music app's bar has; applying straight away); Apple symbols (on
 until switched off, applying straight away to the bar, the preview, the cards and the list: Spotify's tabs take SF
-Symbols at the Music app's medium weight, Home a house Retrine draws to the Music app's measure (no chimney, rounded apex and foot, the door open at the foot), the tabs you added keep their
+Symbols, Home a house Retrine draws to the Music app's measure (no chimney, rounded apex and foot, the door open at the foot), the tabs you added keep their
 icons); Search's tab always titled Search (검색), as the Music app's is; Fade under the bar (on until switched off, applying straight away, the preview showing the
 fade over a page's rows); the tabs, each with a
 check circle that shows or hides it, its glyph (TabBar.x draws Spotify's own off their items on the bar, or with Apple symbols' symbol) and

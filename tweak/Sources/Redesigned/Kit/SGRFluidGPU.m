@@ -21,10 +21,9 @@
 //      out (kSettleClock).
 //      Each pixel is mixed toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable).
 // The grids are Retrine's own, made at random per layer the way the Music app's phone meshes are (it picks one of its
-// own five at random; a portrait view takes its compact set, 6 x 6 points): the inner points well off the even grid
-// (0.13 to 0.21 on average), the edge points sliding along their side (0.02 to 0.16), the corners in place, and the
-// second grid the first with two to eight inner points moved (0.08 to 0.35 each), so the breathing stirs a few places
-// only. Points may cross, as its do.
+// own five at random; a portrait view takes its compact set, 6 x 6 points): the inner points well off the even grid,
+// the edge points sliding along their side, the corners in place, and the second grid the first with two to eight
+// inner points moved, so the breathing stirs a few places only. Unlike its, they never fold (makeMesh).
 static const float kCopyScrim = 0.5f, kCopyScrimStep = 0.0075f, kWhite = 0.1f;
 static const float kCopySaturation = 2.4f;
 static const float kBlurPoints = 160;
@@ -92,19 +91,48 @@ static float between(float least, float most) {
     return least + (most - least) * (float)arc4random_uniform(1u << 24) / (float)(1u << 24);
 }
 
-// Retrine's own grids (the header's last paragraph): a smooth field of three slow waves, scaled to a reach picked at
-// random for the inner points and for the edges, then a few inner points moved for the second.
+// A grid's least cell area over the mesh the show pass draws (24 x 24, the shifts read between the grid's points),
+// as a share of an even cell's: below 0 the sheet folds over itself there.
+static float leastArea(const simd_float2 *shift) {
+    enum { n = 24 };
+    simd_float2 p[n + 1][n + 1];
+    for (int r = 0; r <= n; r++) {
+        for (int c = 0; c <= n; c++) {
+            simd_float2 q = simd_make_float2((float)c / n, (float)r / n), s = q * (kGridSide - 1);
+            int ix = MIN((int)s.x, kGridSide - 2), iy = MIN((int)s.y, kGridSide - 2);
+            simd_float2 f = s - simd_make_float2(ix, iy);
+            int k = iy * kGridSide + ix;
+            simd_float2 top = shift[k] + (shift[k + 1] - shift[k]) * f.x;
+            simd_float2 bottom = shift[k + kGridSide] + (shift[k + kGridSide + 1] - shift[k + kGridSide]) * f.x;
+            p[r][c] = q + top + (bottom - top) * f.y;
+        }
+    }
+    float least = INFINITY;
+    for (int r = 0; r < n; r++) {
+        for (int c = 0; c < n; c++) {
+            simd_float2 a = p[r][c], b = p[r][c + 1], d = p[r + 1][c + 1], e = p[r + 1][c];
+            float one = (b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x);
+            float two = (d.x - a.x) * (e.y - a.y) - (d.y - a.y) * (e.x - a.x);
+            least = MIN(least, MIN(one, two) * n * n);
+        }
+    }
+    return least;
+}
+
+// Retrine's own grids (the header's last paragraph): a smooth field of three slow waves whose push across each side
+// eases to nothing at it (so the edges slide along their sides and the corners stay), scaled to an inner reach picked
+// at random, then a few inner points moved for the second. Unlike the Music app's, the sheet never folds over itself:
+// a fold here left a hard crease across the blurred picture, so the reach is taken down until every cell of both
+// grids, and of the breath between them, keeps a quarter of its area.
 static void makeMesh(MeshUniforms *mesh) {
-    simd_float2 field[kGridPoints];
     float f[3][4], phase[3][2], amp[3];
     for (int w = 0; w < 3; w++) {
-        for (int k = 0; k < 4; k++) f[w][k] = between(1.5f, 4.0f);
+        for (int k = 0; k < 4; k++) f[w][k] = between(1.0f, 2.6f);
         phase[w][0] = between(0, 2 * (float)M_PI);
         phase[w][1] = between(0, 2 * (float)M_PI);
         amp[w] = between(0.5f, 1.0f);
     }
-    float innerSum = 0, edgeSum = 0;
-    int edges = 0;
+    float innerSum = 0;
     for (int r = 0; r < kGridSide; r++) {
         for (int c = 0; c < kGridSide; c++) {
             float x = (float)c / (kGridSide - 1), y = (float)r / (kGridSide - 1);
@@ -113,28 +141,14 @@ static void makeMesh(MeshUniforms *mesh) {
                 d.x += amp[w] * sinf(f[w][0] * x + f[w][1] * y + phase[w][0]);
                 d.y += amp[w] * sinf(f[w][2] * x + f[w][3] * y + phase[w][1]);
             }
-            BOOL rows = r == 0 || r == kGridSide - 1, columns = c == 0 || c == kGridSide - 1;
-            if (rows && columns) d = 0;     // a corner stays
-            else if (rows) d.y = 0;         // an edge point slides along its side
-            else if (columns) d.x = 0;
-            field[r * kGridSide + c] = d;
-            if (!rows && !columns) {
-                innerSum += simd_length(d);
-            } else if (!(rows && columns)) {
-                edgeSum += simd_length(d);
-                edges++;
-            }
+            d.x *= sinf((float)M_PI * x);
+            d.y *= sinf((float)M_PI * y);
+            mesh->first[r * kGridSide + c] = d;
+            if (r > 0 && r < kGridSide - 1 && c > 0 && c < kGridSide - 1) innerSum += simd_length(d);
         }
     }
-    float inner = between(0.13f, 0.21f) / MAX(1e-6f, innerSum / ((kGridSide - 2) * (kGridSide - 2)));
-    float edge = between(0.02f, 0.16f) / MAX(1e-6f, edgeSum / MAX(1, edges));
-    for (int r = 0; r < kGridSide; r++) {
-        for (int c = 0; c < kGridSide; c++) {
-            BOOL outer = r == 0 || r == kGridSide - 1 || c == 0 || c == kGridSide - 1;
-            int i = r * kGridSide + c;
-            mesh->first[i] = mesh->second[i] = field[i] * (outer ? edge : inner);
-        }
-    }
+    float reach = between(0.13f, 0.21f) / MAX(1e-6f, innerSum / ((kGridSide - 2) * (kGridSide - 2)));
+    for (int i = 0; i < kGridPoints; i++) mesh->second[i] = mesh->first[i] = mesh->first[i] * reach;
     int moved = 2 + (int)arc4random_uniform(7), innerPoints = (kGridSide - 2) * (kGridSide - 2);
     BOOL taken[(kGridSide - 2) * (kGridSide - 2)] = {NO};
     for (int m = 0; m < moved; m++) {
@@ -142,8 +156,17 @@ static void makeMesh(MeshUniforms *mesh) {
         do pick = (int)arc4random_uniform((uint32_t)innerPoints); while (taken[pick]);
         taken[pick] = YES;
         int i = (pick / (kGridSide - 2) + 1) * kGridSide + pick % (kGridSide - 2) + 1;
-        float angle = between(0, 2 * (float)M_PI), reach = between(0.08f, 0.35f);
-        mesh->second[i] += reach * simd_make_float2(cosf(angle), sinf(angle));
+        float angle = between(0, 2 * (float)M_PI), length = between(0.04f, 0.12f);
+        mesh->second[i] += length * simd_make_float2(cosf(angle), sinf(angle));
+    }
+    for (int tries = 0; tries < 60; tries++) {
+        simd_float2 middle[kGridPoints];
+        for (int i = 0; i < kGridPoints; i++) middle[i] = (mesh->first[i] + mesh->second[i]) * 0.5f;
+        if (MIN(leastArea(mesh->first), MIN(leastArea(mesh->second), leastArea(middle))) >= 0.25f) break;
+        for (int i = 0; i < kGridPoints; i++) {
+            mesh->first[i] *= 0.95f;
+            mesh->second[i] *= 0.95f;
+        }
     }
 }
 

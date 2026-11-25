@@ -1734,8 +1734,11 @@ Redesigned:
                   Player page's Controls, spotifyglass.redesign.player.queueStyle: 0 Spotify, the default, 1 Apple Music)
                   puts that glyph in place of Spotify's queue button too: it opens the Music app's queue in the player
                   (PlayerLyrics.x's page with PlayerQueue.m's SGRPlayerQueuePage in its stage, the cover a thumbnail as for
-                  the lyrics): shuffle, repeat and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
-                  Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. The footer's lyrics and queue
+                  the lyrics): shuffle, repeat, sleep timer (in the Music app's Autoplay slot: Spotify's player.autoplay has
+                  no Objective-C setter) and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
+                  Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. A song's grip moves it within its
+                  section the way Spotify's queue screen does (copy of the reported queue, setNextTracks:, setQueue:options:
+                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). The footer's lyrics and queue
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, the Music
                   app's _NowPlayingFooterActiveIndicatingView), white landing where 0.46 added would. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:

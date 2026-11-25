@@ -2691,6 +2691,11 @@
 "settings.player.queue.menu" = "Playing Next";
 "settings.player.queue.now" = "Now Playing";
 "settings.player.queue.playing_next" = "Playing Next";
+"settings.player.queue.sleep" = "Sleep Timer";
+"settings.player.queue.sleep.album" = "End of Album or Playlist";
+"settings.player.queue.sleep.left" = "Sleep Timer, %@ left";
+"settings.player.queue.sleep.minutes" = "%ld min";
+"settings.player.queue.sleep.track" = "End of Song";
 "settings.player.queue.title" = "Playing Next";
 "settings.player.queue.up_next" = "Up Next";
 "settings.player.queue_and_devices.title" = "Queue & devices";
@@ -2698,7 +2703,7 @@
 "settings.player.queue_devices.title" = "Queue & devices";
 "settings.player.queue_flip.title" = "Queue flip transition";
 "settings.player.queue_style.music" = "Apple Music";
-"settings.player.queue_style.music_note" = "The queue opens inside the player under a small cover, with shuffle, repeat and AutoMix above it, as in Apple Music. Tap the button again to bring the cover back.";
+"settings.player.queue_style.music_note" = "The queue opens inside the player under a small cover, with shuffle, repeat, sleep timer and AutoMix above it, as in Apple Music. Drag a song's grip to move it. Tap the button again to bring the cover back.";
 "settings.player.queue_style.spotify" = "Spotify";
 "settings.player.queue_style.spotify_note" = "Spotify's own queue screen opens over the player, where songs can be reordered and removed.";
 "settings.player.queue_style.subtitle" = "How the queue button under the controls shows what plays next.";

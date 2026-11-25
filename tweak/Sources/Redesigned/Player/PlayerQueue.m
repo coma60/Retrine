@@ -3,10 +3,11 @@
 // History adapted from the GPL-3 jadetheda and michaelmelita1 forks.
 //
 // The Music app's queue (SGRKeyPlayerQueueStyle) is the same list drawn its way, as the page PlayerLyrics.x puts under the
-// cover's thumbnail: a row of toggles over it (shuffle, repeat and AutoMix, each on as the Music app marks one, a light
-// capsule with the glyph cut out of it), then the songs to come under the headings the Music app gives them (Playing
-// Next for songs queued by hand, Continue Playing for the album or playlist, Autoplaying similar music for autoplay),
-// with History above them, out of sight until the list is pulled down. The Music app's own (its NowPlayingQueue views)
+// cover's thumbnail: a row of toggles over it (shuffle, repeat, the sleep timer where the Music app has Autoplay, and
+// AutoMix, each on as the Music app marks one, a light capsule with the glyph cut out of it), then the songs to come
+// under the headings the Music app gives them (Playing Next for songs queued by hand, Continue Playing for the album or
+// playlist, Autoplaying similar music for autoplay), each with a grip that moves it among its section's songs, and
+// History above them, out of sight until the list is pulled down. The Music app's own (its NowPlayingQueue views)
 // were read for the gaps and sizes: 13 pt between the toggles, rows of a 48 pt cover with 4 pt corners and the titles
 // beside it; the rest was measured on its player.
 // Threading: main thread only; Spotify delivers fetches on main.
@@ -16,6 +17,7 @@
 #import "Shared/Player/PlayerState.h"
 #import "Shared/AutoMix/AutoMix.h"
 #import "Shared/AutoMix/AutoMixPreview.h"
+#import "Shared/Player/SleepTimer.h"
 #import "Player.h"
 #import "PlayerMix.h"
 #import "PlayerQueue.h"
@@ -81,6 +83,34 @@ static SGRQueueGroup *groupOf(NSString *title, NSString *subtitle, NSArray<SPTPl
 @protocol SGRQueuePlayer <SPTPlayer>
 - (void)fetchQueue:(void (^)(id<SGRQueueSnapshot>))callback on:(dispatch_queue_t)queue;
 @end
+
+// Moving a song in the queue, the way Spotify's own queue screen does it (Spotify 9.2.0's binary, the function at
+// 0x108439ed4 that calls setQueue:options:): a copy of the queue Spotify reported (copyWithZone:), its whole list of
+// tracks to come in the new order (-[SPTPlayerQueueImplementation setNextTracks:]), and the copy handed back with a
+// fresh SPTCommandOptions whose overrideRestrictions is on (-[SPTEsperantoPlayer setQueue:options:]). The copy keeps
+// the reported queue's revision, which setQueue:options:loggingParams: sends on with the tracks (parseQueueRevision:),
+// so a move goes against the queue it was made on. Each track keeps its own uid and provider: setQueue: rebuilds them
+// from the SPTPlayerTrack objects themselves, which is why the objects Spotify reported are moved, never new ones.
+static BOOL queueEditable(id queue) {
+    static Class options;
+    if (!options) options = NSClassFromString(@"SPTCommandOptions");
+    id player = SGPlayerInstance();
+    return queue && options && [queue respondsToSelector:@selector(copyWithZone:)] && [queue respondsToSelector:NSSelectorFromString(@"setNextTracks:")]
+        && [options instancesRespondToSelector:NSSelectorFromString(@"setOverrideRestrictions:")]
+        && [player respondsToSelector:NSSelectorFromString(@"setQueue:options:")];
+}
+
+// Hands Spotify `queue` with `next` as its tracks to come; the copy sent, which the next move builds on until Spotify
+// reports the queue again, or nil.
+static id sendQueue(id queue, NSArray *next) {
+    if (!queueEditable(queue)) return nil;
+    id copy = [queue copy];
+    ((void (*)(id, SEL, NSArray *))objc_msgSend)(copy, NSSelectorFromString(@"setNextTracks:"), next);
+    id options = [NSClassFromString(@"SPTCommandOptions") new];
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(options, NSSelectorFromString(@"setOverrideRestrictions:"), YES);
+    ((id (*)(id, SEL, id, id))objc_msgSend)(SGPlayerInstance(), NSSelectorFromString(@"setQueue:options:"), copy, options);
+    return copy;
+}
 
 static id queueValue(id object, NSString *name) {
     SEL selector = NSSelectorFromString(name);
@@ -320,6 +350,14 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     // The Music app's list opens on the songs to come, History above them: placed so once for the song playing, and
     // again for the next one while nobody is scrolling it.
     NSString *_placedFor;
+    // The queue Spotify last reported, whose tracks the list shows when _fromSnapshot: only then can a song be moved.
+    id _snapshot;
+    BOOL _fromSnapshot;
+    // A finger is moving a row: the list is not reloaded under it, and the queue Spotify reported meanwhile is shown once
+    // it lets go.
+    BOOL _reordering;
+    NSUInteger _reorderGeneration;
+    id _heldQueue;
 }
 
 - (void)dealloc {
@@ -362,6 +400,9 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
         table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, CGFLOAT_MIN)];
         table.rowHeight = kMusicCoverSide + 2 * kMusicRowPad;
         [table registerClass:SGRQueueMusicHeader.class forHeaderFooterViewReuseIdentifier:@"heading"];
+        // The Music app's grips on the songs to come: the table stays in editing mode, rows still picked with a tap.
+        table.allowsSelectionDuringEditing = YES;
+        table.editing = YES;
     }
     _empty = [UILabel new];
     _empty.text = SGL(@"settings.player.queue.empty", @"Nothing is playing next.");
@@ -444,6 +485,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 
 - (void)takeState:(SPTPlayerState *)state {
     if (!queueValue(state, @"queueRevision") || ![SGPlayerInstance() respondsToSelector:@selector(fetchQueue:on:)]) {
+        _fromSnapshot = NO;
         [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
                    past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
                 current:state.track];
@@ -458,16 +500,28 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     [self refreshQueue];
 }
 
+// The queue Spotify reported: the list shows its very track objects, which a move hands back.
+- (void)showQueue:(id<SGRQueueSnapshot>)queue {
+    if (_reordering) {
+        _heldQueue = queue;
+        return;
+    }
+    _snapshot = queue;
+    _fromSnapshot = YES;
+    [self showTracks:queue.nextTracks past:queue.prevTracks current:queue.track];
+}
+
 - (void)showTracks:(NSArray *)next past:(NSArray *)past current:(SPTPlayerTrack *)current {
+    if (_reordering) return;
     _tracks = queueTracks(next, kMaxRows, NO);
     NSArray *history = queueTracks(past, NSUIntegerMax, YES);
     _history = history.count > kHistoryRows ? [history subarrayWithRange:NSMakeRange(history.count - kHistoryRows, kHistoryRows)] : history;
     _current = current;
-    NSArray *signature = @[signatureOf(_history), signatureOf(current ? @[current] : @[]), signatureOf(_tracks),
-                           _musicStyle ? [self sourcesOf:_tracks] : @[]];
+    NSArray *signature = [self signature];
+    // Rebuilt every time, so the rows hold the very objects Spotify reported last (a move hands them back).
+    _groups = _musicStyle ? [self musicGroups] : [self sheetGroups];
     if (![_signature isEqual:signature]) {
         _signature = signature;
-        _groups = _musicStyle ? [self musicGroups] : [self sheetGroups];
         NSMutableSet<NSString *> *listed = [NSMutableSet set];
         for (SPTPlayerTrack *track in [[_history arrayByAddingObjectsFromArray:current ? @[current] : @[]] arrayByAddingObjectsFromArray:_tracks]) {
             NSString *uri = SGURIString(track.URI);
@@ -479,6 +533,11 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
         [self placeAtUpcoming];
     }
     [self showBlend];
+}
+
+- (NSArray *)signature {
+    return @[signatureOf(_history), signatureOf(_current ? @[_current] : @[]), signatureOf(_tracks),
+             _musicStyle ? [self sourcesOf:_tracks] : @[], @(_musicStyle && _fromSnapshot && queueEditable(_snapshot))];
 }
 
 // The sheet's three sections: History, Now Playing and Up Next, the last under its own heading.
@@ -559,9 +618,12 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 - (void)refreshQueue {
     id<SGRQueuePlayer> player = SGPlayerInstance();
     SPTPlayerState *state = SGPlayerState();
-    [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
-               past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
-            current:state.track];
+    // The state's lists until the queue comes: shown, but not Spotify's queue objects, so nothing moves meanwhile.
+    if (!_fromSnapshot || !_snapshot) {
+        [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
+                   past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
+                current:state.track];
+    }
     if (![player respondsToSelector:@selector(fetchQueue:on:)]) return;
     _fetching = YES;
     NSArray *reported = _reportedKey;
@@ -574,7 +636,12 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
             ![queue respondsToSelector:@selector(track)] ||
             (queue.nextTracks && ![queue.nextTracks isKindOfClass:NSArray.class]) ||
             (queue.prevTracks && ![queue.prevTracks isKindOfClass:NSArray.class])) return;
-        [self showTracks:queue.nextTracks past:queue.prevTracks current:queue.track];
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            SGLog(@"redesign queue: Spotify's queue is %@, %@", NSStringFromClass([(NSObject *)queue class]),
+                  queueEditable(queue) ? @"songs can be moved" : @"songs stay where they are");
+        });
+        [self showQueue:queue];
         // A report received while fetching must not be lost.
         if ([self->_reportedKey isEqual:reported]) [self takeState:SGPlayerState()];
     } on:dispatch_get_main_queue()];
@@ -731,6 +798,7 @@ static UIImage *coverPlaceholder(void) {
         content.imageProperties.cornerRadius = kMusicCoverRadius;
         content.imageToTextPadding = kMusicCoverGap;
         content.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(kMusicRowPad, SGRPlayerSideMargin, kMusicRowPad, SGRPlayerSideMargin);
+        cell.showsReorderControl = YES;
     }
     cell.contentConfiguration = content;
     cell.isAccessibilityElement = YES;
@@ -749,6 +817,121 @@ static UIImage *coverPlaceholder(void) {
         content.image = image;
         cell.contentConfiguration = content;
     }
+}
+
+#pragma mark - moving a song
+
+- (BOOL)tableView:(UITableView *)table canMoveRowAtIndexPath:(NSIndexPath *)path {
+    SGRQueueGroup *group = [self groupAt:path.section];
+    return _musicStyle && group.upcoming && group.tracks.count > 1 && _fromSnapshot && queueEditable(_snapshot);
+}
+
+// Only rows that move take the table's editing mode: their grip, no indent and no delete button.
+- (BOOL)tableView:(UITableView *)table canEditRowAtIndexPath:(NSIndexPath *)path {
+    return [self tableView:table canMoveRowAtIndexPath:path];
+}
+
+- (UITableViewCellEditingStyle)tableView:(UITableView *)table editingStyleForRowAtIndexPath:(NSIndexPath *)path {
+    return UITableViewCellEditingStyleNone;
+}
+
+- (BOOL)tableView:(UITableView *)table shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)path {
+    return NO;
+}
+
+// A song stays among its own: songs queued by hand, the album or playlist's, autoplay's. Moved past its section's end,
+// it stops at the end.
+- (NSIndexPath *)tableView:(UITableView *)table targetIndexPathForMoveFromRowAtIndexPath:(NSIndexPath *)from
+       toProposedIndexPath:(NSIndexPath *)proposed {
+    if (proposed.section == from.section) return proposed;
+    NSInteger last = MAX(0, (NSInteger)[self groupAt:from.section].tracks.count - 1);
+    return [NSIndexPath indexPathForRow:proposed.section < from.section ? 0 : last inSection:from.section];
+}
+
+// UIKit's own calls around a drag (the ones Spotify's queue screen answers), so a report coming in meanwhile does not
+// reload the list under the finger.
+- (void)tableView:(UITableView *)table willBeginReorderingRowAtIndexPath:(NSIndexPath *)path {
+    _reordering = YES;
+    // These calls are UIKit's own, not in its headers: should the end never come, the list is not held for good.
+    NSUInteger generation = ++_reorderGeneration;
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) self = weakSelf;
+        if (self && self->_reordering && self->_reorderGeneration == generation) [self endReordering];
+    });
+}
+
+- (void)tableView:(UITableView *)table didEndReorderingRowAtIndexPath:(NSIndexPath *)path {
+    [self endReordering];
+}
+
+- (void)tableView:(UITableView *)table didCancelReorderingRowAtIndexPath:(NSIndexPath *)path {
+    [self endReordering];
+}
+
+- (void)endReordering {
+    _reordering = NO;
+    id held = _heldQueue;
+    _heldQueue = nil;
+    if (held) [self showQueue:held];
+}
+
+- (void)tableView:(UITableView *)table moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    // A queue Spotify reported during the drag is older than this move: dropped, the move's own report follows.
+    _heldQueue = nil;
+    _reordering = NO;
+    if ([from isEqual:to] || from.section != to.section) return;
+    SGRQueueGroup *group = [self groupAt:from.section];
+    NSMutableArray<SPTPlayerTrack *> *tracks = [group.tracks mutableCopy];
+    if (from.row >= (NSInteger)tracks.count || to.row >= (NSInteger)tracks.count) return;
+    SPTPlayerTrack *moving = tracks[(NSUInteger)from.row];
+    [tracks removeObjectAtIndex:(NSUInteger)from.row];
+    [tracks insertObject:moving atIndex:(NSUInteger)to.row];
+    // Spotify's whole list, the song taken out and put back before the song now after it in its section (or after the
+    // one now before it, at the section's end). Songs past the 50 shown keep their places.
+    id<SGRQueueSnapshot> snapshot = _snapshot;
+    NSMutableArray *next = [snapshot.nextTracks mutableCopy];
+    NSUInteger at = [next indexOfObjectIdenticalTo:moving];
+    SPTPlayerTrack *after = to.row + 1 < (NSInteger)tracks.count ? tracks[(NSUInteger)to.row + 1] : nil;
+    SPTPlayerTrack *before = to.row > 0 ? tracks[(NSUInteger)to.row - 1] : nil;
+    NSUInteger place = NSNotFound;
+    if (at != NSNotFound) {
+        [next removeObjectAtIndex:at];
+        if (after) place = [next indexOfObjectIdenticalTo:after];
+        else if (before) {
+            place = [next indexOfObjectIdenticalTo:before];
+            if (place != NSNotFound) place++;
+        }
+    }
+    if (place == NSNotFound || place > next.count) {
+        SGLog(@"redesign queue: the moved song is not in Spotify's queue any more, the list is read again");
+        _fromSnapshot = NO;
+        [self refreshQueue];
+        return;
+    }
+    [next insertObject:moving atIndex:place];
+    group.tracks = tracks;
+    NSMutableArray<SPTPlayerTrack *> *upcoming = [NSMutableArray array];
+    for (SGRQueueGroup *g in _groups) if (g.upcoming) [upcoming addObjectsFromArray:g.tracks];
+    _tracks = upcoming;
+    _signature = [self signature];
+    id sent = sendQueue(snapshot, next);
+    if (!sent) {
+        SGLog(@"redesign queue: Spotify's queue could not be set, the list is read again");
+        _fromSnapshot = NO;
+        [self refreshQueue];
+        return;
+    }
+    _snapshot = sent;
+    SGLog(@"redesign queue: moved a song from %ld to %ld of its section (%lu songs to come)", (long)from.row, (long)to.row, (unsigned long)next.count);
+    [self showBlend];
+    // Spotify reports the new queue with a new revision, which fetches it again (takeState). Should no report come, it is
+    // read again here, so the list shows what Spotify kept.
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) self = weakSelf;
+        if (self && !self->_reordering && !self->_fetching) [self refreshQueue];
+    });
 }
 
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
@@ -814,6 +997,8 @@ static UIImage *mixGlyph(void) {
 @property (nonatomic, copy) NSString *symbol;
 // Drawn in place of a symbol (AutoMix's glyph); the symbol is then only a name for the drawing.
 @property (nonatomic, strong) UIImage *drawnGlyph;
+// A tap opens this menu instead of calling onTap (the sleep timer's).
+@property (nonatomic, copy) UIMenu *(^menu)(void);
 @property (nonatomic) BOOL on;
 @property (nonatomic, copy) void (^onTap)(void);
 - (void)setOn:(BOOL)on animated:(BOOL)animated;
@@ -857,6 +1042,20 @@ static UIImage *mixGlyph(void) {
     [_glyph setSymbol:symbol animated:self.window != nil];
     self.largeContentImage = _glyph.image;
     [self setNeedsLayout];
+}
+
+- (void)setMenu:(UIMenu *(^)(void))menu {
+    _menu = [menu copy];
+    self.contextMenuInteractionEnabled = menu != nil;
+    self.showsMenuAsPrimaryAction = menu != nil;
+}
+
+- (UIContextMenuConfiguration *)contextMenuInteraction:(UIContextMenuInteraction *)interaction
+                        configurationForMenuAtLocation:(CGPoint)location {
+    UIMenu *(^menu)(void) = self.menu;
+    if (!menu) return nil;
+    return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil
+                                                    actionProvider:^UIMenu *(NSArray<UIMenuElement *> *suggested) { return menu(); }];
 }
 
 - (void)setDrawnGlyph:(UIImage *)drawnGlyph {
@@ -932,7 +1131,7 @@ static UIImage *mixGlyph(void) {
 @end
 
 @implementation SGRPlayerQueuePageController {
-    SGRQueueToggle *_shuffle, *_repeat, *_mix;
+    SGRQueueToggle *_shuffle, *_repeat, *_sleep, *_mix;
     UIStackView *_toggles;
     UIView *_holder;
     CAGradientLayer *_fade;
@@ -953,17 +1152,22 @@ static UIImage *mixGlyph(void) {
     _repeat.onTap = ^{
         SGPlayerAdvanceRepeat((id<SPTPlayer>)SGPlayer(), SGPlayerState().options);
     };
+    __weak typeof(self) weakSelf = self;
+    // The Music app's third is Autoplay, which Spotify keeps in its core settings with no call an app's code can make
+    // (player.autoplay, read and written only inside its Swift settings). In its place Retrine's own control of what plays
+    // on: the sleep timer (Shared/Player/SleepTimer.h), on while one is set, its choices in a menu.
+    _sleep = [[SGRQueueToggle alloc] initWithSymbol:@"moon.zzz" title:SGL(@"settings.player.queue.sleep", @"Sleep Timer")];
+    _sleep.menu = ^UIMenu *{ return [weakSelf sleepMenu]; };
     // The Music app's fourth, its transitions button: AutoMix, the switch Mod Settings > AutoMix has.
     _mix = [[SGRQueueToggle alloc] initWithSymbol:@"automix" title:SGL(@"settings.automix.title", @"AutoMix")];
     _mix.drawnGlyph = mixGlyph();
-    __weak typeof(self) weakSelf = self;
     _mix.onTap = ^{
         BOOL on = !SGFlag(SGKeyAutoMix, NO);
         SGSetEnabled(SGKeyAutoMix, on);
         SGAutoMixApply(on);
         [weakSelf showOptions:YES];
     };
-    _toggles = [[UIStackView alloc] initWithArrangedSubviews:@[_shuffle, _repeat, _mix]];
+    _toggles = [[UIStackView alloc] initWithArrangedSubviews:@[_shuffle, _repeat, _sleep, _mix]];
     _toggles.axis = UILayoutConstraintAxisHorizontal;
     _toggles.distribution = UIStackViewDistributionFillEqually;
     _toggles.spacing = kToggleGap;
@@ -984,6 +1188,47 @@ static UIImage *mixGlyph(void) {
 
 - (void)transitionsChanged {
     [self showOptions:YES];
+}
+
+// The sleep timer's choices, the one set checked: the Live Activity's (Shared/LiveActivity), Off while one is set.
+- (UIMenu *)sleepMenu {
+    SGSleepTimerMode mode = SGSleepTimerCurrentMode();
+    __weak typeof(self) weakSelf = self;
+    UIAction *(^choice)(NSString *, SGSleepTimerMode, NSTimeInterval, BOOL) = ^UIAction *(NSString *title, SGSleepTimerMode set, NSTimeInterval seconds, BOOL on) {
+        UIAction *action = [UIAction actionWithTitle:title image:nil identifier:nil handler:^(UIAction *a) {
+            SGSetSleepTimer(set, seconds);
+            [weakSelf showOptions:YES];
+        }];
+        action.state = on ? UIMenuElementStateOn : UIMenuElementStateOff;
+        return action;
+    };
+    NSMutableArray<UIMenuElement *> *times = [NSMutableArray array];
+    for (NSNumber *minutes in @[@15, @30, @45, @60]) {
+        NSString *title = [NSString stringWithFormat:SGL(@"settings.player.queue.sleep.minutes", @"%ld min"), (long)minutes.integerValue];
+        [times addObject:choice(title, SGSleepTimerAtTime, minutes.integerValue * 60, NO)];
+    }
+    NSArray<UIMenuElement *> *ends = @[
+        choice(SGL(@"settings.player.queue.sleep.track", @"End of Song"), SGSleepTimerEndOfTrack, 0, mode == SGSleepTimerEndOfTrack),
+        choice(SGL(@"settings.player.queue.sleep.album", @"End of Album or Playlist"), SGSleepTimerEndOfAlbum, 0, mode == SGSleepTimerEndOfAlbum),
+    ];
+    NSMutableArray<UIMenuElement *> *children = [NSMutableArray array];
+    if (mode != SGSleepTimerOff) {
+        UIAction *off = choice(SGL(@"common.off", @"Off"), SGSleepTimerOff, 0, NO);
+        off.attributes = UIMenuElementAttributesDestructive;
+        [children addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[off]]];
+    }
+    [children addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:ends]];
+    [children addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:times]];
+    NSString *title = SGL(@"settings.player.queue.sleep", @"Sleep Timer");
+    NSDate *end = SGSleepTimerEnd();
+    if (mode == SGSleepTimerAtTime && end) {
+        NSDateComponentsFormatter *left = [NSDateComponentsFormatter new];
+        left.allowedUnits = NSCalendarUnitHour | NSCalendarUnitMinute;
+        left.unitsStyle = NSDateComponentsFormatterUnitsStyleAbbreviated;
+        NSString *remaining = [left stringFromTimeInterval:MAX(60, end.timeIntervalSinceNow)];
+        if (remaining) title = [NSString stringWithFormat:SGL(@"settings.player.queue.sleep.left", @"Sleep Timer, %@ left"), remaining];
+    }
+    return [UIMenu menuWithTitle:title children:children];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -1017,6 +1262,9 @@ static UIImage *mixGlyph(void) {
     NSString *on = SGL(@"common.on", @"On"), *off = SGL(@"common.off", @"Off");
     _shuffle.accessibilityValue = options.shufflingContext ? on : off;
     _repeat.accessibilityValue = track ? SGL(@"settings.player.ipad.repeat.one", @"One") : context ? SGL(@"settings.player.ipad.repeat.all", @"All") : off;
+    BOOL sleeping = SGSleepTimerCurrentMode() != SGSleepTimerOff;
+    [_sleep setOn:sleeping animated:animated];
+    _sleep.accessibilityValue = sleeping ? on : off;
     BOOL mix = SGFlag(SGKeyAutoMix, NO);
     [_mix setOn:mix animated:animated];
     _mix.accessibilityValue = mix ? on : off;

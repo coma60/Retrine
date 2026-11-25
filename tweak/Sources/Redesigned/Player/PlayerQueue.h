@@ -17,6 +17,7 @@ void SGRPlayerShowQueue(UIView *from);
 // and the list stays. Added as a child of the player's controller by its caller.
 UIViewController *SGRPlayerQueueList(void);
 // The Music app's queue as a page in the player (SGRKeyPlayerQueueStyle, PlayerLyrics.x puts it under the cover's
-// thumbnail): shuffle, repeat and AutoMix toggles over the list drawn its way. A pick skips ahead and the page stays.
+// thumbnail): shuffle, repeat, sleep timer and AutoMix toggles over the list drawn its way, its songs to come moved by
+// their grips. A pick skips ahead and the page stays.
 // Added as a child of the player's controller by its caller.
 UIViewController *SGRPlayerQueuePage(void);

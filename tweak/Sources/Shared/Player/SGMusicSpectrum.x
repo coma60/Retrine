@@ -7,8 +7,11 @@
 #import "Shared/Player/SGPCMRead.h"
 #import "SGMusicSpectrum.h"
 
-// The Music app's analyzer takes its tap's buffers whole, 4096 frames as a rule, unwindowed.
-enum { kLog2N = 12, kN = 1 << kLog2N, kHalf = kN / 2, kBands = 3 };
+// The Music app's analyzer takes its tap's buffers whole, unwindowed. On a phone that tap is its process's own output
+// (MPCProcessAudioTap: MPPlaybackUserDefaults' isProcessTapEnabled is YES outside Apple's internal builds), asked for
+// 30 readings a second (audioAnalysisRefreshRate, 30 outside them) and given 48000 / 30 rounded up to a power of two:
+// 2048 frames, about 23 readings a second.
+enum { kLog2N = 11, kN = 1 << kLog2N, kHalf = kN / 2, kBands = 3 };
 // The Music app's bands, in hertz: each a lower and an upper edge (a bin counts when lower < its frequency <= upper).
 static const float kBandEdge[kBands][2] = {{20, 300}, {300, 3500}, {3500, 24000}};
 

@@ -16,11 +16,15 @@
 //      units across, at (0, 0), (-0.25, 0.15) and (0.7, 0.7) (y up), each turning clockwise about its own center once
 //      in 120, 70 and 90 s, the third also carried about the middle by the first's turn, which turns it as well.
 //   2. That picture blurred, a Gaussian of kBlurPoints standard deviation on screen.
-//   3. Shown through a mesh: held still, flat and a quarter larger; flowing, bent and breathing between none and its
-//      full reach once in 2 pi * 3.5 s of its clock; going from one to the other eased in and out (kSettleClock).
+//   3. Shown through a mesh: held still, flat and a quarter larger; flowing, bent by one of two 6 x 6 grids and
+//      breathing from the one to the other once in 2 pi * 3.5 s of its clock; going from held to flowing eased in and
+//      out (kSettleClock).
 //      Each pixel is mixed toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable).
-// The bend is Retrine's own (the Music app picks one of its own meshes at random): a push out from the middle and two
-// slow waves, at phases picked per layer, of the reach its meshes have.
+// The grids are Retrine's own, made at random per layer the way the Music app's phone meshes are (it picks one of its
+// own five at random; a portrait view takes its compact set, 6 x 6 points): the inner points well off the even grid
+// (0.13 to 0.21 on average), the edge points sliding along their side (0.02 to 0.16), the corners in place, and the
+// second grid the first with two to eight inner points moved (0.08 to 0.35 each), so the breathing stirs a few places
+// only. Points may cross, as its do.
 static const float kCopyScrim = 0.5f, kCopyScrimStep = 0.0075f, kWhite = 0.1f;
 static const float kCopySaturation = 2.4f;
 static const float kBlurPoints = 160;
@@ -67,7 +71,6 @@ typedef struct {
 
 typedef struct {
     simd_float4 visible;   // the visible rect as shares of the layer: x, y, width, height
-    simd_float4 seed;      // the bend's phases
     float playing;         // 0 held still, 1 flowing (eased)
     float breath;          // 0 to 1
     float warp;            // the Warp setting as a factor
@@ -77,6 +80,72 @@ typedef struct {
     float grain;           // the noise's spread in eight-bit steps
     float zoom;
 } ShowUniforms;
+
+// Two grids' shifts off the even 6 x 6 grid, row by row from the visible rect's top left, in shares of its size.
+enum { kGridSide = 6, kGridPoints = kGridSide * kGridSide };
+typedef struct {
+    simd_float2 first[kGridPoints];
+    simd_float2 second[kGridPoints];
+} MeshUniforms;
+
+static float between(float least, float most) {
+    return least + (most - least) * (float)arc4random_uniform(1u << 24) / (float)(1u << 24);
+}
+
+// Retrine's own grids (the header's last paragraph): a smooth field of three slow waves, scaled to a reach picked at
+// random for the inner points and for the edges, then a few inner points moved for the second.
+static void makeMesh(MeshUniforms *mesh) {
+    simd_float2 field[kGridPoints];
+    float f[3][4], phase[3][2], amp[3];
+    for (int w = 0; w < 3; w++) {
+        for (int k = 0; k < 4; k++) f[w][k] = between(1.5f, 4.0f);
+        phase[w][0] = between(0, 2 * (float)M_PI);
+        phase[w][1] = between(0, 2 * (float)M_PI);
+        amp[w] = between(0.5f, 1.0f);
+    }
+    float innerSum = 0, edgeSum = 0;
+    int edges = 0;
+    for (int r = 0; r < kGridSide; r++) {
+        for (int c = 0; c < kGridSide; c++) {
+            float x = (float)c / (kGridSide - 1), y = (float)r / (kGridSide - 1);
+            simd_float2 d = 0;
+            for (int w = 0; w < 3; w++) {
+                d.x += amp[w] * sinf(f[w][0] * x + f[w][1] * y + phase[w][0]);
+                d.y += amp[w] * sinf(f[w][2] * x + f[w][3] * y + phase[w][1]);
+            }
+            BOOL rows = r == 0 || r == kGridSide - 1, columns = c == 0 || c == kGridSide - 1;
+            if (rows && columns) d = 0;     // a corner stays
+            else if (rows) d.y = 0;         // an edge point slides along its side
+            else if (columns) d.x = 0;
+            field[r * kGridSide + c] = d;
+            if (!rows && !columns) {
+                innerSum += simd_length(d);
+            } else if (!(rows && columns)) {
+                edgeSum += simd_length(d);
+                edges++;
+            }
+        }
+    }
+    float inner = between(0.13f, 0.21f) / MAX(1e-6f, innerSum / ((kGridSide - 2) * (kGridSide - 2)));
+    float edge = between(0.02f, 0.16f) / MAX(1e-6f, edgeSum / MAX(1, edges));
+    for (int r = 0; r < kGridSide; r++) {
+        for (int c = 0; c < kGridSide; c++) {
+            BOOL outer = r == 0 || r == kGridSide - 1 || c == 0 || c == kGridSide - 1;
+            int i = r * kGridSide + c;
+            mesh->first[i] = mesh->second[i] = field[i] * (outer ? edge : inner);
+        }
+    }
+    int moved = 2 + (int)arc4random_uniform(7), innerPoints = (kGridSide - 2) * (kGridSide - 2);
+    BOOL taken[(kGridSide - 2) * (kGridSide - 2)] = {NO};
+    for (int m = 0; m < moved; m++) {
+        int pick;
+        do pick = (int)arc4random_uniform((uint32_t)innerPoints); while (taken[pick]);
+        taken[pick] = YES;
+        int i = (pick / (kGridSide - 2) + 1) * kGridSide + pick % (kGridSide - 2) + 1;
+        float angle = between(0, 2 * (float)M_PI), reach = between(0.08f, 0.35f);
+        mesh->second[i] += reach * simd_make_float2(cosf(angle), sinf(angle));
+    }
+}
 
 static const float kGrainStandardSteps = 1, kGrainMostSteps = 24;
 
@@ -91,7 +160,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct CopyU { float2 center; float2 scale; float halfSide; float angle; float scrim; float saturation; float contrast; float progress; };\n"
 "struct BlurU { float2 step; float sigma; int radius; };\n"
-"struct ShowU { float4 visible; float4 seed; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom; };\n"
+"struct ShowU { float4 visible; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom; };\n"
 "struct CV { float4 position [[position]]; float2 uv; uint copy [[flat]]; };\n"
 "struct V { float4 position [[position]]; float2 uv; };\n"
 // A copy: a square turned about its own center, clockwise (y up), placed and scaled into clip space.
@@ -134,13 +203,17 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    }\n"
 "    return float4(sum / weights, 1.0);\n"
 "}\n"
-"static float2 bendAt(float2 q, float4 seed) {\n"
-"    return (q - 0.5) * 0.25\n"
-"         + 0.07 * float2(sin(q.y * 2.3 + seed.x), sin(q.x * 2.1 + seed.y))\n"
-"         + 0.04 * float2(sin((q.x + q.y) * 3.7 + seed.z), sin((q.x - q.y) * 3.3 + seed.w));\n"
+"struct MeshU { float2 first[36]; float2 second[36]; };\n"
+// A grid's shift at q (0 to 1 over the visible rect), between its points; beyond the rect, its edge's.
+"static float2 shiftAt(constant float2 *grid, float2 q) {\n"
+"    float2 s = clamp(q, 0.0, 1.0) * 5.0;\n"
+"    int2 i = min(int2(s), int2(4));\n"
+"    float2 f = s - float2(i);\n"
+"    int k = i.y * 6 + i.x;\n"
+"    return mix(mix(grid[k], grid[k + 1], f.x), mix(grid[k + 6], grid[k + 7], f.x), f.y);\n"
 "}\n"
-// The mesh: each point of the picture (uv) drawn where the held zoom or the breathing bend puts it.
-"vertex V showVertex(uint vid [[vertex_id]], constant ShowU &u [[buffer(0)]]) {\n"
+// The mesh: each point of the picture (uv) drawn where the held zoom or the breathing grids put it.
+"vertex V showVertex(uint vid [[vertex_id]], constant ShowU &u [[buffer(0)]], constant MeshU &m [[buffer(1)]]) {\n"
 "    const uint n = 24u;\n"
 "    uint cell = vid / 6u, k = vid % 6u;\n"
 "    uint cx = cell % n, cy = cell / n;\n"
@@ -150,7 +223,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    float2 middle = u.visible.xy + u.visible.zw * 0.5;\n"
 "    float2 held = middle + (uv - middle) * u.zoom;\n"
 "    float2 q = (uv - u.visible.xy) / u.visible.zw;\n"
-"    float2 bent = uv + u.breath * u.warp * bendAt(q, u.seed) * u.visible.zw;\n"
+"    float2 bent = uv + u.warp * mix(shiftAt(m.first, q), shiftAt(m.second, q), u.breath) * u.visible.zw;\n"
 "    float2 p = mix(held, bent, u.playing);\n"
 "    V v;\n"
 "    v.position = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);\n"
@@ -317,7 +390,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     float _history[4][3];   // the last four readings of the bands, oldest first
     float _peak[3], _follow[3];
     uint64_t _reading;      // the last reading of the music taken in
-    simd_float4 _seed;
+    MeshUniforms _mesh;
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
     BOOL _resigning;
@@ -333,7 +406,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     _gain = 1;
     _blur = 1;
     _progress = 1;
-    for (int i = 0; i < 4; i++) _seed[i] = (float)(arc4random_uniform(62832) / 10000.0);
+    makeMesh(&_mesh);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;
     self.opaque = YES;
@@ -688,7 +761,6 @@ static float easeInOut(float x) {
                                     (float)((visible.origin.y - bounds.origin.y) / bounds.size.height),
                                     (float)(MAX(1, visible.size.width) / bounds.size.width),
                                     (float)(MAX(1, visible.size.height) / bounds.size.height)),
-        .seed = _seed,
         .playing = eased,
         .breath = (float)(0.5 + 0.5 * sin(_time / kBreathPeriod)),
         .warp = _warp,
@@ -706,6 +778,7 @@ static float easeInOut(float x) {
     id<MTLRenderCommandEncoder> shown = [buffer renderCommandEncoderWithDescriptor:showPass];
     [shown setRenderPipelineState:sShow];
     [shown setVertexBytes:&show length:sizeof(show) atIndex:0];
+    [shown setVertexBytes:&_mesh length:sizeof(_mesh) atIndex:1];
     [shown setFragmentBytes:&show length:sizeof(show) atIndex:0];
     [shown setFragmentTexture:_blurred atIndex:0];
     [shown setFragmentTexture:sTable atIndex:1];

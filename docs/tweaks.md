@@ -2618,14 +2618,15 @@ three copies of the cover, 1.4, 0.7 and 0.7 units across (a unit half the visibl
 (-0.25, 0.15) and (0.7, 0.7), each turning clockwise about its own center once in 120, 70 and 90 s, the third carried
 about the middle by the first's turn, drawn opaque into a quarter-size picture after a mix toward black, a contrast
 about middle gray and a saturation about Rec. 709 luma; the picture blurred by a two-pass Gaussian; then shown through a
-24 x 24 mesh, flat and a quarter larger while held still and breathing through a bend of Retrine's own once in
-2 pi * 3.5 s while flowing (0.8 s between, eased), mixed toward white, read through a 32^3 color table made from
+24 x 24 mesh, flat and a quarter larger while held still; flowing (0.8 s between, eased), bent by one of two 6 x 6 grids
+of Retrine's own, made at random per layer like the Music app's phone meshes (the inner points well off the even grid,
+the second the first with a few points moved), and breathing from one to the other once in 2 pi * 3.5 s; mixed toward white, read through a 32^3 color table made from
 Retrine's own grade (SGRFluidGradeTable), and its lowest channel taken down by a share of the spread. With the Music
 app's own numbers throughout (0.5 toward black, 2.4 saturation, 0.1 toward white, a 160 pt blur), it lands within 0.4
 of 255 of a simulation of its pipeline. As its does, it hears the music (Shared/Player/SGMusicSpectrum.x: each band's
 share of the spectral power of Spotify's output, bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz, from an
 unwindowed 2048-point FFT at 48 kHz, resampled to it if need be, 23.4 a second as its process tap reads, scaled by the
-frame's loudness, 20 log10 of its power over 120): each reading taken once into
+frame's loudness, 20 log10 of its power over 120, then by the 0.2 intensity its analysis is made with): each reading taken once into
 the last four and averaged, held at its peak and let fall, followed and eased, bass raising the contrast (0.076), treble
 the saturation (0.166) and bass and middle growing the picture (0.33 m^2). Paused, one empty reading goes in and no
 more, so the average of the last four, and what the music grew, holds. Every reading goes in, in order, as each of the Music app's reports does. Its clock,

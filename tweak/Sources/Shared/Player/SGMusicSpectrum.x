@@ -13,6 +13,9 @@
 // a power of two: 2048 frames, 23.4 readings a second. Spotify's output at another rate is resampled to 48 kHz first.
 enum { kLog2N = 11, kN = 1 << kLog2N, kHalf = kN / 2, kBands = 3 };
 static const double kTapRate = 48000;
+// The Music app's backdrop scales each level by its spectrum analysis's intensity, 0.2 as it is made
+// (MediaCoreUI.SpectrumAnalysis), after holding it to 0 to 1.
+static const float kIntensity = 0.2f;
 // The Music app's bands, in hertz: each a lower and an upper edge (a bin counts when lower < its frequency <= upper).
 static const float kBandEdge[kBands][2] = {{20, 300}, {300, 3500}, {3500, 24000}};
 // The readings kept for a reader that has fallen behind: it takes each one, as the Music app's backdrop takes each
@@ -80,7 +83,7 @@ static void storeDouble(_Atomic uint64_t *bits, double value) {
 
 // One full frame, as the Music app's analyzer reads it: the power of each bin (unscaled, the first holding the DC and
 // Nyquist terms) as a share of the whole, summed over each band, then scaled by the whole's loudness, 20 log10 of it
-// over 120, and held to 0 to 1.
+// over 120, held to 0 to 1, and scaled by the backdrop's intensity.
 static void analyze(void) {
     DSPSplitComplex split = {sg_real, sg_imag};
     vDSP_ctoz((const DSPComplex *)sg_frame, 2, &split, 1, kHalf);
@@ -100,7 +103,7 @@ static void analyze(void) {
     uint64_t reading = atomic_load_explicit(&sg_readings, memory_order_relaxed);
     for (int b = 0; b < kBands; b++) {
         uint32_t bits;
-        float level = MIN(1.0f, MAX(0.0f, shares[b] * loudness));
+        float level = MIN(1.0f, MAX(0.0f, shares[b] * loudness)) * kIntensity;
         memcpy(&bits, &level, sizeof bits);
         atomic_store_explicit(&sg_levelBits[reading % kKept][b], bits, memory_order_relaxed);
     }

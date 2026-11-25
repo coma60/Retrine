@@ -1,6 +1,7 @@
 // The music's spectrum in three bands, as the Music app's backdrop hears it: each band's share of the spectral power
 // of Spotify's output (bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz), from an unwindowed 2048-point FFT at 48 kHz,
-// scaled by the frame's loudness (20 log10 of its power, over 120) and held to 0 to 1. The Fluid backdrop (Redesigned/Kit/SGRFluidGPU.m) turns these into its contrast, saturation and the
+// scaled by the frame's loudness (20 log10 of its power, over 120), held to 0 to 1 and scaled by 0.2, the intensity
+// its backdrop's analysis is made with. The Fluid backdrop (Redesigned/Kit/SGRFluidGPU.m) turns these into its contrast, saturation and the
 // copies' size, as the Music app does.
 //
 // Listening is off until someone wants it, and costs nothing then but a check per buffer. Nothing is heard while

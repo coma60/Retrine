@@ -240,14 +240,29 @@ static UIImage *glyphOf(UIView *item, BOOL active) {
 // An SF Symbol on a tab, its filled variant on the selected tab where the symbol has one: UIKit's own symbol image
 // with no size of its own, so the bar sizes and weighs it the way UIKit does every app's tab symbols, the Music app's
 // included. One object per name, so setGlyphs sees the same image again and leaves the item alone.
+// The Music app's Home tab: the system's private symbol home.fill (a rounded house with no chimney), which it takes
+// through +[UIImage _systemImageNamed:] for the tab in either state. Nil where the system has no such symbol.
+static NSString *const kMusicHomeSymbol = @"home.fill";
+
+static UIImage *privateSymbol(NSString *name) {
+    SEL named = NSSelectorFromString(@"_systemImageNamed:");
+    if (![UIImage respondsToSelector:named]) return nil;
+    return ((UIImage *(*)(Class, SEL, NSString *))objc_msgSend)(UIImage.class, named, name);
+}
+
+// The Music app's tab bar draws its symbols a weight heavier than this bar's own (its magnifying glass's ring 2 pt
+// across, this bar's 1.75 at the same 22 pt): medium.
 static UIImage *symbolGlyph(NSString *symbol, BOOL active) {
     static NSCache<NSString *, UIImage *> *cache;
     if (!cache) cache = [NSCache new];
     NSString *filled = [symbol stringByAppendingString:@".fill"];
-    NSString *name = active && [UIImage systemImageNamed:filled] ? filled : symbol;
+    BOOL home = [symbol isEqualToString:@"house"] && privateSymbol(kMusicHomeSymbol);
+    NSString *name = home ? kMusicHomeSymbol : active && [UIImage systemImageNamed:filled] ? filled : symbol;
     UIImage *image = [cache objectForKey:name];
     if (image) return image;
-    image = [[UIImage systemImageNamed:name] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    image = home ? privateSymbol(name) : [UIImage systemImageNamed:name];
+    image = [[image imageByApplyingSymbolConfiguration:[UIImageSymbolConfiguration configurationWithWeight:UIImageSymbolWeightMedium]]
+             imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     if (image) [cache setObject:image forKey:name];
     return image;
 }
@@ -308,6 +323,12 @@ static BOOL isSearch(UIView *item) {
     NSString *title = labelIn(item).text;
     NSString *uri = title ? SGRNavbarStockURIs()[title] : nil;
     return [uri isEqualToString:kSearchURI] || [uri isEqualToString:kFindURI];
+}
+
+// The title a tab of Spotify's shows on the bar: Search's is the Music app's word for it ("검색" where Spotify says
+// "검색하기"), every other its label's.
+static NSString *tabTitle(UIView *item) {
+    return isSearch(item) ? SGL(@"settings.tabbar.search_tab", @"Search") : labelIn(item).text;
 }
 
 // For the Tab bar page's list and preview: a tab of Spotify's drawn from its item on the bar, hidden or not,
@@ -666,7 +687,7 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
     bar.tintColor = SGRAccent();
     if (![sources isEqualToArray:bar.sources]) {
         NSMutableArray<UITabBarItem *> *items = [NSMutableArray array];
-        for (UIView *source in sources) [items addObject:[[UITabBarItem alloc] initWithTitle:hideLabels ? nil : labelIn(source).text image:nil tag:items.count]];
+        for (UIView *source in sources) [items addObject:[[UITabBarItem alloc] initWithTitle:hideLabels ? nil : tabTitle(source) image:nil tag:items.count]];
         bar.sources = sources;
         [bar setItems:items animated:NO];
         NSMutableString *out = [NSMutableString stringWithString:@"tab bar icons"];
@@ -722,7 +743,7 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
         item.accessibilityLabel = labelIn(sources[i]).text;
         item.largeContentSizeImage = item.image;
         item.accessibilityHint = sg_minimized && bar == objc_getAssociatedObject(bar.stockBar, &kBarKey) ? SGL(@"settings.tabbar.minimized.hint", @"Shows all tabs") : nil;
-        NSString *title = hideLabels ? nil : labelIn(sources[i]).text;
+        NSString *title = hideLabels ? nil : tabTitle(sources[i]);
         if (hideLabels ? item.title != nil : title.length && ![title isEqualToString:item.title]) item.title = title;
     }
     if (drew) {

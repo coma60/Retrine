@@ -3156,6 +3156,7 @@
 "settings.tabbar.labels.icons_and_names" = "Icons and names";
 "settings.tabbar.labels.icons_only" = "Icons only";
 "settings.tabbar.minimized.hint" = "Shows all tabs";
+"settings.tabbar.search_tab" = "Search";
 "settings.tabbar.placement.apart" = "Apart, on the right";
 "settings.tabbar.preset.albums" = "Albums";
 "settings.tabbar.preset.artists" = "Artists";

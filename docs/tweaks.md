@@ -2073,7 +2073,7 @@ Redesigned:
                   under Glass shortcuts (the
                   row after Home look, `spotifyglass.redesign.home.shortcutGlass`, read at launch; unset, it is what the
                   Home look is, so turning the look off before it existed still means plain shortcuts) each shortcut tile as
-                  a glass pill in its cover's color with its name in bold on up to two lines; in FLEX builds a meter
+                  a glass pill in its cover's color, 72% opaque so the page shows through, with its name in bold on up to two lines; in FLEX builds a meter
                   of each scroll's frames and the hooks' time (Home.h lists its files)
     Search/       the Browse page decluttered to its category cards (an allow list of the list's cells: the watch feed
                   carousels and promos collapse (each on a switch of the Search page, on until switched off, and back when it is off), and the cards move up by the spacing they leave, the list's end with them), the header the way Home
@@ -2728,7 +2728,8 @@ stands, the split tabs on a bar of their own, and changing with every change on 
 bar (off, the bar is Spotify's own tabs in Spotify's order, the list kept); two picture cards for the labels,
 Icons and names or Icons only (Icons and names the default, as the Music app's bar has; applying straight away); Apple symbols (on
 until switched off, applying straight away to the bar, the preview, the cards and the list: Spotify's tabs take SF
-Symbols, the tabs you added keep their icons); Fade under the bar (on until switched off, applying straight away, the preview showing the
+Symbols at the Music app's medium weight, Home the Music app's own private home.fill, the tabs you added keep their
+icons); Search's tab always titled Search (검색), as the Music app's is; Fade under the bar (on until switched off, applying straight away, the preview showing the
 fade over a page's rows); the tabs, each with a
 check circle that shows or hides it, its glyph (TabBar.x draws Spotify's own off their items on the bar, or with Apple symbols' symbol) and
 the drag handle, a tap on a tab of the mod's own opening the Add a Tab sheet as Edit Tab, with Save and Remove

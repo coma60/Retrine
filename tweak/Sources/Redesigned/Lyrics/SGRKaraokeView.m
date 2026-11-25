@@ -2667,8 +2667,10 @@ static NSInteger plainRestPosition(SPTPlayerState *state) {
     CGFloat height = self.bounds.size.height;
     if (height <= 0) return;
     CGFloat floor = height;
-    if (cornerControlShown(_sing)) floor = MIN(floor, CGRectGetMinY(_sing.frame) - 8);
-    if (cornerControlShown(_extrasBox)) floor = MIN(floor, CGRectGetMinY(_extrasBox.frame) - 8);
+    // In the player the Music app's lines run on behind its translate and Sing buttons, fading only at the bottom edge.
+    BOOL behind = _sizePlace == SGRLyricsPlacePlayer;
+    if (!behind && cornerControlShown(_sing)) floor = MIN(floor, CGRectGetMinY(_sing.frame) - 8);
+    if (!behind && cornerControlShown(_extrasBox)) floor = MIN(floor, CGRectGetMinY(_extrasBox.frame) - 8);
     CGFloat clear = MAX(0, MIN(1, (height - floor) / height));
     NSArray *locations = @[@0, @(kEdgeFade), @(MAX(kEdgeFade, 1 - clear - kEdgeFade)), @(1 - clear), @1];
     if ([_fade.locations isEqualToArray:locations]) return;

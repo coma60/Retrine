@@ -431,6 +431,11 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     // it lets go.
     BOOL _reordering;
     NSUInteger _reorderGeneration;
+    // The Music app's snapping between rest and History (NowPlayingQueueViewController, Music 24B156): where a drag
+    // started (its initialDraggingOffset), and its tick (feedbackGenerator, shouldPlayHapticFeedback).
+    CGFloat _dragStart;
+    UIImpactFeedbackGenerator *_feedback;
+    BOOL _hapticArmed;
     id _heldQueue;
 }
 
@@ -725,8 +730,62 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     self.scrolled(round(self.tableView.contentOffset.y - [self restOffset]));
 }
 
+// The list's offsets as the Music app's are, from the top of its content: History above, the rest R where the songs to
+// come begin (its upNextSectionMinY), and History opened as far as one screen of it (R less the list's height, or the
+// very top when History is shorter).
+- (CGFloat)leastOffset {
+    return -self.tableView.adjustedContentInset.top;
+}
+
+- (CGFloat)historyOpenOffset {
+    CGFloat least = [self leastOffset], rest = [self restOffset];
+    return least + MAX(0, (rest - least) - self.tableView.bounds.size.height);
+}
+
+// The Music app ticks once a pull has gone kSnapDistance from where it would settle back to (0x1002f7834).
+static const CGFloat kSnapDistance = 200;
+
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    if (!_musicStyle) return;
+    _dragStart = scrollView.contentOffset.y;
+    if (!_feedback) _feedback = [UIImpactFeedbackGenerator new];
+    [_feedback prepare];
+}
+
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     [self reportScroll];
+    if (!_musicStyle || !scrollView.tracking) return;
+    CGFloat rest = [self restOffset], y = scrollView.contentOffset.y;
+    CGFloat pull = _dragStart >= rest ? rest - y : y - [self historyOpenOffset];
+    if (pull < kSnapDistance) _hapticArmed = YES;
+    else if (_hapticArmed) {
+        [_feedback impactOccurred];
+        _hapticArmed = NO;
+    }
+}
+
+// Where a drag lets go, as the Music app decides it (scrollViewWillEndDragging, 0x1002f7b30): from rest, a flick
+// toward History opens it while the list is above rest; from History, a flick back that would reach rest closes it.
+// Without a flick, a pull of kSnapDistance switches, a shorter one goes back. A stop inside the room the playing song's
+// thumbnail and title stand in goes on past it (wantsPlayingItemHeader), and any target moved settles fast.
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)target {
+    if (!_musicStyle || !target) return;
+    CGFloat rest = [self restOffset], open = [self historyOpenOffset], y = scrollView.contentOffset.y;
+    CGFloat height = scrollView.bounds.size.height, start = _dragStart, v = velocity.y;
+    CGFloat proposed = target->y, t = proposed;
+    BOOL fromRest = start >= rest - 0.5, flicked = fabs(v) > 0.01;
+    if (fromRest && flicked && v < 0) {
+        if (y <= rest) t = open;
+    } else if (!fromRest && flicked && v > 0) {
+        if (t + height >= rest) t = rest;
+    } else if (y < rest - 0.5 && open < y - 0.5) {
+        if (fromRest) t = rest - t >= kSnapDistance ? open : rest;
+        else t = y - open >= kSnapDistance ? rest : open;
+    }
+    CGFloat head = self.headHeight;
+    if (head > 0 && t > rest + 0.5 && t < rest + head - 0.5) t = rest + head;
+    target->y = t;
+    scrollView.decelerationRate = fabs(t - proposed) > 0.5 ? UIScrollViewDecelerationRateFast : UIScrollViewDecelerationRateNormal;
 }
 
 - (void)setHeadHeight:(CGFloat)headHeight {

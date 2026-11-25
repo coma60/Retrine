@@ -48,7 +48,15 @@
 
 static const CGFloat kThumbSide = 72;          // the cover once the lyrics are up
 static const CGFloat kThumbGap = 16;           // between the thumbnail and the title beside it
-static const CGFloat kThumbTop = 8;            // below the top of the artwork band
+static const CGFloat kThumbTop = 8;            // below the top of the artwork band (no window to measure the grabber by)
+// The Music app's collapsed artwork (its NowPlayingControlsViewController layout, Music 24B156 0x1001ac06c, with the
+// LayoutSpecs of 0x1005eb9c8): the grabber is grabberTopSpacing (7, the safe area's top over 20) under the content's top
+// and grabberSize (60 x 4) tall, and the artwork stands artworkToGrabberSpacing (22) under it, collapsedArtworkWidth
+// (72) square, at the content's leading margin. PlayerHeader.x draws the grabber at the same 7 pt under the safe area.
+static const CGFloat kGrabberTopSpacing = 7, kGrabberHeight = 4, kArtworkToGrabberSpacing = 22;
+// Carried by the queue's list, the artwork and the title go up at most collapsedArtworkWidth and 32 (the table of 32 and
+// 38 by layout type the Music app clamps artworkTopOffset with, 0x1001be788), so they leave and stay gone.
+static const CGFloat kRideMostUp = 72 + 32;
 static const CGFloat kLyricsTop = 20;          // between the title row and the first line
 static const CGFloat kQueueTop = 16;           // between the thumbnail and the queue page's toggles (the Music app's)
 static const CGFloat kQueueRideFade = 40;      // the thumbnail and title fade over this much as the list carries them off
@@ -492,12 +500,18 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
     CGRect titleFrame = title ? untransformed(title, host) : CGRectInset(area, SGRSideMargin, 0);
     CGFloat leading = rtl ? CGRectGetMaxX(titleFrame) - kThumbSide : CGRectGetMinX(titleFrame);
     l.cover = cover;
-    l.thumb = CGRectMake(leading, contentTop + kThumbTop, kThumbSide, kThumbSide);
+    CGFloat thumbTop = contentTop + kThumbTop;
+    if (host.window)
+        thumbTop = CGRectGetMinY(SGRPlayerVisibleSafeArea(host)) + kGrabberTopSpacing + kGrabberHeight + kArtworkToGrabberSpacing;
+    l.thumb = CGRectMake(leading, thumbTop, kThumbSide, kThumbSide);
     // Beside the thumbnail when the title can be moved clear of it, under it when it cannot be found.
     CGFloat top = title ? CGRectGetMidY(l.thumb) - row.size.height / 2 : CGRectGetMaxY(l.thumb) + SGRGrid;
     l.lift = top - CGRectGetMinY(row);
     l.shift = title ? (rtl ? -1 : 1) * (kThumbSide + kThumbGap) : 0;
-    CGFloat lines = MAX(CGRectGetMaxY(l.thumb), top + row.size.height) + (sg_queuePage ? kQueueTop : kLyricsTop);
+    // The Music app's content (its lyrics, its queue) starts at the collapsed artwork's bottom: LayoutFrames'
+    // contentLayoutGuidePlaceholderView takes the artwork's maxY as its top (Music 24B156, 0x1001aff9c). The lines fade
+    // in under it on their own (SGRKaraokeView's edge fade); the queue's toggles stand kQueueTop under it.
+    CGFloat lines = MAX(CGRectGetMaxY(l.thumb), top + row.size.height) + (sg_queuePage ? kQueueTop : 0);
     if (sg_alone && keepsTitle()) {
         l.thumb.origin.y -= kAloneRise;
         top -= kAloneRise;
@@ -528,7 +542,7 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
 static CGFloat sg_pageShift;
 
 static CGFloat pageShift(void) {
-    return sg_open && sg_queuePage && !sg_wide ? sg_pageShift : 0;
+    return sg_open && sg_queuePage && !sg_wide ? MIN(sg_pageShift, kRideMostUp) : 0;
 }
 
 static void placeTitleRow(SGRLyricsLayout l) {

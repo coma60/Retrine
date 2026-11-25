@@ -34,6 +34,11 @@
 static const CGFloat kMargin = 32, kRowTighten = 2;
 static const CGFloat kDimAlpha = 0.3, kFillEdge = 22, kLift = 2.5, kDimScale = 0.97;
 static const CGFloat kAnchor = 0.28;   // where the sung line rests, as a share of the height
+// A tapped line flashes a plate behind it, the Music app's line highlight (LyricsX.LyricsSpecs as its lyrics view
+// makes them: highlightViewBackgroundColor white at 0.08, corners of 16, the plate 16 pt out from the line): it comes
+// up at once and fades as the line glides to the anchor.
+static const CGFloat kTapPlateAlpha = 0.08, kTapPlateRadius = 16, kTapPlateOut = 16, kTapPlateOutY = 8;
+static const NSTimeInterval kTapPlateHold = 0.12, kTapPlateFade = 0.45;
 static const CGFloat kEdgeFade = 0.1;  // the lines fade out over this share at the top and bottom
 // The Music app's, scaled by the Lyrics page's blur: no line next to what is sung is sharp. A line coming up is
 // blurred by one more than its distance and a line gone by by two more, up to kMaxBlur, the radius its lyrics view
@@ -2117,7 +2122,42 @@ static BOOL cornerControlShown(UIView *view) {
     }
     if (_plain) return;   // a line with no time has nowhere to seek to
     SGRKaraokeLineView *view = [self lineUnder:point];
-    if (view) [self seekToLine:view.line];
+    if (!view) return;
+    [self flashPlateBehind:view];
+    [self seekToLine:view.line];
+}
+
+// The plate is the line's own sublayer, under its words, so it rides the glide to the anchor with it.
+- (void)flashPlateBehind:(SGRKaraokeLineView *)view {
+    CALayer *plate = [CALayer layer];
+    plate.frame = CGRectInset(view.bounds, -kTapPlateOut, -kTapPlateOutY);
+    plate.cornerRadius = kTapPlateRadius;
+    plate.cornerCurve = kCACornerCurveContinuous;
+    plate.backgroundColor = [UIColor colorWithWhite:1 alpha:kTapPlateAlpha].CGColor;
+    plate.opacity = 0;
+    [view.layer insertSublayer:plate atIndex:0];
+    CAKeyframeAnimation *flash = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    NSTimeInterval total = kTapPlateHold + kTapPlateFade;
+    flash.values = @[@1, @1, @0];
+    flash.keyTimes = @[@0, @(kTapPlateHold / total), @1];
+    flash.duration = total;
+    flash.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear],
+                              [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut]];
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{ [plate removeFromSuperlayer]; }];
+    [plate addAnimation:flash forKey:@"flash"];
+    [CATransaction commit];
+}
+
+- (BOOL)touchIsOnLine:(UITouch *)touch {
+    if (_plain || _browsing || !_scroll) return NO;
+    CGPoint inSelf = [touch locationInView:self];
+    if (cornerControlShown(_extrasBox) && CGRectContainsPoint(_extrasBox.frame, inSelf)) return NO;
+    if (cornerControlShown(_sing) && [_sing pointInside:[touch locationInView:_sing] withEvent:nil]) return NO;
+    CGPoint point = [touch locationInView:_scroll];
+    CALayer *shown = _scroll.layer.presentationLayer;
+    if (shown) point.y += shown.bounds.origin.y - _scroll.bounds.origin.y;
+    return [self lineUnder:point] != nil;
 }
 
 // A tap on a line, or VoiceOver activating it.

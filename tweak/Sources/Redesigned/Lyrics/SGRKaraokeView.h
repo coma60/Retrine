@@ -30,6 +30,9 @@
 // Where the sung line rests, in points from the top; 0, the default, rests it at a share of the height. The
 // player's lines on their own under its title set it to rest the line where the Music app's does.
 @property (nonatomic) CGFloat anchorTop;
+// Whether a touch is on a line it would seek to when tapped (not a corner control, a bubble or the credit), for a
+// host that lets a tap on the lines stay theirs while its controls are hidden.
+- (BOOL)touchIsOnLine:(UITouch *)touch;
 // The place it shows in: its words take the size chosen for that place (LyricsLook.h), and follow a change of it at
 // once. SGRLyricsPlaceNone, the look's size, until set.
 @property (nonatomic) SGRLyricsPlace sizePlace;

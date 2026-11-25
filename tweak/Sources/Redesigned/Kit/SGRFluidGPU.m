@@ -43,6 +43,15 @@ static const float kHeldZoom = 1.25f;
 static const double kBreathPeriod = 3.5;
 static const CFTimeInterval kRunIn = 1.4;
 static const double kDrawFramesPerSecond = 60;
+// Held still (paused, or the settling done), the copies only turn, once in 70 to 120 s and breathe once in 22 s: a
+// thirtieth of a second moves them less than a fifth of a degree, so the picture is drawn half as often. Low Power Mode
+// and a hot phone (thermal state serious or worse) draw at that rate throughout.
+static const double kHeldFramesPerSecond = 30;
+// The blur works on a picture small enough that its Gaussian spans about this many texels: the Music app blurs 160 pt,
+// which leaves nothing finer than tens of points, so a picture of 16 pt texels holds all of it. Drawn a quarter of the
+// drawable as before, a 160 pt blur took 241 taps a texel each way, every frame; here it takes about 51.
+static const float kBlurTexels = 10;
+static const NSUInteger kLeastDivisor = 4, kMostDivisor = 16;
 enum { kLUTSide = 32, kMeshCells = 24 };
 static const struct { float side, x, y, turn, orbit; } kCopy[3] = {
     {1.4f, 0, 0, 120, 0},
@@ -350,6 +359,8 @@ static void whenReady(void (^ready)(void)) {
     linear.sAddressMode = MTLSamplerAddressModeClampToEdge;
     linear.tAddressMode = MTLSamplerAddressModeClampToEdge;
     linear.rAddressMode = MTLSamplerAddressModeClampToEdge;
+    // The cover is read from its mipmaps when the picture is far smaller than it, so the small picture does not shimmer.
+    linear.mipFilter = MTLSamplerMipFilterLinear;
     sLinear = [sDevice newSamplerStateWithDescriptor:linear];
     sTable = makeTable();
     if (!sTable) { finish(nil); return; }
@@ -376,12 +387,18 @@ static id<MTLTexture> textureOf(id picture) {
     if (!bitmap) return nil;
     CGContextDrawImage(bitmap, CGRectMake(0, 0, width, height), image);
     MTLTextureDescriptor *described = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                                                                         width:width height:height mipmapped:NO];
+                                                                                         width:width height:height mipmapped:YES];
     described.usage = MTLTextureUsageShaderRead;
     id<MTLTexture> texture = [sDevice newTextureWithDescriptor:described];
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
                  withBytes:CGBitmapContextGetData(bitmap) bytesPerRow:width * 4];
     CGContextRelease(bitmap);
+    // Its mipmaps, made on the queue every frame is drawn on, so they are there before the first frame reads them.
+    id<MTLCommandBuffer> buffer = [sQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [buffer blitCommandEncoder];
+    [blit generateMipmapsForTexture:texture];
+    [blit endEncoding];
+    [buffer commit];
     return texture;
 }
 
@@ -411,7 +428,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 @implementation SGRFluidGPULayer {
     id _fromPicture, _toPicture;   // CGImages of the cover
     id<MTLTexture> _from, _to;
-    id<MTLTexture> _copies, _across, _blurred;   // the quarter-size picture, its blur's first pass, and the blurred one
+    id<MTLTexture> _copies, _across, _blurred;   // the small picture, its blur's first pass, and the blurred one
     float _progress;
     CFTimeInterval _length, _last;
     double _time;
@@ -653,7 +670,9 @@ static float easeInOut(float x) {
         ticker.layer = self;
         _link = [CADisplayLink displayLinkWithTarget:ticker selector:@selector(tick:)];
         // 120 Hz stays allowed so the player's own transitions are not held to this; it draws at 60.
-        _link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
+        // 120 Hz stays allowed, preferred 60: the player's own transitions and scrolling still run at 120, while the
+        // backdrop alone no longer holds the whole screen at 120 Hz (it was asking for 120 and drawing 60).
+        _link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 60);
         _last = 0;
         [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     } else if (!wants && _link) {
@@ -671,13 +690,18 @@ static float easeInOut(float x) {
     // The display's 120 Hz cadence is accepted without drawing more than 60 times a second.
     // A frame is skipped only when it comes well inside one sixtieth of a second, so 60 Hz draws every frame and
     // 120 Hz every other one, evenly.
-    if (_last > 0 && now - _last < 0.75 / kDrawFramesPerSecond) return;
+    NSProcessInfo *process = NSProcessInfo.processInfo;
+    BOOL calm = (!_moving && _settle <= 0 && _progress >= 1) || process.lowPowerModeEnabled
+        || process.thermalState >= NSProcessInfoThermalStateSerious;
+    double rate = calm ? kHeldFramesPerSecond : kDrawFramesPerSecond;
+    if (_last > 0 && now - _last < 0.75 / rate) return;
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
     // One of its frames per frame drawn, as the Music app counts them: a late frame does not catch up.
     double clock = SGRReduceMotion() ? kFrameClockReduced : kFrameClock;
-    _time += clock * _rate;
-    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock / kSettleClock));
+    // Its clock still counts its own frames: a frame drawn at the held rate is two of them, so time runs as before.
+    _time += clock * _rate * (kDrawFramesPerSecond / rate);
+    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock * (kDrawFramesPerSecond / rate) / kSettleClock));
     [self hear];
     if (_progress < 1) {
         _progress = (float)MIN(1.0, _progress + step / MAX(0.05, _length));
@@ -697,7 +721,10 @@ static float easeInOut(float x) {
     if (_fromPicture && !_from) _from = textureOf(_fromPicture);
     if (!_to) return NO;
     CGSize drawable = self.drawableSize;
-    NSUInteger qw = MAX((NSUInteger)4, (NSUInteger)drawable.width / 4), qh = MAX((NSUInteger)4, (NSUInteger)drawable.height / 4);
+    // The picture's size: as small as keeps the blur about kBlurTexels across, never under a sixteenth of the drawable.
+    float sigmaDrawable = kBlurPoints * _blur * (float)self.contentsScale;
+    NSUInteger divisor = MIN(kMostDivisor, MAX(kLeastDivisor, (NSUInteger)floorf(sigmaDrawable / kBlurTexels)));
+    NSUInteger qw = MAX((NSUInteger)4, (NSUInteger)drawable.width / divisor), qh = MAX((NSUInteger)4, (NSUInteger)drawable.height / divisor);
     if (!_copies || _copies.width != qw || _copies.height != qh) {
         _copies = target(qw, qh);
         _across = target(qw, qh);
@@ -762,9 +789,10 @@ static float easeInOut(float x) {
     [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:drawn];
     [encoder endEncoding];
 
-    // The blur: kBlurPoints on screen, a quarter of that in the picture's texels (it is a quarter of the drawable).
-    float sigma = MAX(0.5f, kBlurPoints * _blur * (float)self.contentsScale / 4);
-    int radius = MIN(160, (int)ceilf(sigma * 3));
+    // The blur: kBlurPoints on screen, in the picture's texels (it is 1 / divisor of the drawable), out to 2.5 sigma
+    // (what is left past it weighs under 2% of the kernel).
+    float sigma = MAX(0.5f, sigmaDrawable / (float)(drawable.width / qw));
+    int radius = MIN(64, (int)ceilf(sigma * 2.5f));
     BlurUniforms blurs[2] = {
         {simd_make_float2(1.0f / qw, 0), sigma, radius},
         {simd_make_float2(0, 1.0f / qh), sigma, radius},

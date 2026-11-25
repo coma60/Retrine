@@ -6,6 +6,7 @@
 
 "settings.player.queue.autoplay" = "자동 재생";
 "settings.player.queue.autoplaying" = "비슷한 음악 자동 재생 중";
+"settings.player.queue.clear" = "지우기";
 "settings.player.queue.continue" = "계속 재생";
 "settings.player.queue.playing_next" = "다음 재생";
 "settings.player.queue.sleep" = "수면 타이머";

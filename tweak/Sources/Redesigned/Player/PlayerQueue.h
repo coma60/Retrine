@@ -21,3 +21,7 @@ UIViewController *SGRPlayerQueueList(void);
 // their grips. A pick skips ahead and the page stays.
 // Added as a child of the player's controller by its caller.
 UIViewController *SGRPlayerQueuePage(void);
+// The page's room over its toggles, where the caller puts the player's thumbnail and title, and what is told how far the
+// list has moved from where it rests (positive as it scrolls up) whenever it moves, so they ride with the list as the
+// Music app's do. Called again whenever the room changes; the list goes back to rest for a new room.
+void SGRPlayerQueuePageConfigure(UIViewController *page, CGFloat headHeight, void (^scrolled)(CGFloat shift));

@@ -227,75 +227,95 @@ UIView *SGRPlayerFooterGlyph(SGRGlyphButton *button, NSString *encoreName) {
 // The Music app marks the footer control that is on (its lyrics, its queue) with a disc behind the glyph and the glyph
 // cut out of it, so the backdrop shows through the glyph's shape (MediaCoreUI's _NowPlayingFooterActiveIndicatingView:
 // a Circle filled white at 0.8 behind the label, the label's foreground blended out of it in a compositing group; under
-// Increase Contrast a white disc with the label in black). The disc is an image of the redesign's own here, the glyph's
-// shape drawn out of a filled circle, and the glyph itself is drawn clear while it shows. Its white lands where the Music
+// Increase Contrast a white disc with the label in black). Here the button's own glyph is what cuts it: the disc is a
+// white view masked by a picture of that glyph view as it stands, at its place and size, so the hole has the glyph's very
+// shape, and the glyph itself is drawn clear over it, leaving the hole to show whatever is behind the button. Under
+// Increase Contrast nothing is cut: the glyph itself turns black on the disc. The disc's white lands where the Music
 // app's does: measured on its player 115 of 255 over the backdrop, the footer's rest ink (kFooterInkAdd), and 38 pt
 // across (its footer frame). It comes and goes with a fade, as the Music app animates it on the value.
 static const CGFloat kActiveDisc = 38;
 static char kDiscKey, kDiscDrawnKey;
 
-// The glyph's shape in opaque black, the size of the view that draws it, centered: the symbol's own image, or Spotify's
-// Encore glyph drawn once in black and given its color back.
-static void drawGlyphShape(UIView *drawn, CGRect into) {
-    if ([drawn isKindOfClass:SGRGlyphView.class]) {
-        UIImage *image = ((SGRGlyphView *)drawn).image;
-        if (!image) return;
-        CGSize size = image.size;
-        CGRect rect = CGRectMake(CGRectGetMidX(into) - size.width / 2, CGRectGetMidY(into) - size.height / 2, size.width, size.height);
-        [[image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal] drawInRect:rect];
-        return;
-    }
-    if (![drawn isKindOfClass:%c(SPTEncoreIconView)]) return;
-    SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
-    UIColor *color = encore.foregroundColor;
-    encore.foregroundColor = UIColor.blackColor;
-    [encore layoutIfNeeded];
+// `drawn` drawn opaque into the current context at its place in `disc`, its own color put back after.
+static void renderGlyph(UIView *drawn, UIView *disc) {
     CGContextRef context = UIGraphicsGetCurrentContext();
+    CGPoint origin = [disc convertPoint:drawn.bounds.origin fromView:drawn];
     CGContextSaveGState(context);
-    CGContextTranslateCTM(context, CGRectGetMidX(into) - CGRectGetMidX(encore.bounds), CGRectGetMidY(into) - CGRectGetMidY(encore.bounds));
-    [encore.layer renderInContext:context];
+    CGContextTranslateCTM(context, origin.x, origin.y);
+    if ([drawn isKindOfClass:SGRGlyphView.class]) {
+        // Its image as the image view lays it out (filled to its bounds, or at its size in the middle), in opaque black:
+        // the view's own drawing follows its tint, which is clear while the disc shows.
+        UIImageView *view = (UIImageView *)drawn;
+        UIImage *image = [view.image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        CGRect bounds = view.bounds, rect = bounds;
+        if (view.contentMode != UIViewContentModeScaleToFill) {
+            CGSize size = image.size;
+            rect = CGRectMake(CGRectGetMidX(bounds) - size.width / 2, CGRectGetMidY(bounds) - size.height / 2, size.width, size.height);
+        }
+        [image drawInRect:rect];
+    } else if ([drawn isKindOfClass:%c(SPTEncoreIconView)]) {
+        SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
+        UIColor *color = encore.foregroundColor;
+        encore.foregroundColor = UIColor.blackColor;
+        [encore layoutIfNeeded];
+        [encore.layer renderInContext:context];
+        encore.foregroundColor = color;
+    }
     CGContextRestoreGState(context);
-    encore.foregroundColor = color;
 }
 
-static UIImage *discImage(UIView *drawn, UIColor *fill, BOOL contrast) {
+// The disc's mask: opaque round, the glyph's shape taken out.
+static UIImage *discMask(UIView *drawn, UIView *disc) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:drawn.traitCollection];
-    CGRect disc = CGRectMake(0, 0, kActiveDisc, kActiveDisc);
-    return [[[UIGraphicsImageRenderer alloc] initWithSize:disc.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
-        [fill setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:disc] fill];
-        // Out of the disc, or in black on it under Increase Contrast.
-        if (!contrast) CGContextSetBlendMode(context.CGContext, kCGBlendModeDestinationOut);
-        drawGlyphShape(drawn, disc);
+    format.opaque = NO;
+    format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
+    CGRect round = disc.bounds;
+    return [[[UIGraphicsImageRenderer alloc] initWithSize:round.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        [UIColor.blackColor setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:round] fill];
+        CGContextSetBlendMode(context.CGContext, kCGBlendModeDestinationOut);
+        renderGlyph(drawn, disc);
     }];
 }
 
-// The disc behind `button`'s glyph while `on`, and the glyph drawn clear in it; gone again while off. Called on every
-// change of the glyph's state and of the backdrop's reading; a disc already drawn for the same glyph, color and
-// contrast is kept.
+// The disc behind `button`'s glyph while `on`; gone again while off. Called on every change of the glyph's state and of
+// the backdrop's reading; the mask is drawn again only when the glyph, its traits or the contrast changed.
 static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated) {
     if (!button || !drawn) return;
-    UIImageView *disc = objc_getAssociatedObject(button, &kDiscKey);
+    UIView *disc = objc_getAssociatedObject(button, &kDiscKey);
     if (!disc && !on) return;
     if (!disc) {
-        disc = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, kActiveDisc, kActiveDisc)];
+        disc = [[UIView alloc] initWithFrame:CGRectMake(0, 0, kActiveDisc, kActiveDisc)];
         disc.userInteractionEnabled = NO;
         disc.isAccessibilityElement = NO;
         disc.alpha = 0;
+        disc.layer.mask = [CALayer layer];
         objc_setAssociatedObject(button, &kDiscKey, disc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (disc.superview != button) [button insertSubview:disc atIndex:0];
     else if (button.subviews.firstObject != disc) [button sendSubviewToBack:disc];
-    CGPoint middle = [button convertPoint:CGPointMake(CGRectGetMidX(drawn.bounds), CGRectGetMidY(drawn.bounds)) fromView:drawn];
-    // The glyph's sink on a press is not the disc's: it is placed by the glyph's untransformed middle.
-    if (CGAffineTransformIsIdentity(drawn.transform) && !CGPointEqualToPoint(disc.center, middle)) disc.center = middle;
+    // Placed by the glyph's middle while it stands still (a press sinks the glyph, not the disc).
+    if (CGAffineTransformIsIdentity(drawn.transform)) {
+        CGPoint middle = [button convertPoint:CGPointMake(CGRectGetMidX(drawn.bounds), CGRectGetMidY(drawn.bounds)) fromView:drawn];
+        if (!CGPointEqualToPoint(disc.center, middle)) disc.center = middle;
+    }
     if (on) {
         BOOL contrast = SGRIncreaseContrast();
-        UIColor *fill = contrast ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(button, kFooterInkAdd, kFooterInkAdd)];
+        disc.backgroundColor = contrast ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(button, kFooterInkAdd, kFooterInkAdd)];
         NSString *symbol = [drawn isKindOfClass:SGRGlyphView.class] ? ((SGRGlyphView *)drawn).symbol : NSStringFromClass(drawn.class);
-        NSArray *key = @[symbol ?: @"", fill, @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight)];
-        if (![objc_getAssociatedObject(disc, &kDiscDrawnKey) isEqual:key] || !disc.image) {
-            disc.image = discImage(drawn, fill, contrast);
+        NSArray *key = @[symbol ?: @"", @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight),
+                         NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];
+        CALayer *mask = disc.layer.mask;
+        if (CGAffineTransformIsIdentity(drawn.transform) && (![objc_getAssociatedObject(disc, &kDiscDrawnKey) isEqual:key] || !mask.contents)) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            mask.frame = disc.bounds;
+            mask.contentsScale = drawn.traitCollection.displayScale ?: UIScreen.mainScreen.scale;
+            // Under Increase Contrast the disc is whole and the glyph itself is black on it.
+            mask.contents = contrast ? nil : (id)discMask(drawn, disc).CGImage;
+            mask.backgroundColor = contrast ? UIColor.blackColor.CGColor : nil;
+            mask.cornerRadius = contrast ? kActiveDisc / 2 : 0;
+            [CATransaction commit];
             objc_setAssociatedObject(disc, &kDiscDrawnKey, key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
@@ -305,10 +325,11 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
     else disc.alpha = alpha;
 }
 
-// The glyph's color: clear while its disc shows (the disc draws it), the rest ink otherwise. Changed with a crossfade
+// The glyph's color: clear while its disc shows (its hole in the disc is the glyph), black on the disc under Increase
+// Contrast, the rest ink otherwise. Changed with a crossfade
 // when animated, as the disc fades.
 static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated) {
-    UIColor *tint = on ? UIColor.clearColor : footerRest(button);
+    UIColor *tint = on ? (SGRIncreaseContrast() ? UIColor.blackColor : UIColor.clearColor) : footerRest(button);
     if ([button.glyph.tintColor isEqual:tint]) return;
     void (^paint)(void) = ^{
         button.glyph.tintColor = tint;

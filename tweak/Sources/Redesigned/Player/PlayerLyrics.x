@@ -51,6 +51,7 @@ static const CGFloat kThumbGap = 16;           // between the thumbnail and the 
 static const CGFloat kThumbTop = 8;            // below the top of the artwork band
 static const CGFloat kLyricsTop = 20;          // between the title row and the first line
 static const CGFloat kQueueTop = 16;           // between the thumbnail and the queue page's toggles (the Music app's)
+static const CGFloat kQueueRideFade = 40;      // the thumbnail and title fade over this much as the list carries them off
 static const CGFloat kLyricsBottom = 8;        // above the progress bar
 // The lines are a surface arriving, not something moving: they come up from just under full size as the
 // room for them opens, and go at once when it closes. An exit the eye waits through reads as a stall.
@@ -382,6 +383,15 @@ static BOOL keepsTitle(void) {
 // directly, the row answers for where it is drawn. Not while the lines are alone, unless the title is kept: the
 // row is faded then, and a tap where its add button was is the player's, which brings everything back.
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // The queue page's list reaches up behind the title row it carries: the row's buttons (add, ⋯) keep their taps, and
+    // anywhere else there scrolls the list.
+    UIView *carried = sg_open && sg_queuePage ? sg_info.viewIfLoaded : nil;
+    if (carried && carried.alpha > 0.01) {
+        UIView *inRow = [carried hitTest:[carried convertPoint:point fromView:self] withEvent:event];
+        for (UIView *v = inRow; v && v != carried; v = v.superview) {
+            if ([v isKindOfClass:UIControl.class]) return inRow;
+        }
+    }
     UIView *hit = [super hitTest:point withEvent:event];
     if (hit != self) return hit;
     UIView *row = sg_open && (!sg_alone || keepsTitle()) ? sg_info.viewIfLoaded : nil;
@@ -433,6 +443,7 @@ typedef struct {
     CGRect stage;     // where the lines go
     CGFloat lift;     // how far the title row rises
     CGFloat shift;    // how far the title slides right to clear the thumbnail, 0 when it sits under it
+    CGFloat head;     // the queue page: the room from the stage's top down to its toggles, the thumbnail and title in it
 } SGRLyricsLayout;
 
 // What a view's frame would be with the translation this file put on it left out.
@@ -497,8 +508,15 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
     // The artwork band belongs to a paging cell: on a skip its x can still be between pages.
     // Only its vertical room belongs to the lyrics. The lyric viewport and its controls belong
     // to the stationary player, not the outgoing or incoming cover.
-    l.stage = CGRectMake(CGRectGetMinX(host.bounds), lines, host.bounds.size.width, CGRectGetMinY(bar) - kLyricsBottom - lines);
-    l.ok = l.stage.size.height > kLivingHeight / 2 && l.lift < 0;
+    // The queue page starts at the thumbnail's top: the thumbnail and the title stand in the room over its toggles and
+    // ride with its list (the Music app's playing header is the first item of its queue).
+    CGFloat stageTop = lines;
+    if (sg_queuePage) {
+        stageTop = CGRectGetMinY(l.thumb);
+        l.head = lines - stageTop;
+    }
+    l.stage = CGRectMake(CGRectGetMinX(host.bounds), stageTop, host.bounds.size.width, CGRectGetMinY(bar) - kLyricsBottom - stageTop);
+    l.ok = l.stage.size.height - l.head > kLivingHeight / 2 && l.lift < 0;
     return l;
 }
 
@@ -506,11 +524,18 @@ static SGRLyricsLayout layoutIn(UIView *host, BOOL wide) {
 
 // The unit's row lays its arranged views out after the unit's own pass, so the transforms go on after it. The title
 // moved beside the thumbnail would run into the controls it moved toward, so PlayerTitle.x narrows it by as much.
+// How far the queue page's list has moved from rest (positive up): the thumbnail and the title row ride with it.
+static CGFloat sg_pageShift;
+
+static CGFloat pageShift(void) {
+    return sg_open && sg_queuePage && !sg_wide ? sg_pageShift : 0;
+}
+
 static void placeTitleRow(SGRLyricsLayout l) {
     UIView *info = sg_info.viewIfLoaded;
     if (!info) return;
     [SGRowIn(info) layoutIfNeeded];
-    CGFloat lift = sg_open ? l.lift : 0, shift = sg_open ? l.shift : 0;
+    CGFloat lift = sg_open ? l.lift - pageShift() : 0, shift = sg_open ? l.shift : 0;
     SGRShownTitleSlide(sg_titleElement ? fabs(round(shift)) : 0);
     CGAffineTransform rise = CGAffineTransformMakeTranslation(0, round(lift));
     if (!CGAffineTransformEqualToTransform(info.transform, rise)) info.transform = rise;
@@ -563,6 +588,20 @@ static CGAffineTransform thumbTransform(SGRLyricsLayout l) {
     CGAffineTransform move = CGAffineTransformMakeTranslation(round(CGRectGetMidX(l.thumb) - CGRectGetMidX(l.cover)),
                                                              round(CGRectGetMidY(l.thumb) - CGRectGetMidY(l.cover)));
     return CGAffineTransformConcat(CGAffineTransformMakeScale(scale, scale), move);
+}
+
+// The thumbnail where it stands while the page is up: moved with the queue page's list.
+static CGAffineTransform pageThumbTransform(SGRLyricsLayout l) {
+    return CGAffineTransformConcat(thumbTransform(l), CGAffineTransformMakeTranslation(0, -pageShift()));
+}
+
+// The thumbnail and the title row fade as the list carries them out of the page: up past its top, or down toward the
+// progress bar, where the Music app's list fades them under its edges.
+static CGFloat pageRideAlpha(SGRLyricsLayout l) {
+    CGFloat shift = pageShift();
+    if (shift > 0) return MAX(0, MIN(1, 1 - shift / MAX(1, l.head * 0.75)));
+    CGFloat room = l.stage.size.height - l.head - kQueueRideFade;
+    return MAX(0, MIN(1, 1 - (-shift - room) / kQueueRideFade));
 }
 
 // The corners as they will be drawn: a radius under a scale is drawn scaled, so the thumbnail asks for
@@ -985,19 +1024,56 @@ static void fillStage(SGRPlayerLyricsOverlay *overlay, BOOL queue, BOOL animated
     }
 }
 
+// The layout the queue page was last placed with, for moving the thumbnail and the title row as its list scrolls.
+static SGRLyricsLayout sg_pageLayout;
+
+static void ridePage(void) {
+    SGRPlayerLyricsOverlay *overlay = objc_getAssociatedObject(sg_host, &kOverlayKey);
+    SGRLyricsLayout l = sg_pageLayout;
+    if (!overlay.superview || sg_moving || !l.ok || !sg_open || !sg_queuePage) return;
+    overlay.thumb.transform = pageThumbTransform(l);
+    placeTitleRow(l);
+    CGFloat alpha = pageRideAlpha(l);
+    if (overlay.thumb.alpha != alpha) overlay.thumb.alpha = alpha;
+    UIView *info = sg_info.viewIfLoaded;
+    if (info && info.alpha != alpha) info.alpha = alpha;
+}
+
+// The queue page told the room over its toggles, and given the way to move the thumbnail and title with its list.
+static void configurePage(SGRPlayerLyricsOverlay *overlay, SGRLyricsLayout l) {
+    sg_pageLayout = l;
+    SGRPlayerQueuePageConfigure(queuePageOf(overlay), l.head, ^(CGFloat shift) {
+        if (fabs(shift - sg_pageShift) < 0.5) return;
+        sg_pageShift = shift;
+        ridePage();
+    });
+}
+
+// Back to rest, the thumbnail and the title row seen whole.
+static void stopRiding(void) {
+    sg_pageShift = 0;
+    SGRPlayerLyricsOverlay *overlay = objc_getAssociatedObject(sg_host, &kOverlayKey);
+    if (overlay.thumb.alpha < 1 && !sg_alone) overlay.thumb.alpha = 1;
+    UIView *info = sg_info.viewIfLoaded;
+    if (info && info.alpha < 1 && !sg_alone) info.alpha = 1;
+}
+
 // The open page turns from the lines to the queue or back, the thumbnail and the title row staying where they are.
 static void switchPage(BOOL queue) {
     SGRPlayerLyricsOverlay *overlay = objc_getAssociatedObject(sg_host, &kOverlayKey);
     if (!sg_open || sg_wide || sg_queuePage == queue || !overlay.superview) return;
     setAlone(NO, NO);
+    stopRiding();
     sg_queuePage = queue;
-    // The queue's stage starts a little higher under the thumbnail than the lines' (kQueueTop).
+    // The queue's stage starts at the thumbnail's top, the lines' under the title row.
     SGRLyricsLayout l = layoutIn(sg_host, NO);
     if (l.ok) {
         place(overlay, sg_host, l);
         overlay.thumb.transform = thumbTransform(l);
+        placeTitleRow(l);
     }
     fillStage(overlay, queue, YES);
+    if (queue && l.ok) configurePage(overlay, l);
     if (queue) {
         [sg_rest invalidate];
         sg_rest = nil;
@@ -1030,6 +1106,9 @@ static void setOpen(BOOL open, BOOL animated) {
     }
     NSUInteger generation = ++sg_openGeneration;
     if (!open) setAlone(NO, NO);
+    // Closing from a scrolled queue page, the thumbnail flies home from where the list carried it.
+    CGFloat riding = pageShift();
+    stopRiding();
     sg_open = open;
     SGRPlayerLyricsChanged();
 
@@ -1040,7 +1119,8 @@ static void setOpen(BOOL open, BOOL animated) {
     // to or from an empty slot.
     BOOL fades = SGRPlayerMotionShowing();
     // The state it starts from, so the animation has both ends of every value and nothing jumps into it.
-    overlay.thumb.transform = open && !fades ? CGAffineTransformIdentity : away;
+    overlay.thumb.transform = open && !fades ? CGAffineTransformIdentity
+                            : CGAffineTransformConcat(away, CGAffineTransformMakeTranslation(0, open ? 0 : -riding));
     overlay.thumb.alpha = open && fades ? 0 : 1;
     overlay.cover.layer.cornerRadius = thumbRadius(l, fades || !open);
     // Under Reduce Motion the lines only fade, without growing.
@@ -1050,6 +1130,7 @@ static void setOpen(BOOL open, BOOL animated) {
         overlay.stage.alpha = 0;
         overlay.stage.transform = entering;
         fillStage(overlay, sg_queuePage, NO);
+        if (sg_queuePage) configurePage(overlay, l);
         // Spotify's cover goes the moment the redesign's own takes its place: the same picture at the
         // same size with the same corners, so there is nothing to see in the swap. Coming back it waits
         // for the thumbnail to land on it, or the two would be on screen at once, one of them half size.
@@ -1386,12 +1467,17 @@ static void replace(void) {
         fadeControls(YES);
     }
     place(overlay, host, l);
-    overlay.thumb.transform = thumbTransform(l);
+    overlay.thumb.transform = pageThumbTransform(l);
     overlay.cover.layer.cornerRadius = thumbRadius(l, YES);
     // The lines' getter would put them back in the stage: with the queue up, only the queue is laid out.
     if (sg_queuePage) {
         UIView *page = queuePageOf(overlay).view;
         if (page.superview == overlay.stage) page.frame = overlay.stage.bounds;
+        if (!sg_moving) {
+            if (fabs(sg_pageLayout.head - l.head) >= 0.5 || !sg_pageLayout.ok) configurePage(overlay, l);
+            sg_pageLayout = l;
+            ridePage();
+        }
     } else {
         anchorLines(overlay, l);
         overlay.lyrics.frame = overlay.stage.bounds;

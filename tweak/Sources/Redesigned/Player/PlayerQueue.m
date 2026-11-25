@@ -32,7 +32,11 @@ static const CGFloat kCoverSide = 44;
 // room above and below each row (56 pt a row on its player, 2026-11-25).
 static const CGFloat kMusicCoverSide = 48, kMusicCoverRadius = 4, kMusicCoverGap = 13, kMusicRowPad = 4;
 // Its headings: the room over a heading, between the heading and the line under it, and under them before the rows.
-static const CGFloat kMusicHeadTop = 14, kMusicHeadGap = 2, kMusicHeadBottom = 14;
+// Measured on its player (402 pt wide, the default text size): the heading's capitals 20 pt under the toggles, the
+// first cover 70 pt under them with a line under the heading, so a heading with its line stands 66 pt.
+static const CGFloat kMusicHeadTop = 14, kMusicHeadGap = 0, kMusicHeadBottom = 10;
+// Its toggles' height, measured on its player.
+static const CGFloat kMusicControlsHeight = 37;
 
 SGRPlayerQueueStyleKind SGRPlayerQueueStyle(void) {
     return SGInt(SGRKeyPlayerQueueStyle, SGRPlayerQueueStyleSpotify) == SGRPlayerQueueStyleMusic ? SGRPlayerQueueStyleMusic : SGRPlayerQueueStyleSpotify;
@@ -61,6 +65,11 @@ static SGRQueueSource sourceOf(SPTPlayerTrack *track) {
 @property (nonatomic) BOOL upcoming;
 // The sheet's Up Next, with its heading and the blend under it (SGRQueueUpNextHeader).
 @property (nonatomic) BOOL upNext;
+// The Music app's page: the room the player's thumbnail and title stand in and the toggles under them, as a section of
+// no rows, so they ride with the list.
+@property (nonatomic) BOOL controls;
+// History, whose heading has Clear.
+@property (nonatomic) BOOL history;
 @end
 @implementation SGRQueueGroup
 @end
@@ -124,12 +133,32 @@ static NSArray *trackIdentity(SPTPlayerTrack *track) {
     return @[uri, uid, track.provider ?: @""];
 }
 
+// The songs History leaves out, by URI and uid: the songs a pick from the list skipped over (the Music app plays the
+// picked song next and drops the ones before it, where Spotify keeps them as played), and what Clear took away. Kept for
+// as long as Spotify runs.
+static NSMutableSet<NSString *> *sg_hiddenHistory;
+
+static NSString *historyKey(SPTPlayerTrack *track) {
+    NSString *uri = SGURIString(track.URI), *uid = queueValue(track, @"UID");
+    if (!uri.length) return nil;
+    return [NSString stringWithFormat:@"%@\t%@", uri, [uid isKindOfClass:NSString.class] ? uid : @""];
+}
+
+static void hideFromHistory(NSArray<SPTPlayerTrack *> *tracks) {
+    if (!sg_hiddenHistory) sg_hiddenHistory = [NSMutableSet set];
+    for (SPTPlayerTrack *track in tracks) {
+        NSString *key = historyKey(track);
+        if (key) [sg_hiddenHistory addObject:key];
+    }
+}
+
 static NSArray<SPTPlayerTrack *> *queueTracks(NSArray *tracks, NSUInteger limit, BOOL history) {
     NSMutableArray *songs = [NSMutableArray new];
     if (![tracks isKindOfClass:NSArray.class]) return songs;
     for (SPTPlayerTrack *track in tracks) {
         if (![track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")] || !track.trackTitle.length ||
             !SGURIString(track.URI) || (history && ![SGURIString(track.URI) hasPrefix:@"spotify:track:"])) continue;
+        if (history && sg_hiddenHistory.count && [sg_hiddenHistory containsObject:historyKey(track) ?: @""]) continue;
         [songs addObject:track];
         if (songs.count == limit) break;
     }
@@ -250,6 +279,10 @@ static NSString *blendInto(SPTPlayerTrack *next) {
 @interface SGRQueueMusicHeader : UITableViewHeaderFooterView
 @property (nonatomic, readonly) UILabel *title, *subtitle;
 @property (nonatomic, readonly) SGRQueueBlendView *blend;
+// History's Clear, at the heading's trailing end; hidden on the other headings.
+@property (nonatomic, readonly) UIButton *action;
+@property (nonatomic, copy) void (^onAction)(void);
+- (void)setActionTitle:(NSString *)title;
 - (CGFloat)heightForWidth:(CGFloat)width;
 @end
 
@@ -264,9 +297,31 @@ static NSString *blendInto(SPTPlayerTrack *next) {
     _subtitle.textColor = SGRSecondary();
     _blend = [SGRQueueBlendView new];
     _blend.layoutMargins = UIEdgeInsetsMake(0, SGRPlayerSideMargin, 0, SGRPlayerSideMargin);
-    for (UIView *view in @[_title, _subtitle, _blend]) [self.contentView addSubview:view];
+    UIButtonConfiguration *clear = [UIButtonConfiguration grayButtonConfiguration];
+    clear.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    clear.baseForegroundColor = SGRPrimary();
+    clear.baseBackgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+    clear.contentInsets = NSDirectionalEdgeInsetsMake(6, 14, 6, 14);
+    _action = [UIButton buttonWithConfiguration:clear primaryAction:nil];
+    _action.hidden = YES;
+    [_action addTarget:self action:@selector(acted) forControlEvents:UIControlEventTouchUpInside];
+    for (UIView *view in @[_title, _subtitle, _blend, _action]) [self.contentView addSubview:view];
     [self takeFonts];
     return self;
+}
+
+- (void)acted {
+    if (self.onAction) self.onAction();
+}
+
+- (void)setActionTitle:(NSString *)title {
+    _action.hidden = !title.length;
+    if (!title.length) return;
+    UIButtonConfiguration *config = _action.configuration;
+    UIFont *font = SGCategoryCappedFont(UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryAccessibilityMedium);
+    config.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:@{NSFontAttributeName: font}];
+    _action.configuration = config;
+    [self setNeedsLayout];
 }
 
 - (void)takeFonts {
@@ -290,7 +345,17 @@ static NSString *blendInto(SPTPlayerTrack *next) {
     [super layoutSubviews];
     CGFloat width = self.bounds.size.width, inner = MAX(0, width - 2 * SGRPlayerSideMargin);
     CGFloat y = kMusicHeadTop;
-    _title.frame = CGRectMake(SGRPlayerSideMargin, y, inner, ceil(_title.font.lineHeight));
+    BOOL rtlAction = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+    CGFloat actionWidth = 0;
+    if (!_action.hidden) {
+        CGSize size = [_action sizeThatFits:CGSizeMake(inner / 2, CGFLOAT_MAX)];
+        actionWidth = ceil(size.width);
+        CGFloat middle = y + ceil(_title.font.lineHeight) / 2;
+        _action.frame = CGRectMake(rtlAction ? SGRPlayerSideMargin : width - SGRPlayerSideMargin - actionWidth,
+                                   round(middle - size.height / 2), actionWidth, ceil(size.height));
+        actionWidth += SGRGrid;
+    }
+    _title.frame = CGRectMake(SGRPlayerSideMargin + (rtlAction ? actionWidth : 0), y, MAX(0, inner - actionWidth), ceil(_title.font.lineHeight));
     y = CGRectGetMaxY(_title.frame);
     _subtitle.hidden = !_subtitle.text.length;
     if (!_subtitle.hidden) {
@@ -329,6 +394,15 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 // Drawn the Music app's way, for its page in the player (SGRPlayerQueuePage).
 @property (nonatomic, readonly) BOOL musicStyle;
 - (instancetype)initMusicStyle;
+// The Music app's page: the room over the toggles where the player's thumbnail and title stand (PlayerLyrics.x), the
+// toggles, and what is told how far the list has moved from where it rests (positive as it scrolls up), so the thumbnail
+// and the title ride with it.
+@property (nonatomic) CGFloat headHeight;
+@property (nonatomic, strong) UIView *controls;
+@property (nonatomic, copy) void (^scrolled)(CGFloat shift);
+// Back to rest at once, unless a finger is on the list.
+- (void)goToRest;
+- (void)placeAtUpcoming;
 @end
 
 @implementation SGRPlayerQueueController {
@@ -400,6 +474,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
         table.tableHeaderView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, CGFLOAT_MIN)];
         table.rowHeight = kMusicCoverSide + 2 * kMusicRowPad;
         [table registerClass:SGRQueueMusicHeader.class forHeaderFooterViewReuseIdentifier:@"heading"];
+        [table registerClass:UITableViewHeaderFooterView.class forHeaderFooterViewReuseIdentifier:@"controls"];
         // The Music app's grips on the songs to come: the table stays in editing mode, rows still picked with a tap.
         table.allowsSelectionDuringEditing = YES;
         table.editing = YES;
@@ -559,7 +634,14 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 // playing has none, being the player's own title over the list.
 - (NSArray<SGRQueueGroup *> *)musicGroups {
     NSMutableArray<SGRQueueGroup *> *groups = [NSMutableArray array];
-    if (_history.count) [groups addObject:groupOf(SGL(@"settings.player.queue.history", @"History"), nil, _history, NO)];
+    if (_history.count) {
+        SGRQueueGroup *history = groupOf(SGL(@"settings.player.queue.history", @"History"), nil, _history, NO);
+        history.history = YES;
+        [groups addObject:history];
+    }
+    SGRQueueGroup *controls = groupOf(nil, nil, @[], NO);
+    controls.controls = YES;
+    [groups addObject:controls];
     BOOL context = NO;
     NSMutableArray<SPTPlayerTrack *> *run = nil;
     SGRQueueSource runSource = SGRQueueSourceContext;
@@ -595,19 +677,64 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     return NSNotFound;
 }
 
-// The Music app's list opens with the songs to come at its top and History above, out of sight.
+- (NSUInteger)controlsSection {
+    for (NSUInteger i = 0; i < _groups.count; i++) if (_groups[i].controls) return i;
+    return NSNotFound;
+}
+
+// Where the list rests: the player's thumbnail and title over the toggles at its top, History above, out of sight.
+- (CGFloat)restOffset {
+    UITableView *table = self.tableView;
+    NSUInteger controls = [self controlsSection];
+    if (controls == NSNotFound) return -table.adjustedContentInset.top;
+    return CGRectGetMinY([table rectForSection:(NSInteger)controls]) - table.adjustedContentInset.top;
+}
+
+// The Music app's list opens at rest, and goes back to it for each new song while nobody is scrolling it. The rows
+// under the toggles always reach the bottom of the list, so the rest can be scrolled to however few songs are left.
 - (void)placeAtUpcoming {
     if (!_musicStyle || !self.isViewLoaded) return;
     UITableView *table = self.tableView;
-    NSString *track = SGURIString(_current.URI) ?: @"";
-    if ([_placedFor isEqualToString:track] || table.tracking || table.dragging || table.decelerating) return;
-    NSUInteger first = [self firstUpcomingSection];
-    if (first == NSNotFound || table.bounds.size.height < 1) return;
-    _placedFor = track;
+    if (table.bounds.size.height < 1) return;
     [table layoutIfNeeded];
-    CGFloat top = CGRectGetMinY([table rectForSection:(NSInteger)first]) - table.adjustedContentInset.top;
-    CGFloat most = MAX(-table.adjustedContentInset.top, table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.size.height);
-    table.contentOffset = CGPointMake(0, MIN(MAX(-table.adjustedContentInset.top, top), most));
+    NSUInteger controls = [self controlsSection];
+    CGFloat below = controls == NSNotFound ? 0 : table.contentSize.height - CGRectGetMinY([table rectForSection:(NSInteger)controls]);
+    CGFloat room = MAX(0, table.bounds.size.height - table.adjustedContentInset.top - below);
+    if (fabs(table.contentInset.bottom - room) > 0.5) {
+        UIEdgeInsets inset = table.contentInset;
+        inset.bottom = room;
+        table.contentInset = inset;
+    }
+    NSString *track = [NSString stringWithFormat:@"%@\t%.1f", SGURIString(_current.URI) ?: @"", self.headHeight];
+    if ([_placedFor isEqualToString:track] || table.tracking || table.dragging || table.decelerating) {
+        [self reportScroll];
+        return;
+    }
+    _placedFor = track;
+    table.contentOffset = CGPointMake(0, [self restOffset]);
+    [self reportScroll];
+}
+
+- (void)goToRest {
+    _placedFor = nil;
+    [self placeAtUpcoming];
+}
+
+- (void)reportScroll {
+    if (!_musicStyle || !self.scrolled || !self.isViewLoaded) return;
+    self.scrolled(round(self.tableView.contentOffset.y - [self restOffset]));
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    [self reportScroll];
+}
+
+- (void)setHeadHeight:(CGFloat)headHeight {
+    if (fabs(headHeight - _headHeight) < 0.5) return;
+    _headHeight = headHeight;
+    if (!self.isViewLoaded) return;
+    [self.tableView reloadData];
+    [self placeAtUpcoming];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -733,11 +860,23 @@ static UIImage *coverPlaceholder(void) {
     [header.blend setText:(NSUInteger)section == [self firstUpcomingSection] ? _blendText : nil];
     header.isAccessibilityElement = NO;
     header.title.accessibilityTraits = UIAccessibilityTraitHeader;
+    [header setActionTitle:group.history && group.tracks.count ? SGL(@"settings.player.queue.clear", @"Clear") : nil];
+    __weak typeof(self) weakSelf = self;
+    header.onAction = group.history ? ^{ [weakSelf clearHistory]; } : nil;
     [header setNeedsLayout];
 }
 
 - (UIView *)tableView:(UITableView *)table viewForHeaderInSection:(NSInteger)section {
     SGRQueueGroup *group = [self groupAt:section];
+    if (_musicStyle && group.controls) {
+        UITableViewHeaderFooterView *head = [table dequeueReusableHeaderFooterViewWithIdentifier:@"controls"];
+        head.backgroundConfiguration = [UIBackgroundConfiguration clearConfiguration];
+        UIView *controls = self.controls;
+        if (controls && controls.superview != head.contentView) [head.contentView addSubview:controls];
+        CGFloat width = table.bounds.size.width;
+        controls.frame = CGRectMake(SGRPlayerSideMargin, self.headHeight, MAX(0, width - 2 * SGRPlayerSideMargin), kMusicControlsHeight);
+        return head;
+    }
     if (_musicStyle) {
         if (!group.tracks.count) return nil;
         SGRQueueMusicHeader *header = [table dequeueReusableHeaderFooterViewWithIdentifier:@"heading"];
@@ -749,6 +888,7 @@ static UIImage *coverPlaceholder(void) {
 
 - (CGFloat)tableView:(UITableView *)table heightForHeaderInSection:(NSInteger)section {
     SGRQueueGroup *group = [self groupAt:section];
+    if (_musicStyle && group.controls) return self.headHeight + kMusicControlsHeight;
     if (_musicStyle) {
         if (!group.tracks.count) return CGFLOAT_MIN;
         static SGRQueueMusicHeader *measure;
@@ -797,6 +937,8 @@ static UIImage *coverPlaceholder(void) {
         content.imageProperties.maximumSize = CGSizeMake(kMusicCoverSide, kMusicCoverSide);
         content.imageProperties.cornerRadius = kMusicCoverRadius;
         content.imageToTextPadding = kMusicCoverGap;
+        // The Music app's titles stand 2 pt apart (its cell's stack spacing, scaled with the text size).
+        content.textToSecondaryTextVerticalPadding = [UIFontMetrics.defaultMetrics scaledValueForValue:2 compatibleWithTraitCollection:cell.traitCollection];
         content.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(kMusicRowPad, SGRPlayerSideMargin, kMusicRowPad, SGRPlayerSideMargin);
         cell.showsReorderControl = YES;
     }
@@ -937,11 +1079,57 @@ static UIImage *coverPlaceholder(void) {
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
     SPTPlayerTrack *track = [self trackAt:path];
-    if (![self groupAt:path.section].upcoming || !track) return;
+    SGRQueueGroup *group = [self groupAt:path.section];
+    if (!track) return;
+    if (_musicStyle && group.history) {
+        [self replay:track];
+        return;
+    }
+    if (!group.upcoming) return;
     id<SPTPlayer> player = SGPlayerInstance();
     if (![player respondsToSelector:@selector(skipToNextTrackWithOptions:track:)]) return;
+    // The Music app plays the picked song next and drops the ones before it; Spotify keeps them as played, so History
+    // leaves them out.
+    if (_musicStyle) {
+        NSUInteger at = [_tracks indexOfObjectIdenticalTo:track];
+        if (at != NSNotFound && at > 0) hideFromHistory([_tracks subarrayWithRange:NSMakeRange(0, at)]);
+    }
     [player skipToNextTrackWithOptions:nil track:track];
     if (!self.embedded) [self close];
+}
+
+// A song of History played again, the way Spotify's previous button goes back to one (-[SPTEsperantoPlayer
+// skipToPreviousTrackWithOptions:track:], 9.2.0): with its restrictions overridden, as Spotify's own skip to a song in
+// the queue sends them (skipToNextTrackWithOptions:track:loggingParams: sets overrideRestrictions), and no seek.
+- (void)replay:(SPTPlayerTrack *)track {
+    id player = SGPlayerInstance();
+    SEL skip = NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:");
+    Class optionsClass = NSClassFromString(@"SPTSkipPrevOptions");
+    if (![player respondsToSelector:skip] || ![optionsClass instancesRespondToSelector:NSSelectorFromString(@"setOverrideRestrictions:")]) {
+        SGLog(@"redesign queue: no way back to a song of History in this Spotify");
+        return;
+    }
+    id options = [optionsClass new];
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(options, NSSelectorFromString(@"setOverrideRestrictions:"), YES);
+    ((id (*)(id, SEL, id, id))objc_msgSend)(player, skip, options, track);
+    SGLog(@"redesign queue: a song of History played again");
+}
+
+// Clear on History's heading: its songs go from the list at once, and Spotify is handed its queue with no songs played
+// (setPrevTracks: on a copy, then setQueue:options: as a move sends it), so they stay gone.
+- (void)clearHistory {
+    hideFromHistory(_history);
+    id<SGRQueueSnapshot> snapshot = _snapshot;
+    SEL setPrev = NSSelectorFromString(@"setPrevTracks:");
+    if (_fromSnapshot && queueEditable(snapshot) && [(id)snapshot respondsToSelector:setPrev]) {
+        id copy = [(id)snapshot copy];
+        ((void (*)(id, SEL, NSArray *))objc_msgSend)(copy, setPrev, @[]);
+        id sent = sendQueue(copy, snapshot.nextTracks ?: @[]);
+        if (sent) _snapshot = sent;
+    }
+    SGLog(@"redesign queue: History cleared (%lu songs)", (unsigned long)_history.count);
+    [self showTracks:_snapshot ? ((id<SGRQueueSnapshot>)_snapshot).nextTracks : _tracks
+                past:_snapshot ? ((id<SGRQueueSnapshot>)_snapshot).prevTracks : _history current:_current];
 }
 
 @end
@@ -953,8 +1141,10 @@ static UIImage *coverPlaceholder(void) {
 // capsule in the light the footer's disc is drawn in (PlayerFooter.x) with the glyph cut out of it, so the backdrop
 // shows through, and under Increase Contrast a white capsule with the glyph in black. The faint capsule is white 0.1,
 // measured on its player as 20 of 255 over the backdrop.
-static const CGFloat kToggleHeight = 37, kToggleGap = 13, kToggleGlyph = 17;
+static const CGFloat kToggleGap = 13, kToggleGlyph = 17;
 static const CGFloat kToggleOnAdd = 0.46, kToggleOffAdd = 0.08, kToggleOffAlpha = 0.1;
+// A toggle Spotify will not change stands this faint (UIKit's content disabled alpha, which the Music app's queue asks for).
+static const CGFloat kToggleDisabledAlpha = 0.3;
 // The list fades into the toggles over it and toward the progress bar under it.
 static const CGFloat kListFadeTop = 12, kListFadeBottom = 24;
 
@@ -1073,7 +1263,7 @@ static UIImage *mixGlyph(void) {
 - (void)setOn:(BOOL)on animated:(BOOL)animated {
     if (on == _on) return;
     _on = on;
-    self.accessibilityTraits = UIAccessibilityTraitButton | (on ? UIAccessibilityTraitSelected : 0);
+    self.accessibilityTraits = UIAccessibilityTraitButton | (on ? UIAccessibilityTraitSelected : 0) | (self.enabled ? 0 : UIAccessibilityTraitNotEnabled);
     if (!animated || SGRReduceMotion() || !self.window) {
         [self setNeedsLayout];
         return;
@@ -1082,14 +1272,21 @@ static UIImage *mixGlyph(void) {
                     animations:^{ [self setNeedsLayout]; [self layoutIfNeeded]; } completion:nil];
 }
 
+// Pressed, the toggle dims to 0.6 as the Music app's buttons do; unusable, it stands at UIKit's disabled alpha.
 - (void)setHighlighted:(BOOL)highlighted {
     [super setHighlighted:highlighted];
-    SGRAnimate(highlighted ? SGRMotionRespond : SGRMotionFade, ^{ self.alpha = highlighted ? 0.6 : 1; }, nil);
+    CGFloat alpha = !self.enabled ? kToggleDisabledAlpha : highlighted ? 0.6 : 1;
+    SGRAnimate(highlighted ? SGRMotionRespond : SGRMotionFade, ^{ self.alpha = alpha; }, nil);
 }
 
 - (void)setEnabled:(BOOL)enabled {
+    BOOL changed = enabled != self.enabled;
     [super setEnabled:enabled];
-    self.alpha = enabled ? 1 : 0.35;
+    self.accessibilityTraits = (self.accessibilityTraits & ~UIAccessibilityTraitNotEnabled) | (enabled ? 0 : UIAccessibilityTraitNotEnabled);
+    if (!changed) return;
+    void (^dim)(void) = ^{ self.alpha = enabled ? 1 : kToggleDisabledAlpha; };
+    if (self.window) SGRAnimate(SGRMotionFade, dim, nil);
+    else dim();
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -1128,9 +1325,12 @@ static UIImage *mixGlyph(void) {
 #pragma mark - the Music app's page
 
 @interface SGRPlayerQueuePageController : UIViewController <SGPlayerStateObserver>
+- (void)setHeadHeight:(CGFloat)height scrolled:(void (^)(CGFloat shift))scrolled;
 @end
 
 @implementation SGRPlayerQueuePageController {
+    CGFloat _headHeight;
+    void (^_scrolled)(CGFloat shift);
     SGRQueueToggle *_shuffle, *_repeat, *_sleep, *_mix;
     UIStackView *_toggles;
     UIView *_holder;
@@ -1176,11 +1376,14 @@ static UIImage *mixGlyph(void) {
     _fade.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
     _holder.layer.mask = _fade;
     _list = [[SGRPlayerQueueController alloc] initMusicStyle];
+    // The toggles ride in the list, under the room the player's thumbnail and title stand in.
+    _list.controls = _toggles;
+    _list.headHeight = _headHeight;
+    _list.scrolled = _scrolled;
     [self addChildViewController:_list];
     [_holder addSubview:_list.view];
     [_list didMoveToParentViewController:self];
     [self.view addSubview:_holder];
-    [self.view addSubview:_toggles];
     [self showOptions:NO];
     SGAddPlayerStateObserver(self);
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(transitionsChanged) name:SGTransitionSettingsDidChangeNotification object:nil];
@@ -1234,10 +1437,7 @@ static UIImage *mixGlyph(void) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect bounds = self.view.bounds;
-    CGFloat inner = MAX(0, bounds.size.width - 2 * SGRPlayerSideMargin);
-    _toggles.frame = CGRectMake(SGRPlayerSideMargin, 0, inner, kToggleHeight);
-    CGFloat top = CGRectGetMaxY(_toggles.frame);
-    CGRect list = CGRectMake(0, top, bounds.size.width, MAX(0, CGRectGetMaxY(bounds) - top));
+    CGRect list = bounds;
     if (!CGRectEqualToRect(_holder.frame, list)) _holder.frame = list;
     _list.view.frame = _holder.bounds;
     CGFloat height = MAX(1, list.size.height);
@@ -1248,8 +1448,19 @@ static UIImage *mixGlyph(void) {
     [CATransaction commit];
 }
 
+// Whether the player's restrictions say no to `name` (-[SPTPlayerRestrictions disallowTogglingShuffle] and the like,
+// BOOL properties, 9.2.0), read from the state Spotify reported. Radio and autoplay publish shuffle and repeat ones that
+// Shared/AdBlock/RadioModes.m lifts when it is on; with them up, Spotify drops the command, so the toggle is dimmed.
+static BOOL restricted(SPTPlayerState *state, NSString *name) {
+    id restrictions = queueValue(state, @"restrictions");
+    SEL selector = NSSelectorFromString(name);
+    if (![restrictions respondsToSelector:selector]) return NO;
+    return ((BOOL (*)(id, SEL))objc_msgSend)(restrictions, selector);
+}
+
 // Shuffle and repeat as the player reports them, repeat with its 1 while it repeats the song; AutoMix as its switch is,
-// only for an account that has it. Dimmed with nothing to play.
+// only for an account that has it. Dimmed with nothing to play, or where Spotify does not allow the change, the way the
+// Music app dims a toggle it cannot use.
 - (void)showOptions:(BOOL)animated {
     if (!self.isViewLoaded) return;
     SPTPlayerState *state = SGPlayerState();
@@ -1270,8 +1481,11 @@ static UIImage *mixGlyph(void) {
     _mix.accessibilityValue = mix ? on : off;
     BOOL mixShown = SGAutoMixAccountAllows();
     if (_mix.hidden == mixShown) _mix.hidden = !mixShown;
-    if (_shuffle.enabled != playable) _shuffle.enabled = playable;
-    if (_repeat.enabled != playable) _repeat.enabled = playable;
+    BOOL shuffles = playable && !restricted(state, @"disallowTogglingShuffle");
+    // Repeat goes off, then the context, then the song: usable while any step of it is.
+    BOOL repeats = playable && !(restricted(state, @"disallowTogglingRepeatContext") && restricted(state, @"disallowTogglingRepeatTrack"));
+    if (_shuffle.enabled != shuffles) _shuffle.enabled = shuffles;
+    if (_repeat.enabled != repeats) _repeat.enabled = repeats;
 }
 
 - (void)playerStateDidChange:(SPTPlayerState *)state {
@@ -1283,10 +1497,24 @@ static UIImage *mixGlyph(void) {
     [self showOptions:YES];
 }
 
+- (void)setHeadHeight:(CGFloat)height scrolled:(void (^)(CGFloat shift))scrolled {
+    _headHeight = height;
+    _scrolled = [scrolled copy];
+    if (!self.isViewLoaded) return;
+    _list.scrolled = _scrolled;
+    _list.headHeight = height;
+    // The page opens, or turns from the lines, at rest: the thumbnail and title over the toggles where they were placed.
+    [_list goToRest];
+}
+
 @end
 
 UIViewController *SGRPlayerQueuePage(void) {
     return [SGRPlayerQueuePageController new];
+}
+
+void SGRPlayerQueuePageConfigure(UIViewController *page, CGFloat headHeight, void (^scrolled)(CGFloat shift)) {
+    if ([page isKindOfClass:SGRPlayerQueuePageController.class]) [(SGRPlayerQueuePageController *)page setHeadHeight:headHeight scrolled:scrolled];
 }
 
 #pragma mark - opening it

@@ -2684,6 +2684,7 @@
 "settings.player.queue.autoplaying" = "Autoplaying similar music";
 "settings.player.queue.blend.crossfade" = "Crossfade, %ld s";
 "settings.player.queue.blend.spotify" = "Spotify AutoMix";
+"settings.player.queue.clear" = "Clear";
 "settings.player.queue.continue" = "Continue Playing";
 "settings.player.queue.empty" = "Nothing is playing next.";
 "settings.player.queue.header" = "Queue";

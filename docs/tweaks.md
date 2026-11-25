@@ -1738,7 +1738,13 @@ Redesigned:
                   no Objective-C setter) and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
                   Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. A song's grip moves it within its
                   section the way Spotify's queue screen does (copy of the reported queue, setNextTracks:, setQueue:options:
-                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). The footer's lyrics and queue
+                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). As in the Music app, the thumbnail,
+                  the title row and the toggles ride with the list (the page's stage starts at the thumbnail, its first
+                  section the room they stand in, SGRPlayerQueuePageConfigure): pulled down, History shows above them, with
+                  Clear (setPrevTracks: @[] through the same setQueue:options:); pushed up, they leave and the songs to come
+                  take the room. A History row plays its song again (skipToPreviousTrackWithOptions:track: with
+                  SPTSkipPrevOptions.overrideRestrictions), and songs a pick skipped over stay out of History. Shuffle and
+                  repeat dim (UIKit's disabled 0.3) while SPTPlayerState.restrictions disallow toggling them. The footer's lyrics and queue
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, the Music
                   app's _NowPlayingFooterActiveIndicatingView), white landing where 0.46 added would. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
@@ -2815,6 +2821,11 @@ a page using `SGL` compiles `Core/SGLocalize.m` too; harness/mod-settings/ copie
 
 A class Spotify has renamed shows up in the log as `class X not found, its hooks are inactive`;
 declare the classes a feature needs in `Headers/` only when a hook calls into them by type.
+
+Fluid's cost (Redesigned/Kit/SGRFluidGPU.m): the blur runs on a picture small enough that its Gaussian spans about
+10 texels (a sixteenth of the drawable at the standard 160 pt, read through the cover's mipmaps), the display link
+prefers 60 Hz with 120 allowed (it asked for 120 and drew 60, holding the whole screen at 120 Hz), and a held picture,
+Low Power Mode or a serious thermal state draw at 30 frames a second with the clock counting the same time.
 
 Layout against the Music app's player (3x measurements, 402 x 874 pt): the footer row's middle 32 pt over the safe
 area's bottom (kRowAboveSafeArea), the gaps from the artist to the bar, the bar to play and play to the volume row 35,

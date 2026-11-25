@@ -67,6 +67,9 @@ static const NSTimeInterval kRest = 4;
 // cover, the title row and its ⋯ rise 22 pt together, the title then 12 pt from the cover rather than kThumbGap, and
 // the lines start 16 pt under them and run down the whole safe area, its mic gone with the controls.
 static const CGFloat kAloneRise = 22, kAloneTitleGap = 12, kAloneLinesTop = 16;
+// There the sung line's view stands this far from the top of the player (its first line's capitals 246 pt down on
+// the Music app's), where the lines would otherwise rest at a share of their height, well lower.
+static const CGFloat kAloneLineTop = 238;
 // The two columns: the leading one never narrower than the narrowest iPhone Spotify lays its controls out for, the
 // side one never narrower than this, this far apart, so a player is wide enough for both from their sum on. The
 // leading column takes this share of the safe width: half on a window taller than wide, less on its side, where the
@@ -381,7 +384,8 @@ static BOOL keepsTitle(void) {
         _lyrics = [[SGRKaraokeView alloc] initWithFrame:_stage.bounds];
         _lyrics.sizePlace = SGRLyricsPlacePlayer;
         _lyrics.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        // Sing's mic stays while the lines are on their own, moving down with them (setAlone).
+        // Sing's mic goes with the controls when the lines are on their own unless Keep the mic is on or Sing is
+        // (setAlone sets it each time).
         _lyrics.keepsSing = YES;
     }
     if (_lyrics.superview != _stage) [_stage addSubview:_lyrics];
@@ -555,7 +559,7 @@ static CGFloat thumbRadius(SGRLyricsLayout l, BOOL open) {
 // way the Music app leaves its lyrics alone. The lines scroll as they always do and leave the rest hidden; a
 // tap anywhere brings it all back and is not a seek. A pause brings it back and keeps it; VoiceOver, a sheet
 // over the player and the app in the background keep it up. A scroll through the lines hides it at once.
-// Sing's mic stays with the lines, and a touch on it is the mic's: it does not bring the rest back.
+// Sing's mic stays with the lines only with Keep the mic or while Sing is on, and a touch on it is the mic's.
 //
 // The tap is a recognizer on the player that recognizes with any other, and a button takes its own tap:
 // UIKit gives a control its tap over a tap recognizer above it. A faded view takes no touch (UIKit's hit
@@ -654,6 +658,13 @@ static void letLinesSeek(SGRPlayerLyricsOverlay *overlay, BOOL seek) {
 }
 
 static void setAlone(BOOL alone, BOOL animated);
+
+// Keeping the title, the lines alone rest their sung line where the Music app's does (kAloneLineTop); otherwise at
+// their own share of the height.
+static void anchorLines(SGRPlayerLyricsOverlay *overlay, SGRLyricsLayout l) {
+    BOOL fixed = sg_alone && keepsTitle() && !l.wide;
+    overlay.lyrics.anchorTop = fixed ? MAX(1, kAloneLineTop - CGRectGetMinY(l.stage)) : 0;
+}
 
 // A sheet, a menu or an alert over the player: the top controller on screen is not one the player is drawn
 // in. The queue, devices and ⋯ sheets can be presented from the player's topmost parent rather than the
@@ -824,6 +835,7 @@ static void setAlone(BOOL alone, BOOL animated) {
         if (!overlay.superview || !l.ok) return;
         if (keepsTitle()) placeTitleRow(l);
         place(overlay, host, l);
+        anchorLines(overlay, l);
         overlay.thumb.transform = thumbTransform(l);
         // The lines take the new height in this same spring, so the sung line rides with the stage rather than
         // springing to the new anchor at the next line (SGRKaraokeView's layoutSubviews).
@@ -831,9 +843,9 @@ static void setAlone(BOOL alone, BOOL animated) {
     };
     void (^fade)(void) = ^{
         if (overlay.superview) {
-            // Keeping the title, the mic goes with the controls as the Music app's does, unless Sing is on.
+            // The mic goes with the controls as the Music app's does, unless it is to stay or Sing is on.
             SGSingState sing = SGSingCurrentState();
-            overlay.lyrics.keepsSing = !keepsTitle() || sing >= SGSingStateWaiting;
+            overlay.lyrics.keepsSing = SGFlag(SGRKeyLyricsKeepMic, NO) || sing >= SGSingStateWaiting;
             overlay.lyrics.extrasHidden = alone;
         }
         fadeControls(alone);
@@ -1196,6 +1208,7 @@ static void replace(void) {
         fadeControls(YES);
     }
     place(overlay, host, l);
+    anchorLines(overlay, l);
     overlay.thumb.transform = thumbTransform(l);
     overlay.cover.layer.cornerRadius = thumbRadius(l, YES);
     overlay.lyrics.frame = overlay.stage.bounds;

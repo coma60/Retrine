@@ -1939,8 +1939,10 @@ Redesigned:
                   Everything, everything else -- the header row, the thumbnail, the title row and the controls --
                   fades a few seconds after the last touch and the lines take the whole safe area until a tap; set
                   to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
-                  and the mic (kept while Sing is on) fade, the thumbnail, the title row and its ⋯ rise 22 pt with
-                  the title 12 pt from the cover, and the lines start 16 pt under them and grow down the safe area): line views only for the lines in and near sight, built nearest
+                  and the mic fade (the mic, under either choice, stays with Keep the mic,
+                  spotifyglass.redesign.lyrics.keepMic, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with
+                  the title 12 pt from the cover, and the lines start 16 pt under them and grow down the safe area, the sung line resting 238 pt down the player
+                  as the Music app's): line views only for the lines in and near sight, built nearest
                   the middle first, at most four a pass and none after the first once the pass has spent 1 ms, the
                   next pass picking up the rest (a work budget; the display link is never slowed); lines sung over each other lit together, the stack moving on
                   once the first is sung out; an instrumental break of 7 s or more held by three dots
@@ -1998,7 +2000,8 @@ Redesigned:
                   card draws them over the blurred cover with the small cover, title and artist on top, off the main thread
                   (LyricCardPicker.m, ShareCards.m), and nothing is fetched. The items, what Copy and
                   Share say (SGRLyricsShareText), the anchor and the dismissals are checked in the simulator against
-                  harness/lyrics-hold/, the press itself on the phone. The size, the room between lines, the blur, the glow and the wave are the Lyrics page's look
+                  harness/lyrics-hold/, the press itself on the phone. Every line but the sung one is blurred as the Music app's are (one more than its distance ahead, two more behind,
+                  up to 4, times the look's Blur). The size, the room between lines, the blur, the glow and the wave are the Lyrics page's look
                   (LyricsLook.h): five presets (Apple Music, the default, at the Music app's 34 pt bold; a stored look keeps
                   its values) and a sheet of sliders, applied at once to every view, the lines 32 pt in from the sides as
                   the player's title and bar are (SGRKaraokeView.m), under a live

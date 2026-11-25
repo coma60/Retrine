@@ -27,6 +27,9 @@
 // The mic stays when the extras go, for a host that lets it take its own touches while its controls are
 // hidden (the player's lines on their own, Redesigned/Player/PlayerLyrics.x), so Sing is always in reach.
 @property (nonatomic) BOOL keepsSing;
+// Where the sung line rests, in points from the top; 0, the default, rests it at a share of the height. The
+// player's lines on their own under its title set it to rest the line where the Music app's does.
+@property (nonatomic) CGFloat anchorTop;
 // The place it shows in: its words take the size chosen for that place (LyricsLook.h), and follow a change of it at
 // once. SGRLyricsPlaceNone, the look's size, until set.
 @property (nonatomic) SGRLyricsPlace sizePlace;

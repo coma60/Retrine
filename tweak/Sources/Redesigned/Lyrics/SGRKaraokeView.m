@@ -35,9 +35,11 @@ static const CGFloat kMargin = 32, kRowTighten = 2;
 static const CGFloat kDimAlpha = 0.3, kFillEdge = 22, kLift = 2.5, kDimScale = 0.97;
 static const CGFloat kAnchor = 0.28;   // where the sung line rests, as a share of the height
 static const CGFloat kEdgeFade = 0.1;  // the lines fade out over this share at the top and bottom
-// Apple Music's, scaled by the Lyrics page's blur. The lines right above and below what is sung stay sharp,
-// only dim; the blur starts from the second line away, kBlurPerLine more each line, up to kMaxBlur.
-static const CGFloat kBlurPerLine = 1.4, kMaxBlur = 6;
+// The Music app's, scaled by the Lyrics page's blur: no line next to what is sung is sharp. A line coming up is
+// blurred by one more than its distance and a line gone by by two more, up to kMaxBlur, the radius its lyrics view
+// holds every line under (LyricsX.SyncedLyricsVisualExperienceManager, min(n, 4)); the steps were measured off its
+// player (2026-11-25).
+static const CGFloat kBlurAhead = 1, kBlurBehind = 2, kMaxBlur = 4;
 // The (oh, aye) hanging under a line: smaller, a little dimmer, and just clear of it.
 static const CGFloat kBackingScale = 0.62, kBackingAlpha = 0.8, kBackingGap = 4;
 // The translation and the romanized line of a line being sung, brighter than a line waiting but never
@@ -1869,7 +1871,7 @@ typedef struct {
     SGRCreditLabel *_credit;
     NSString *_creditSource;   // the source the credit was settled on, nil until the lyrics name one
     NSArray<SGLyricsLink *> *_creditLinks;
-    CGFloat _fontSize, _margin, _lineGap, _blurPerLine, _maxBlur;
+    CGFloat _fontSize, _margin, _lineGap, _blurScale, _maxBlur;
     BOOL _crediting;   // Show source, read once: the page asks for the source on every frame until it has one
     double _clock;
     NSInteger _reported;
@@ -2053,7 +2055,7 @@ typedef struct {
     CGFloat share = SGRLyricsSizeShare(_sizePlace);
     _fontSize = share == 1 ? look.size : round(look.size * share);
     _lineGap = look.spacing;
-    _blurPerLine = kBlurPerLine * look.blur;
+    _blurScale = look.blur;
     _maxBlur = kMaxBlur * look.blur;
     sgr_glowScale = look.glow;
     sgr_waveScale = look.wave;
@@ -2348,7 +2350,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
     [self stir];
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(followSong) object:nil];
     if (!_browsing) {
-        _browseAnchor = self.bounds.size.height * kAnchor;
+        _browseAnchor = [self restingAnchor];
         _browseBreak = _openBreak;
     }
     _browsing = YES;
@@ -3510,7 +3512,7 @@ static char kTranslationCoverContext;
 // and a break can open or close, and a line made for the view then went by the new anchor while the
 // lines beside it kept the old one, the two running into each other.
 - (CGFloat)topOfLine:(NSInteger)index {
-    CGFloat anchor = _browsing ? _browseAnchor : self.bounds.size.height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat top = anchor + _tops[index].doubleValue - _focusTop;
     return openBreak >= 0 && index >= openBreak ? top + [self breakRoom] : top;
@@ -3525,6 +3527,17 @@ static char kTranslationCoverContext;
         if (_sung[i] == index) return YES;
     }
     return NO;
+}
+
+// Where the sung line rests: anchorTop when set, else kAnchor of the height.
+- (CGFloat)restingAnchor {
+    return _anchorTop > 0 ? _anchorTop : self.bounds.size.height * kAnchor;
+}
+
+- (void)setAnchorTop:(CGFloat)anchorTop {
+    if (_anchorTop == anchorTop) return;
+    _anchorTop = anchorTop;
+    [self setNeedsLayout];
 }
 
 // How many lines away from what is sung a line is, which is what dims, shrinks and blurs it: from the
@@ -3656,7 +3669,8 @@ static char kTranslationCoverContext;
     CGPoint center = CGPointMake(view.right ? CGRectGetMaxX(frame) : _margin, CGRectGetMidY(frame));
     CGFloat scale = distance == 0 ? 1 : kDimScale;
     CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);
-    view.blur = _browsing ? 0 : MIN(_maxBlur, MAX(0, distance - 1) * _blurPerLine);
+    CGFloat steps = distance == 0 ? 0 : distance + (below < 0 ? kBlurBehind : kBlurAhead);
+    view.blur = _browsing ? 0 : MIN(_maxBlur, steps * _blurScale);
     BOOL near = CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), frame)
              || CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), view.frame);
     if (!animated || !near) {
@@ -3695,7 +3709,7 @@ static char kTranslationCoverContext;
 - (void)updateScrollExtent {
     if (!_tops.count) return;
     CGFloat height = self.bounds.size.height;
-    CGFloat anchor = _browsing ? _browseAnchor : height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat bottom = anchor + _stackEnd - _focusTop + (openBreak >= 0 ? [self breakRoom] : 0);
     if (_credit.text.length) bottom = MAX(bottom, CGRectGetMaxY(_credit.frame));
@@ -3709,7 +3723,7 @@ static char kTranslationCoverContext;
 // song's end or scrolled to, rather than over every line.
 - (void)placeCreditAnimated:(BOOL)animated {
     if (!_tops.count || !_credit.text.length) return;
-    CGFloat anchor = _browsing ? _browseAnchor : self.bounds.size.height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat width = MAX(self.bounds.size.width - 2 * _margin, 0);
     CGSize size = [_credit sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)];

@@ -1308,6 +1308,8 @@
 "settings.lyrics.hide_controls.off_note" = "The controls stay";
 "settings.lyrics.hide_controls.room" = "A few seconds after the last touch, the lyrics take the room";
 "settings.lyrics.hide_controls.title" = "Hide the controls";
+"settings.lyrics.keep_mic.subtitle" = "Sing's mic stays when the controls are hidden. Off, it hides with them, as in Apple Music, and stays only while Sing is on.";
+"settings.lyrics.keep_mic.title" = "Keep the mic";
 "settings.lyrics.hide_controls.title_note" = "The cover, the title and the top row stay; in landscape, the title";
 "settings.lyrics.hold.card" = "Share as Card";
 "settings.lyrics.hold.card.line" = "Share as card";

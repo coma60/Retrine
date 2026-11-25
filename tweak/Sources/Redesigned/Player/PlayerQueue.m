@@ -28,15 +28,26 @@ static const NSUInteger kHistoryRows = 10;
 static const CGFloat kBlendPadding = 8, kBlendGap = 6;
 // A row's cover, the Music app's list thumbnail (iOS 26, design/applemusic-gap item 22).
 static const CGFloat kCoverSide = 44;
-// The Music app's queue in the player: its rows' cover and corners, the room between the cover and the titles, and the
-// room above and below each row (56 pt a row on its player, 2026-11-25).
-static const CGFloat kMusicCoverSide = 48, kMusicCoverRadius = 4, kMusicCoverGap = 13, kMusicRowPad = 4;
-// Its headings: the room over a heading, between the heading and the line under it, and under them before the rows.
-// Measured on its player (402 pt wide, the default text size): the heading's capitals 20 pt under the toggles, the
-// first cover 70 pt under them with a line under the heading, so a heading with its line stands 66 pt.
-static const CGFloat kMusicHeadTop = 14, kMusicHeadGap = 0, kMusicHeadBottom = 10;
-// Its toggles' height, measured on its player.
-static const CGFloat kMusicControlsHeight = 37;
+// The Music app's queue in the player: its rows' cover (its NowPlayingQueueCell's artwork, 48 pt square) and corners, the
+// room between the cover and the titles (its titles start 48 + 12 in from the margin), and the room above and below each
+// row (56 pt a row on its player, 2026-11-25).
+static const CGFloat kMusicCoverSide = 48, kMusicCoverRadius = 4, kMusicCoverGap = 12, kMusicRowPad = 4;
+// Its headings (its NowPlayingQueueHeaderView): the title 16 pt under the heading's top and 15 over its bottom; with the
+// line under it (what is playing from), the title 12 under the top, the line 1 under the title and 11 over the bottom.
+// The title stops 10 short of the buttons at the trailing end.
+static const CGFloat kMusicHeadTop = 16, kMusicHeadBottom = 15;
+static const CGFloat kMusicHeadTopWithLine = 12, kMusicHeadGap = 1, kMusicHeadBottomWithLine = 11, kMusicHeadActionGap = 10;
+// Its toggles' row: the controls section's header is 43 pt (its section provider) and its NowPlayingQueueControlsView
+// lays the buttons' stack 5 pt short of that, so the buttons stand 38 pt with 5 under them.
+static const CGFloat kMusicControlsHeight = 38, kMusicControlsBelow = 5;
+
+// A text style's font with tight leading, as the Music app's queue rows ask for theirs (its font variant 0x100, which
+// UIFont turns into this trait).
+static UIFont *tightFont(UIFontTextStyle style) {
+    UIFont *font = SGCategoryCappedFont(style, UIFontWeightRegular, UIContentSizeCategoryAccessibilityMedium);
+    UIFontDescriptor *tight = [font.fontDescriptor fontDescriptorWithSymbolicTraits:font.fontDescriptor.symbolicTraits | UIFontDescriptorTraitTightLeading];
+    return tight ? [UIFont fontWithDescriptor:tight size:0] : font;
+}
 
 SGRPlayerQueueStyleKind SGRPlayerQueueStyle(void) {
     return SGInt(SGRKeyPlayerQueueStyle, SGRPlayerQueueStyleSpotify) == SGRPlayerQueueStyleMusic ? SGRPlayerQueueStyleMusic : SGRPlayerQueueStyleSpotify;
@@ -297,11 +308,9 @@ static NSString *blendInto(SPTPlayerTrack *next) {
     _subtitle.textColor = SGRSecondary();
     _blend = [SGRQueueBlendView new];
     _blend.layoutMargins = UIEdgeInsetsMake(0, SGRPlayerSideMargin, 0, SGRPlayerSideMargin);
-    UIButtonConfiguration *clear = [UIButtonConfiguration grayButtonConfiguration];
-    clear.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    // Its Clear is a plain button with its title only.
+    UIButtonConfiguration *clear = [UIButtonConfiguration plainButtonConfiguration];
     clear.baseForegroundColor = SGRPrimary();
-    clear.baseBackgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
-    clear.contentInsets = NSDirectionalEdgeInsetsMake(6, 14, 6, 14);
     _action = [UIButton buttonWithConfiguration:clear primaryAction:nil];
     _action.hidden = YES;
     [_action addTarget:self action:@selector(acted) forControlEvents:UIControlEventTouchUpInside];
@@ -318,15 +327,15 @@ static NSString *blendInto(SPTPlayerTrack *next) {
     _action.hidden = !title.length;
     if (!title.length) return;
     UIButtonConfiguration *config = _action.configuration;
-    UIFont *font = SGCategoryCappedFont(UIFontTextStyleSubheadline, UIFontWeightSemibold, UIContentSizeCategoryAccessibilityMedium);
-    config.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:@{NSFontAttributeName: font}];
+    config.title = title;
     _action.configuration = config;
     [self setNeedsLayout];
 }
 
 - (void)takeFonts {
-    _title.font = SGCategoryCappedFont(UIFontTextStyleTitle3, UIFontWeightBold, UIContentSizeCategoryAccessibilityMedium);
-    _subtitle.font = SGCategoryCappedFont(UIFontTextStyleSubheadline, UIFontWeightRegular, UIContentSizeCategoryAccessibilityMedium);
+    // Its title is Headline and the line under it Footnote, both capped at XXXL.
+    _title.font = SGCategoryCappedFont(UIFontTextStyleHeadline, UIFontWeightSemibold, UIContentSizeCategoryExtraExtraExtraLarge);
+    _subtitle.font = SGCategoryCappedFont(UIFontTextStyleFootnote, UIFontWeightRegular, UIContentSizeCategoryExtraExtraExtraLarge);
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -335,8 +344,9 @@ static NSString *blendInto(SPTPlayerTrack *next) {
 }
 
 - (CGFloat)heightForWidth:(CGFloat)width {
-    CGFloat height = kMusicHeadTop + ceil(_title.font.lineHeight) + kMusicHeadBottom;
-    if (_subtitle.text.length) height += kMusicHeadGap + ceil(_subtitle.font.lineHeight);
+    BOOL line = _subtitle.text.length > 0;
+    CGFloat height = (line ? kMusicHeadTopWithLine : kMusicHeadTop) + ceil(_title.font.lineHeight) + (line ? kMusicHeadBottomWithLine : kMusicHeadBottom);
+    if (line) height += kMusicHeadGap + ceil(_subtitle.font.lineHeight);
     if (_blend.label.text.length) height += [_blend heightForWidth:width];
     return height;
 }
@@ -344,7 +354,7 @@ static NSString *blendInto(SPTPlayerTrack *next) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat width = self.bounds.size.width, inner = MAX(0, width - 2 * SGRPlayerSideMargin);
-    CGFloat y = kMusicHeadTop;
+    CGFloat y = _subtitle.text.length ? kMusicHeadTopWithLine : kMusicHeadTop;
     BOOL rtlAction = self.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
     CGFloat actionWidth = 0;
     if (!_action.hidden) {
@@ -353,7 +363,7 @@ static NSString *blendInto(SPTPlayerTrack *next) {
         CGFloat middle = y + ceil(_title.font.lineHeight) / 2;
         _action.frame = CGRectMake(rtlAction ? SGRPlayerSideMargin : width - SGRPlayerSideMargin - actionWidth,
                                    round(middle - size.height / 2), actionWidth, ceil(size.height));
-        actionWidth += SGRGrid;
+        actionWidth += kMusicHeadActionGap;
     }
     _title.frame = CGRectMake(SGRPlayerSideMargin + (rtlAction ? actionWidth : 0), y, MAX(0, inner - actionWidth), ceil(_title.font.lineHeight));
     y = CGRectGetMaxY(_title.frame);
@@ -947,7 +957,7 @@ static UIImage *coverPlaceholder(void) {
 
 - (CGFloat)tableView:(UITableView *)table heightForHeaderInSection:(NSInteger)section {
     SGRQueueGroup *group = [self groupAt:section];
-    if (_musicStyle && group.controls) return self.headHeight + kMusicControlsHeight;
+    if (_musicStyle && group.controls) return self.headHeight + kMusicControlsHeight + kMusicControlsBelow;
     if (_musicStyle) {
         if (!group.tracks.count) return CGFLOAT_MIN;
         static SGRQueueMusicHeader *measure;
@@ -999,6 +1009,9 @@ static UIImage *coverPlaceholder(void) {
         // The Music app's titles stand 2 pt apart (its cell's stack spacing, scaled with the text size).
         content.textToSecondaryTextVerticalPadding = [UIFontMetrics.defaultMetrics scaledValueForValue:2 compatibleWithTraitCollection:cell.traitCollection];
         content.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(kMusicRowPad, SGRPlayerSideMargin, kMusicRowPad, SGRPlayerSideMargin);
+        // Its cell's title is Body and the artist under it Footnote, in the secondary label color, both with tight leading.
+        content.textProperties.font = tightFont(UIFontTextStyleBody);
+        content.secondaryTextProperties.font = tightFont(UIFontTextStyleFootnote);
         cell.showsReorderControl = YES;
     }
     cell.contentConfiguration = content;
@@ -1195,15 +1208,14 @@ static UIImage *coverPlaceholder(void) {
 
 #pragma mark - the Music app's toggles
 
-// The toggles over the Music app's queue: shuffle, repeat and AutoMix, 13 pt apart (its NowPlayingQueueControlsView's
-// stack), each a capsule as tall as measured on its player. Off, a faint capsule with the glyph in white; on, the
-// capsule in the light the footer's disc is drawn in (PlayerFooter.x) with the glyph cut out of it, so the backdrop
-// shows through, and under Increase Contrast a white capsule with the glyph in black. The faint capsule is white 0.1,
-// measured on its player as 20 of 255 over the backdrop.
-static const CGFloat kToggleGap = 13, kToggleGlyph = 17;
-static const CGFloat kToggleOnAdd = 0.46, kToggleOffAdd = 0.08, kToggleOffAlpha = 0.1;
-// A toggle Spotify will not change stands this faint (UIKit's content disabled alpha, which the Music app's queue asks for).
-static const CGFloat kToggleDisabledAlpha = 0.3;
+// The toggles over the Music app's queue, the way its NowPlayingQueueControlsView draws its buttons: equal widths 13 pt
+// apart, each a capsule. Off, the capsule is the label color at 0.08 with the glyph in the label color; on, the capsule is
+// the label color at 0.45 with the glyph cut out of it (its image view's destOut filter), so the backdrop shows through.
+// One the player cannot change (its state unknown to it) keeps the faint capsule and its glyph goes to 0.08, 0.15 under
+// Increase Contrast. The glyph is the Callout font's, regular, at the medium scale, its text size capped at XXXL.
+static const CGFloat kToggleGap = 13;
+static const CGFloat kToggleOnAlpha = 0.45, kToggleOffAlpha = 0.08;
+static const CGFloat kToggleDisabledGlyph = 0.08, kToggleDisabledGlyphContrast = 0.15;
 // The list fades into the toggles over it and toward the progress bar under it.
 static const CGFloat kListFadeTop = 12, kListFadeBottom = 24;
 
@@ -1264,7 +1276,8 @@ static UIImage *mixGlyph(void) {
     _symbol = [symbol copy];
     _plate = [UIImageView new];
     _plate.userInteractionEnabled = NO;
-    _glyph = [[SGRGlyphView alloc] initWithSymbol:symbol pointSize:kToggleGlyph weight:UIImageSymbolWeightSemibold];
+    UIFont *font = SGCategoryCappedFont(UIFontTextStyleCallout, UIFontWeightRegular, UIContentSizeCategoryExtraExtraExtraLarge);
+    _glyph = [[SGRGlyphView alloc] initWithSymbol:symbol pointSize:font.pointSize weight:UIImageSymbolWeightRegular];
     _glyph.tintColor = SGRPrimary();
     [self addSubview:_plate];
     [self addSubview:_glyph];
@@ -1276,8 +1289,6 @@ static UIImage *mixGlyph(void) {
     self.largeContentImage = _glyph.image;
     [self addInteraction:[UILargeContentViewerInteraction new]];
     [self addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-    __weak typeof(self) weakSelf = self;
-    SGRBackdropInkObserve(self, ^{ [weakSelf setNeedsLayout]; });
     return self;
 }
 
@@ -1331,10 +1342,10 @@ static UIImage *mixGlyph(void) {
                     animations:^{ [self setNeedsLayout]; [self layoutIfNeeded]; } completion:nil];
 }
 
-// Pressed, the toggle dims to 0.6 as the Music app's buttons do; unusable, it stands at UIKit's disabled alpha.
+// Pressed, the toggle dims to 0.6 as the Music app's buttons do.
 - (void)setHighlighted:(BOOL)highlighted {
     [super setHighlighted:highlighted];
-    CGFloat alpha = !self.enabled ? kToggleDisabledAlpha : highlighted ? 0.6 : 1;
+    CGFloat alpha = highlighted && self.enabled ? 0.6 : 1;
     SGRAnimate(highlighted ? SGRMotionRespond : SGRMotionFade, ^{ self.alpha = alpha; }, nil);
 }
 
@@ -1343,9 +1354,12 @@ static UIImage *mixGlyph(void) {
     [super setEnabled:enabled];
     self.accessibilityTraits = (self.accessibilityTraits & ~UIAccessibilityTraitNotEnabled) | (enabled ? 0 : UIAccessibilityTraitNotEnabled);
     if (!changed) return;
-    void (^dim)(void) = ^{ self.alpha = enabled ? 1 : kToggleDisabledAlpha; };
-    if (self.window) SGRAnimate(SGRMotionFade, dim, nil);
-    else dim();
+    if (!self.window || SGRReduceMotion()) {
+        [self setNeedsLayout];
+        return;
+    }
+    [UIView transitionWithView:self duration:SGRCrossfade options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction
+                    animations:^{ [self setNeedsLayout]; [self layoutIfNeeded]; } completion:nil];
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -1353,30 +1367,32 @@ static UIImage *mixGlyph(void) {
     [self setNeedsLayout];
 }
 
-// The capsule as an image: its fill, and while on, the glyph's shape out of it (in black on it under Increase Contrast).
+// The capsule as an image: its fill, and while on, the glyph's shape out of it.
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds;
     _plate.frame = bounds;
     [_glyph sizeToFit];
     _glyph.center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-    BOOL contrast = SGRIncreaseContrast(), on = _on;
-    _glyph.tintColor = on ? UIColor.clearColor : SGRPrimary();
-    CGFloat alpha = on ? (contrast ? 1 : SGRInkPlainAlpha(self, kToggleOnAdd, kToggleOnAdd))
-                       : (contrast ? 2 * kToggleOffAlpha : SGRInkPlainAlpha(self, kToggleOffAlpha, kToggleOffAdd));
-    NSArray *drawn = @[NSStringFromCGSize(bounds.size), _symbol ?: @"", @(on), @(contrast), @(alpha), @(self.traitCollection.displayScale)];
+    BOOL on = _on && self.enabled;
+    UIColor *label = SGRPrimary();
+    _glyph.tintColor = on ? UIColor.clearColor
+                     : self.enabled ? label
+                     : [label colorWithAlphaComponent:SGRIncreaseContrast() ? kToggleDisabledGlyphContrast : kToggleDisabledGlyph];
+    CGFloat alpha = on ? kToggleOnAlpha : kToggleOffAlpha;
+    NSArray *drawn = @[NSStringFromCGSize(bounds.size), _symbol ?: @"", @(on), @(alpha), @(self.traitCollection.displayScale)];
     if ([drawn isEqual:_drawn] || bounds.size.width < 1 || bounds.size.height < 1) return;
     _drawn = drawn;
     UIImage *glyph = on ? [_glyph.image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal] : nil;
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:self.traitCollection];
     _plate.image = [[[UIGraphicsImageRenderer alloc] initWithSize:bounds.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
-        [[UIColor colorWithWhite:1 alpha:alpha] setFill];
+        [[label colorWithAlphaComponent:alpha] setFill];
         [[UIBezierPath bezierPathWithRoundedRect:(CGRect){CGPointZero, bounds.size} cornerRadius:bounds.size.height / 2] fill];
         if (!glyph) return;
         // drawInRect:blendMode:alpha:, not drawInRect:, which draws in the normal mode whatever the context's is.
         CGSize size = glyph.size;
         [glyph drawInRect:CGRectMake((bounds.size.width - size.width) / 2, (bounds.size.height - size.height) / 2, size.width, size.height)
-                blendMode:contrast ? kCGBlendModeNormal : kCGBlendModeDestinationOut alpha:1];
+                blendMode:kCGBlendModeDestinationOut alpha:1];
     }];
 }
 

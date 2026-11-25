@@ -3596,6 +3596,10 @@ static char kTranslationCoverContext;
     return _anchorTop > 0 ? _anchorTop : self.bounds.size.height * kAnchor;
 }
 
+- (CGFloat)lineAscent {
+    return _font.ascender;
+}
+
 - (void)setAnchorTop:(CGFloat)anchorTop {
     if (_anchorTop == anchorTop) return;
     _anchorTop = anchorTop;

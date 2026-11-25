@@ -35,6 +35,8 @@
 // Where the sung line rests, in points from the top; 0, the default, rests it at a share of the height. The
 // player's lines on their own under its title set it to rest the line where the Music app's does.
 @property (nonatomic) CGFloat anchorTop;
+// The ascent of the lines' font, so a caller can rest the sung line's baseline rather than its top.
+@property (nonatomic, readonly) CGFloat lineAscent;
 // Whether a touch is on a line it would seek to when tapped (not a corner control, a bubble or the credit), for a
 // host that lets a tap on the lines stay theirs while its controls are hidden.
 - (BOOL)touchIsOnLine:(UITouch *)touch;

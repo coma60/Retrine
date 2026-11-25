@@ -91,9 +91,11 @@ static const CGFloat kColumnCoverInset = 16;
 static const NSTimeInterval kLyricsOnOpenWindow = 3;
 
 static char kOverlayKey, kPlateKey, kTitleKey, kStackKey, kQueueKey, kQueuePageKey, kSliderKey;
-// The Music app's lyrics view ends 3 pt over its time control's bar and its sung line rests 130 pt under the collapsed
-// artwork's bottom, measured on its player (402 x 874 pt, 2026-11-25).
-static const CGFloat kLyricsOverBar = 3, kLineUnderArtwork = 130;
+// The Music app's lyrics view ends 3 pt over its time control's bar (measured on its player, 402 x 874 pt, 2026-11-25).
+// Its lyrics view starts at the collapsed artwork's bottom (its content layout guide), and its lines' scroll view is
+// inset so the sung line's top stands 12% of the player's height down, less the font's ascent: its LyricsSpecs'
+// selectedLinePosition is topRelative(12), over the container height its player passes in (the whole player's).
+static const CGFloat kLyricsOverBar = 3, kSungLineShare = 0.12;
 // The page over the cover is up: in the one column with the lines or the queue, in the two columns the lines picked.
 static BOOL sg_open;
 // The one column's page shows the queue (SGRKeyPlayerQueueStyle's Apple Music style) rather than the lines: the same
@@ -744,7 +746,9 @@ static void setAlone(BOOL alone, BOOL animated);
 // their own share of the height.
 static void anchorLines(SGRPlayerLyricsOverlay *overlay, SGRLyricsLayout l) {
     BOOL fixed = sg_alone && keepsTitle() && !l.wide;
-    overlay.lyrics.anchorTop = fixed ? MAX(1, kAloneLineTop - CGRectGetMinY(l.stage)) : l.wide || sg_alone ? 0 : kLineUnderArtwork;
+    UIView *player = overlay.superview ?: overlay.lyrics.window;
+    CGFloat sung = MAX(1, round(player.bounds.size.height * kSungLineShare - overlay.lyrics.lineAscent));
+    overlay.lyrics.anchorTop = fixed ? MAX(1, kAloneLineTop - CGRectGetMinY(l.stage)) : l.wide || sg_alone ? 0 : sung;
 }
 
 // A sheet, a menu or an alert over the player: the top controller on screen is not one the player is drawn

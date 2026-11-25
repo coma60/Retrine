@@ -775,8 +775,45 @@ static const CGFloat kToggleOnAdd = 0.46, kToggleOffAdd = 0.08, kToggleOffAlpha 
 // The list fades into the toggles over it and toward the progress bar under it.
 static const CGFloat kListFadeTop = 12, kListFadeBottom = 24;
 
+// AutoMix's glyph, drawn here in the Music app's way (its transitions button: two strokes crossing as one song blends
+// into the next, the one coming in over the one going out, which is fainter). No SF Symbol draws it; a template image,
+// so it takes the toggle's color and is cut out of the lit capsule like a symbol.
+static const CGFloat kMixGlyphWidth = 17, kMixGlyphHeight = 12, kMixStroke = 2.2, kMixGoingAlpha = 0.55;
+
+static UIImage *mixGlyph(void) {
+    CGSize size = CGSizeMake(kMixGlyphWidth, kMixGlyphHeight);
+    UIImage *image = [[[UIGraphicsImageRenderer alloc] initWithSize:size] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        CGFloat inset = kMixStroke / 2, left = inset, right = size.width - inset, top = inset, bottom = size.height - inset;
+        CGFloat mid = size.width / 2;
+        // Each stroke leaves its end level and turns through the middle, an S on its side.
+        UIBezierPath *going = [UIBezierPath bezierPath];
+        [going moveToPoint:CGPointMake(left, top)];
+        [going addCurveToPoint:CGPointMake(right, bottom) controlPoint1:CGPointMake(mid, top) controlPoint2:CGPointMake(mid, bottom)];
+        UIBezierPath *coming = [UIBezierPath bezierPath];
+        [coming moveToPoint:CGPointMake(left, bottom)];
+        [coming addCurveToPoint:CGPointMake(right, top) controlPoint1:CGPointMake(mid, bottom) controlPoint2:CGPointMake(mid, top)];
+        for (UIBezierPath *path in @[going, coming]) {
+            path.lineWidth = kMixStroke;
+            path.lineCapStyle = kCGLineCapRound;
+        }
+        [[UIColor colorWithWhite:0 alpha:kMixGoingAlpha] setStroke];
+        [going stroke];
+        // The one coming in is drawn over a gap cut in the one going out, so the two read apart where they cross.
+        CGContextSetBlendMode(context.CGContext, kCGBlendModeClear);
+        UIBezierPath *gap = [coming copy];
+        gap.lineWidth = kMixStroke * 2;
+        [gap stroke];
+        CGContextSetBlendMode(context.CGContext, kCGBlendModeNormal);
+        [UIColor.blackColor setStroke];
+        [coming stroke];
+    }];
+    return [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+}
+
 @interface SGRQueueToggle : UIControl
 @property (nonatomic, copy) NSString *symbol;
+// Drawn in place of a symbol (AutoMix's glyph); the symbol is then only a name for the drawing.
+@property (nonatomic, strong) UIImage *drawnGlyph;
 @property (nonatomic) BOOL on;
 @property (nonatomic, copy) void (^onTap)(void);
 - (void)setOn:(BOOL)on animated:(BOOL)animated;
@@ -819,6 +856,14 @@ static const CGFloat kListFadeTop = 12, kListFadeBottom = 24;
     _symbol = [symbol copy];
     [_glyph setSymbol:symbol animated:self.window != nil];
     self.largeContentImage = _glyph.image;
+    [self setNeedsLayout];
+}
+
+- (void)setDrawnGlyph:(UIImage *)drawnGlyph {
+    _drawnGlyph = drawnGlyph;
+    _glyph.image = drawnGlyph;
+    self.largeContentImage = drawnGlyph;
+    _drawn = nil;
     [self setNeedsLayout];
 }
 
@@ -909,7 +954,8 @@ static const CGFloat kListFadeTop = 12, kListFadeBottom = 24;
         SGPlayerAdvanceRepeat((id<SPTPlayer>)SGPlayer(), SGPlayerState().options);
     };
     // The Music app's fourth, its transitions button: AutoMix, the switch Mod Settings > AutoMix has.
-    _mix = [[SGRQueueToggle alloc] initWithSymbol:@"arrow.triangle.merge" title:SGL(@"settings.automix.title", @"AutoMix")];
+    _mix = [[SGRQueueToggle alloc] initWithSymbol:@"automix" title:SGL(@"settings.automix.title", @"AutoMix")];
+    _mix.drawnGlyph = mixGlyph();
     __weak typeof(self) weakSelf = self;
     _mix.onTap = ^{
         BOOL on = !SGFlag(SGKeyAutoMix, NO);

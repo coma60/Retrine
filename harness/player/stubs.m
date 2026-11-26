@@ -9,6 +9,21 @@
 #import "Headers/SPTPlayer.h"
 #import "Shared/Player/PlayerState.h"
 #import "Shared/Lyrics/PixieLyricsQueue.h"
+#import "Shared/Player/SGMusicSpectrum.h"
+#import "Shared/Player/SleepTimer.h"
+
+// No Spotify audio unit in the UI mock.
+void SGMusicSpectrumAddReader(void) {}
+void SGMusicSpectrumRemoveReader(void) {}
+uint64_t SGMusicSpectrumReadings(void) { return 0; }
+BOOL SGMusicSpectrumReading(uint64_t index, float levels[3]) { return NO; }
+
+// The queue's menu is linked with the player; the Spotify repeat and sleep
+// commands it offers aren't exercised by the UI mock.
+id SGPlayerAdvanceRepeat(id<SPTPlayer> player, SPTPlayerOptions *options) { return nil; }
+SGSleepTimerMode SGSleepTimerCurrentMode(void) { return SGSleepTimerOff; }
+NSDate *SGSleepTimerEnd(void) { return nil; }
+void SGSetSleepTimer(SGSleepTimerMode mode, NSTimeInterval seconds) {}
 
 #pragma mark - LyricsSettings.m's lyrics sources and Pixie lyrics queue
 

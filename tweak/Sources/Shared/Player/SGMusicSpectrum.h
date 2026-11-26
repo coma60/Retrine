@@ -4,14 +4,13 @@
 // its backdrop's analysis is made with. The Fluid backdrop (Redesigned/Kit/SGRFluidGPU.m) turns these into its contrast, saturation and the
 // copies' size, as the Music app does.
 //
-// Listening is off until someone wants it, and costs nothing then but a check per buffer. Nothing is heard while
-// Spotify's output cannot be reached.
+// The first reader attaches the analyzer and the last detaches it. No launch work or permanent render notify.
 //
-// Threading: SGMusicSpectrumSetWanted on the main thread; SGMusicSpectrumRead from any thread.
+// Threading: add/remove on main (one balanced pair per reader); read from any thread.
 #import <Foundation/Foundation.h>
 
-// Whether anything is reading the spectrum now (the backdrop flowing on screen).
-void SGMusicSpectrumSetWanted(BOOL wanted);
+void SGMusicSpectrumAddReader(void);
+void SGMusicSpectrumRemoveReader(void);
 // How many readings there have been (0 for none yet), and the levels of one of them, each 0 to 1 (NO for one not yet
 // made or long overwritten): a reader takes each reading once, in order, as the Music app's backdrop takes each report.
 uint64_t SGMusicSpectrumReadings(void);

@@ -195,7 +195,9 @@ static void outputChanged(AudioUnit output) {
 }
 void SGSleepTimerWatchOutput(void) {
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ SGPlayerWatchMusicOutput(outputChanged); });
+    dispatch_once(&once, ^{
+        if (!SGPlayerWatchMusicOutput(outputChanged)) SGLog(@"sleep timer: cannot watch the music output for clock corrections");
+    });
 }
 
 // Relative timers can retain their pre-sleep delay. Keep the actual next sample date

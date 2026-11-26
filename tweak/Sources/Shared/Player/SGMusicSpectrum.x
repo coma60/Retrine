@@ -2,6 +2,7 @@
 #import <Accelerate/Accelerate.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <stdatomic.h>
+#import <os/lock.h>
 #import "Core/SGCore.h"
 #import "Shared/Player/SpeedPitch.h"
 #import "Shared/Player/SGPCMRead.h"
@@ -36,6 +37,8 @@ static UInt32 sg_fill;
 enum { kTaps = 16, kPhases = 256, kHeld = 64 };
 static float sg_kernel[kPhases + 1][2 * kTaps];
 static double sg_kernelRate;
+static os_unfair_lock sg_kernelLock = OS_UNFAIR_LOCK_INIT;
+static dispatch_queue_t sg_kernelQueue;
 static float sg_held[kHeld];                    // the latest input samples, a ring
 static uint64_t sg_heard;                       // input samples heard since the frame began
 static double sg_next;                          // where the next 48 kHz sample falls, in input samples
@@ -50,6 +53,10 @@ static double besselI0(double x) {
 }
 
 static void makeKernel(double rate) {
+    // Only this serial queue writes the kernel. Publish the complete table; a
+    // render racing publication drops analysis, never waits for preparation.
+    if (rate == sg_kernelRate || !atomic_load(&sg_wanted)) return;
+    float kernel[kPhases + 1][2 * kTaps];
     double cutoff = MIN(1.0, kTapRate / rate) * 0.97, beta = 8;
     for (int p = 0; p <= kPhases; p++) {
         double fraction = (double)p / kPhases;
@@ -59,10 +66,13 @@ static void makeKernel(double rate) {
             double sinc = fabs(d) < 1e-9 ? 1 : sin(x) / x;
             double r = d / kTaps;
             double window = fabs(r) >= 1 ? 0 : besselI0(beta * sqrt(1 - r * r)) / besselI0(beta);
-            sg_kernel[p][k] = (float)(cutoff * sinc * window);
+            kernel[p][k] = (float)(cutoff * sinc * window);
         }
     }
+    os_unfair_lock_lock(&sg_kernelLock);
+    memcpy(sg_kernel, kernel, sizeof kernel);
     sg_kernelRate = rate;
+    os_unfair_lock_unlock(&sg_kernelLock);
 }
 
 static double loadDouble(_Atomic uint64_t *bits) {
@@ -122,10 +132,6 @@ static void take(float sample, double rate) {
         hear(sample);
         return;
     }
-    if (rate != sg_kernelRate) {
-        makeKernel(rate);
-        sg_heard = 0;
-    }
     if (sg_heard == 0) sg_next = kTaps - 1;
     sg_held[sg_heard % kHeld] = sample;
     sg_heard++;
@@ -166,12 +172,24 @@ static OSStatus rendered(void *refCon, AudioUnitRenderActionFlags *flags, const 
         sg_fill = 0;
         sg_heard = 0;
     }
+    BOOL resample = sampleRate != kTapRate;
+    if (resample) {
+        BOOL locked = os_unfair_lock_trylock(&sg_kernelLock);
+        if (!locked || sg_kernelRate != sampleRate) {
+            if (locked) os_unfair_lock_unlock(&sg_kernelLock);
+            sg_fill = 0;
+            sg_heard = 0;
+            SGPlayerEndProcessing();
+            return noErr;
+        }
+    }
     const void *left = data->mBuffers[0].mData, *right = split && channels > 1 ? data->mBuffers[1].mData : left;
     UInt32 stride = split ? 1 : channels, rightOffset = !split && channels > 1 ? 1 : 0;
     for (UInt32 i = 0; i < frames; i++) {
         UInt32 at = i * stride;
         take(0.5f * (SGPCMReadSample(left, at, bytes, isFloat, fraction) + SGPCMReadSample(right, at + rightOffset, bytes, isFloat, fraction)), sampleRate);
     }
+    if (resample) os_unfair_lock_unlock(&sg_kernelLock);
     SGPlayerEndProcessing();
     return noErr;
 }
@@ -189,21 +207,43 @@ static void readFormat(AudioUnit unit) {
         return;
     }
     storeDouble(&sg_sampleRateBits, format.mSampleRate);
+    double rate = format.mSampleRate;
+    if (rate != kTapRate) dispatch_async(sg_kernelQueue, ^{ makeKernel(rate); });
     atomic_store(&sg_layout, (uint64_t)format.mFormatFlags | (uint64_t)(format.mChannelsPerFrame & 0xffff) << 32 | (uint64_t)bytes << 48);
 }
 
 static void listenTo(AudioUnit unit) {
+    // Watchers are serialized by the output lock, before disposal of the old unit.
+    static AudioUnit attached;
+    if (attached) AudioUnitRemoveRenderNotify(attached, rendered, attached);
+    attached = NULL;
+    atomic_store(&sg_fresh, true);
     if (!unit || !SGPlayerMusicOutputRunning()) return;
-    AudioUnitRemoveRenderNotify(unit, rendered, unit);
     readFormat(unit);
     OSStatus status = AudioUnitAddRenderNotify(unit, rendered, unit);
     if (status != noErr) SGLog(@"music spectrum: the render notify could not be added (%d)", (int)status);
+    else attached = unit;
 }
 
-void SGMusicSpectrumSetWanted(BOOL wanted) {
-    // Wanted again, it starts its frame anew, as the Music app's tap does when it starts.
-    if (wanted && !atomic_exchange(&sg_wanted, true)) atomic_store(&sg_fresh, true);
-    if (!wanted) atomic_store(&sg_wanted, false);
+static NSUInteger sg_readers;
+static BOOL sg_registered;
+
+void SGMusicSpectrumAddReader(void) {
+    if (sg_readers++ != 0) return;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sg_fft = vDSP_create_fftsetup(kLog2N, kFFTRadix2);
+        sg_kernelQueue = dispatch_queue_create("spotifyglass.fluid.kernel", DISPATCH_QUEUE_SERIAL);
+    });
+    atomic_store(&sg_wanted, true);
+    sg_registered = sg_fft && SGPlayerSetDemandWatcher(listenTo, YES);
+    if (!sg_registered) SGLog(@"music spectrum: analyzer or output watcher unavailable");
+}
+
+void SGMusicSpectrumRemoveReader(void) {
+    if (--sg_readers != 0) return;
+    atomic_store(&sg_wanted, false);
+    if (sg_registered) SGPlayerSetDemandWatcher(listenTo, NO);
 }
 
 uint64_t SGMusicSpectrumReadings(void) {
@@ -218,9 +258,4 @@ BOOL SGMusicSpectrumReading(uint64_t index, float levels[3]) {
         memcpy(&levels[b], &bits, sizeof bits);
     }
     return YES;
-}
-
-%ctor {
-    sg_fft = vDSP_create_fftsetup(kLog2N, kFFTRadix2);
-    if (!SGPlayerWatchMusicOutput(listenTo)) SGLog(@"music spectrum: Spotify's output cannot be reached");
 }

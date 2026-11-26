@@ -2669,8 +2669,9 @@ blurred behind the lyrics as a clip is, under a black scrim of 45 % at the top f
 a later clip replaces it, Black and Your Photo win, and Low Power Mode, Reduce Motion or serious heat keeps the ordinary cover;
 PlayerMotion.x, harness/player/ `still`),
 while Fluid is chosen a Style menu, Light or Smooth (spotifyglass.redesign.fluid.renderer, offered where Metal exists),
-its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*); the Style menu is gone
-(its key is kept, unread). Fluid is drawn on the GPU as the Music app draws its backdrop (Redesigned/Kit/SGRFluidGPU.m):
+its sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*).
+Light (the default) turns preblurred Core Animation copies, with no Metal renderer or music analysis.
+Smooth draws on the GPU (Redesigned/Kit/SGRFluidGPU.m):
 three copies of the cover, 1.4, 0.7 and 0.7 units across (a unit half the visible rect's height on a phone) at (0, 0),
 (-0.25, 0.15) and (0.7, 0.7), each turning clockwise about its own center once in 120, 70 and 90 s, the third carried
 about the middle by the first's turn, drawn opaque into a quarter-size half-float picture (as the Music app's, so what the saturation pushes past 0 or 1 is
@@ -2687,11 +2688,11 @@ unwindowed 2048-point FFT at 48 kHz, resampled to it if need be, 23.4 a second, 
 frame's loudness, 20 log10 of its power over 120, then by an intensity of 0.2): each reading taken once into
 the last four and averaged, held at its peak and let fall, followed and eased, bass raising the contrast (0.076), treble
 the saturation (0.166) and bass and middle growing the picture (0.33 m^2). Paused, one empty reading goes in and no
-more, so the average of the last four, and what the music grew, holds. Every reading goes in, in order. Its clock,
-settling and hearing step once per frame drawn, 1/60 s each at 60 frames a second, playing or paused, as the Music app's
-count frames: a late frame does not catch up.
-The Core Animation copies (Light) show only
-until its first frame, or where Metal cannot draw. Checked by simulation only, not on a device
+more. The first visible, moving Smooth consumer attaches the spectrum to the current output;
+the last one stopping detaches it. Native installs no spectrum watcher, FFT setup or render notify.
+Format changes discard partial frames; non-48 kHz analysis waits for a kernel prepared off the render thread, never the other way around.
+For Smooth, the Light copies also stand in until the first drawable and when Metal cannot draw.
+A covered replacement uncovers its new copies first, not the old drawable. Checked by simulation only, not on a device
 (both styles, switched both ways while moving, a cover change mid-flow). The sliders:
 Speed (25-300 %, how fast the three blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
 far from the middle the two smaller copies sit and how much they show, opaque at 100; at none the large copy turns alone), Blur (2-32, 160 pt at the standard 24 and in proportion), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
@@ -2853,8 +2854,11 @@ declare the classes a feature needs in `Headers/` only when a hook calls into th
 
 Fluid's cost (Redesigned/Kit/SGRFluidGPU.m): the blur runs on a picture small enough that its Gaussian spans about
 10 texels (a sixteenth of the drawable at the standard 160 pt, read through the cover's mipmaps), the display link
-prefers 60 Hz with 120 allowed (it asked for 120 and drew 60, holding the whole screen at 120 Hz), and a held picture,
-Low Power Mode or a serious thermal state draw at 30 frames a second with the clock counting the same time.
+allows 120 Hz UI motion but submits at most 30 frames a second. Pausing, Reduce Motion, Low Power Mode
+and serious heat stop the link after the mesh settles or a required still is drawn. Covered or backgrounded
+fields submit nothing. The backing height grows in 256 pt steps; the visible rect places the copies within it.
+There are two drawables and at most one pending off-main acquisition per layer. Outside a cover fade the
+copy pass samples only the current cover.
 
 Layout against the Music app's player (3x measurements, 402 x 874 pt): the footer row's middle 32 pt over the safe
 area's bottom (kRowAboveSafeArea), the gaps from the artist to the bar, the bar to play and play to the volume row 35,

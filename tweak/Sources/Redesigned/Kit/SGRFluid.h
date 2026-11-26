@@ -5,7 +5,7 @@
 //
 // The Player page tunes it with six sliders (Redesigned/Player/PlayerSettings.m), stored as whole numbers under
 // spotifyglass.redesign.fluid.<speed|warp|blur|saturation|brightness|grain>. Every layer follows a change at once.
-// The renderer key (spotifyglass.redesign.fluid.renderer) is kept but no longer read.
+// spotifyglass.redesign.fluid.renderer chooses preblurred Light copies (default) or the Smooth GPU pipeline.
 //
 // Threading: main thread only; the cover's preparation runs off it.
 #import <UIKit/UIKit.h>

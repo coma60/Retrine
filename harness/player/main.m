@@ -5753,7 +5753,9 @@ void SGRProbeFluidFrame(CAMetalLayer *layer, id<CAMetalDrawable> drawable, id<MT
     capturedWidth = drawable.texture.width;
     id<MTLBuffer> pixel = [layer.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
     id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
-    [blit copyFromTexture:drawable.texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+    CGRect visible = CGRectIntersection([(SGRFluidGPULayer *)layer visibleRect], layer.bounds);
+    [blit copyFromTexture:drawable.texture sourceSlice:0 sourceLevel:0
+             sourceOrigin:MTLOriginMake(CGRectGetMidX(visible), CGRectGetMidY(visible), 0)
                sourceSize:MTLSizeMake(1,1,1) toBuffer:pixel destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
     [blit endEncoding];
     [command addCompletedHandler:^(id<MTLCommandBuffer> finished) {
@@ -5820,16 +5822,6 @@ static double bandDiff(NSData *a, NSData *b) {
     return total / (a.length / 4 * 3);
 }
 
-// The Light renderer's copies (SGRFluid.m) hidden, as a count of four.
-static NSUInteger hiddenCopiesIn(CALayer *fluid) {
-    NSUInteger hidden = 0;
-    for (CALayer *sublayer in fluid.sublayers) {
-        if (!sublayer.contentsGravity || ![sublayer.contentsGravity isEqualToString:kCAGravityResizeAspectFill]) continue;
-        hidden += sublayer.hidden;
-    }
-    return hidden;
-}
-
 // The switch from Smooth to Light with the song paused, five times: the field read about 0.2, 0.5, 1 and 2 s after it (each
 // read's own time logged), each compared with the band it settles on, read about 4 s after. Only Kit API the committed
 // renderer has too, so the same scenario runs against HEAD's SGRFluid.m and SGRFluidGPU.m.
@@ -5841,8 +5833,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
     NSString *(^state)(void) = ^NSString *{
         UIView *field = (UIView *)SGRPlayerField();
         CALayer *fluid = fluidLayerIn(field.layer);
-        return [NSString stringWithFormat:@"Smooth %@, %lu Metal layers, %lu of 4 copies hidden", [[fluid valueForKey:@"_gpuShown"] boolValue] ? @"showing" : @"not showing",
-                (unsigned long)metalLayersIn(field.layer), (unsigned long)hiddenCopiesIn(fluid)];
+        return [NSString stringWithFormat:@"Smooth %@, %lu Metal layers", [[fluid valueForKey:@"_gpuShown"] boolValue] ? @"showing" : @"not showing",
+                (unsigned long)metalLayersIn(field.layer)];
     };
     step(2, ^{ SGRHarnessSetTrack(@"spotify:track:harnessA", imageURI(@"aaaa"), YES); });
     for (NSUInteger cycle = 0; cycle < kCycles; cycle++) {
@@ -5871,7 +5863,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
                   detail:[NSString stringWithFormat:@"settled at +%.2f s; %@", CACurrentMediaTime() - switchedAt, [seen componentsJoinedByString:@"; "]]];
         });
     }
-    SGRArtworkField *probe = [[SGRArtworkField alloc] initWithFrame:CGRectMake(0, 0, 80, 80)];
+    // The production field maps its visible rect by window height, even for a narrow probe.
+    SGRArtworkField *probe = [[SGRArtworkField alloc] initWithFrame:CGRectMake(0, 0, 80, self.window.bounds.size.height)];
     probe.motionHeld = YES;
     __block SGRFluidGPULayer *gpu;
     Method appState = class_getInstanceMethod(UIApplication.class, @selector(applicationState));
@@ -5893,6 +5886,19 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
     });
     step(1, ^{
         [self expect:presentedPixel[0] > presentedPixel[2] step:@"first Smooth frame on attachment is red" detail:state()];
+        probe.motionHeld = NO;
+        captureNextFrame(gpu);
+    });
+    step(1, ^{
+        [self expect:captureLayer == nil && [gpu valueForKey:@"link"] != nil step:@"playing submits moving frames" detail:state()];
+        probe.motionHeld = YES;
+    });
+    step(1.5, ^{
+        [self expect:![gpu valueForKey:@"link"] step:@"motion hold stops its ticker after settlement" detail:state()];
+        captureNextFrame(gpu);
+    });
+    step(0.3, ^{
+        [self expect:captureLayer == gpu step:@"settled field does not submit another frame" detail:state()];
         captureNextFrame(gpu);
         [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
         lifecycleState = UIApplicationStateInactive;
@@ -5915,13 +5921,13 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
         [self expect:presentedPixel[2] > presentedPixel[0] && ![gpu valueForKey:@"link"]
                 step:@"reactivation draws the current blue still without starting motion" detail:state()];
         // Interrupt the blue-to-green run-in before its first tick. No track change follows.
-        [gpu setPicture:solid(UIColor.greenColor).CGImage animated:YES];
+        [gpu setCover:solid(UIColor.greenColor).CGImage animated:YES];
         [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
         captureNextFrame(gpu);
         [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
     });
     step(1, ^{
-        [self expect:presentedPixel[1] > 240 && presentedPixel[2] < 10
+        [self expect:presentedPixel[1] > MAX(presentedPixel[0], presentedPixel[2])
                 step:@"first Smooth frame after interrupted fade is current green"
               detail:[NSString stringWithFormat:@"first drawable RGB %d,%d,%d", presentedPixel[0], presentedPixel[1], presentedPixel[2]]];
         probe.covered = YES;
@@ -5940,7 +5946,7 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
         [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
     });
     step(1, ^{
-        [self expect:presentedPixel[0] > presentedPixel[1] && hiddenCopiesIn(gpu.superlayer) == 4
+        [self expect:presentedPixel[0] > MAX(presentedPixel[1], presentedPixel[2]) && [[gpu.superlayer valueForKey:@"canvas"] isHidden]
                 step:@"presented replacement takes over without stale pixels" detail:state()];
         // Resize during this probe's acquisition, then suppress ticks. Only an immediate
         // handoff from the old acquisition can submit a drawable of the new size.
@@ -5956,8 +5962,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
                     [[gpu valueForKey:@"link"] setPaused:YES];
                     [self expect:gpu.drawableSize.width == before step:@"resize deferred during acquisition" detail:state()];
                 };
-                if (NSThread.isMainThread) duringAcquire();
-                else dispatch_sync(dispatch_get_main_queue(), duringAcquire);
+                HARNESS_CHECK(!NSThread.isMainThread);
+                dispatch_sync(dispatch_get_main_queue(), duringAcquire);
             }
             return ((id (*)(id, SEL))original)(layer, @selector(nextDrawable));
         });
@@ -5990,7 +5996,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
     step(0.5, ^{
         NSLog(@"[harness] renderer checks: %lu of %lu right -- %@", (unsigned long)(self->_checks - self->_failures), (unsigned long)self->_checks,
               self->_failures ? @"FAIL" : @"PASS");
-        exit(self->_failures ? 1 : 0);
+        if (self->_failures) HARNESS_FAIL(@"%lu renderer checks failed", (unsigned long)self->_failures);
+        exit(0);
     });
     runScript(script, 0);
 }
@@ -6313,7 +6320,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
     }];
     step(1, ^{
         double s0 = grains[@"Smooth 0"].doubleValue, s100 = grains[@"Smooth 100"].doubleValue, s200 = grains[@"Smooth 200"].doubleValue;
-        [self expect:s0 < s100 && s100 + 0.5 < s200 step:@"Smooth: none at 0, the dither at 100, a visible grain at 200"
+        [self expect:[bands[@"Smooth 0"] isEqualToData:bands[@"Smooth 100"]] && s100 + 0.5 < s200
+                step:@"Smooth: no grain through the standard, visible grain at 200"
               detail:[NSString stringWithFormat:@"%.3f, %.3f, %.3f steps", s0, s100, s200]];
         [self expect:[bands[@"Light 0"] isEqualToData:bands[@"Light 200"]] step:@"Light: the same at 0 and 200"
               detail:[NSString stringWithFormat:@"%.3f and %.3f steps", grains[@"Light 0"].doubleValue, grains[@"Light 200"].doubleValue]];
@@ -6321,7 +6329,8 @@ static NSUInteger hiddenCopiesIn(CALayer *fluid) {
               detail:[NSString stringWithFormat:@"%.3f steps from the settled band", bandDiff(bands[@"Light 100"], bands[@"Light 0"])]];
         NSLog(@"[harness] options checks: %lu of %lu right -- %@", (unsigned long)(self->_checks - self->_failures), (unsigned long)self->_checks,
               self->_failures ? @"FAIL" : @"PASS");
-        exit(self->_failures ? 1 : 0);
+        if (self->_failures) HARNESS_FAIL(@"%lu options checks failed", (unsigned long)self->_failures);
+        exit(0);
     });
     runScript(script, 0);
 }

@@ -33,21 +33,13 @@ static const float kBlurPoints = 160;
 static const float kHistoryWeight[4] = {0.1f, 0.2f, 0.3f, 0.4f};
 static const float kPeakFall[3] = {1.0f / 50, 1.0f / 100, 1.0f / 1000};
 static const float kContrastPerBass = 0.076f, kSaturationPerTreble = 0.166f, kGrowth = 0.33f, kGrowthMiddle = 0.1f;
-// The clock and settling count frames, not seconds: each frame is 1/60 s (1/600 under Reduce Motion), at 60
-// frames a second, so real time. The clock runs on every frame it draws,
-// playing or paused: only its settling follows the playback. Going from held to flowing takes 2/60 s of its clock per
-// frame over 0.8 s, eased (0.42, 0, 0.58, 1).
-static const double kFrameClock = 1.0 / 60, kFrameClockReduced = 1.0 / 600, kSettleClock = 0.8;
+static const double kSettleClock = 0.8;
 static const float kHeldZoom = 1.25f;
 static const double kBreathPeriod = 3.5;
 static const CFTimeInterval kRunIn = 1.4;
 // Held still, a new cover crossfades in over the Music app's backdrop crossfade (0.8 s).
 static const CFTimeInterval kBackdropCrossfade = 0.8;
-static const double kDrawFramesPerSecond = 60;
-// Held still (paused, or the settling done), the copies only turn, once in 70 to 120 s and breathe once in 22 s: a
-// thirtieth of a second moves them less than a fifth of a degree, so the picture is drawn half as often. Low Power Mode
-// and a hot phone (thermal state serious or worse) draw at that rate throughout.
-static const double kHeldFramesPerSecond = 30;
+static const double kDrawFramesPerSecond = 30;
 // The blur works on a picture small enough that its Gaussian spans about this many texels: the Music app blurs 160 pt,
 // which leaves nothing finer than tens of points, so a picture of 16 pt texels holds all of it. Drawn a quarter of the
 // drawable as before, a 160 pt blur took 241 taps a texel each way, every frame; here it takes about 51.
@@ -210,14 +202,20 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    v.copy = iid;\n"
 "    return v;\n"
 "}\n"
-"fragment float4 copyFragment(CV in [[stage_in]], constant CopyU *u [[buffer(0)]],\n"
-"                             texture2d<float> from [[texture(0)]], texture2d<float> to [[texture(1)]], sampler s [[sampler(0)]]) {\n"
-"    CopyU c = u[in.copy];\n"
-"    float3 rgb = mix(from.sample(s, in.uv).rgb, to.sample(s, in.uv).rgb, c.progress);\n"
+"static float4 gradeCopy(float3 rgb, CopyU c) {\n"
 "    rgb = mix(rgb, float3(0.0), c.scrim);\n"
 "    rgb = (rgb - 0.5) * c.contrast + 0.5;\n"
 "    float l = dot(rgb, float3(0.2126, 0.7152, 0.0722));\n"
 "    return float4(l + c.saturation * (rgb - l), 1.0);\n"
+"}\n"
+"fragment float4 copyFragment(CV in [[stage_in]], constant CopyU *u [[buffer(0)]],\n"
+"                             texture2d<float> to [[texture(1)]], sampler s [[sampler(0)]]) {\n"
+"    return gradeCopy(to.sample(s, in.uv).rgb, u[in.copy]);\n"
+"}\n"
+"fragment float4 fadeFragment(CV in [[stage_in]], constant CopyU *u [[buffer(0)]],\n"
+"                             texture2d<float> from [[texture(0)]], texture2d<float> to [[texture(1)]], sampler s [[sampler(0)]]) {\n"
+"    CopyU c = u[in.copy];\n"
+"    return gradeCopy(mix(from.sample(s, in.uv).rgb, to.sample(s, in.uv).rgb, c.progress), c);\n"
 "}\n"
 // One triangle past the corners covers the target; uv runs 0 to 1 down and across it.
 "vertex V fullVertex(uint id [[vertex_id]]) {\n"
@@ -298,7 +296,7 @@ BOOL SGRFluidGPUAvailable(void) {
 // What every layer shares, made once on the main thread; the shaders compile off it.
 static id<MTLDevice> sDevice;
 static id<MTLCommandQueue> sQueue;
-static id<MTLRenderPipelineState> sCopy, sBlur, sShow;
+static id<MTLRenderPipelineState> sCopy, sFade, sBlur, sShow;
 static id<MTLSamplerState> sLinear;
 static id<MTLTexture> sTable;
 static BOOL sFailed;
@@ -308,7 +306,7 @@ static void finish(NSError *error) {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSArray<void (^)(void)> *waiting = sWaiting;
         sWaiting = nil;
-        if (!sCopy || !sBlur || !sShow) {
+        if (!sCopy || !sFade || !sBlur || !sShow) {
             sFailed = YES;
             SGLog(@"redesign kit: the Fluid shader failed, Light stays: %@", error.localizedDescription ?: @"no reason");
             return;
@@ -368,10 +366,14 @@ static void whenReady(void (^ready)(void)) {
     [device newLibraryWithSource:kShader options:nil completionHandler:^(id<MTLLibrary> library, NSError *error) {
         if (!library) { finish(error); return; }
         NSError *failure = nil;
-        sCopy = pipeline(library, @"copyVertex", @"copyFragment", kPictureFormat, &failure);
-        if (sCopy) sBlur = pipeline(library, @"fullVertex", @"blurFragment", kPictureFormat, &failure);
-        if (sBlur) sShow = pipeline(library, @"showVertex", @"showFragment", MTLPixelFormatBGRA8Unorm, &failure);
-        finish(failure);
+        id<MTLRenderPipelineState> copy = pipeline(library, @"copyVertex", @"copyFragment", kPictureFormat, &failure);
+        id<MTLRenderPipelineState> fade = copy ? pipeline(library, @"copyVertex", @"fadeFragment", kPictureFormat, &failure) : nil;
+        id<MTLRenderPipelineState> blur = fade ? pipeline(library, @"fullVertex", @"blurFragment", kPictureFormat, &failure) : nil;
+        id<MTLRenderPipelineState> show = blur ? pipeline(library, @"showVertex", @"showFragment", MTLPixelFormatBGRA8Unorm, &failure) : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            sCopy = copy; sFade = fade; sBlur = blur; sShow = show;
+            finish(failure);
+        });
     }];
 }
 
@@ -390,6 +392,7 @@ static id<MTLTexture> textureOf(id picture) {
                                                                                          width:width height:height mipmapped:YES];
     described.usage = MTLTextureUsageShaderRead;
     id<MTLTexture> texture = [sDevice newTextureWithDescriptor:described];
+    if (!texture) { CGContextRelease(bitmap); return nil; }
     [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0
                  withBytes:CGBitmapContextGetData(bitmap) bytesPerRow:width * 4];
     CGContextRelease(bitmap);
@@ -439,6 +442,10 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     MeshUniforms _mesh;
     CADisplayLink *_link;
     BOOL _ready, _dirty, _drewOnce, _firstPending;
+    BOOL _acquiring;
+    BOOL _spectrumWanted;
+    CGSize _wantedSize;
+    NSUInteger _pictureRevision, _misses;
     BOOL _resigning;
     int _firstFailures;
 }
@@ -455,6 +462,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     makeMesh(&_mesh);
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     self.framebufferOnly = YES;
+    self.maximumDrawableCount = 2;
     self.opaque = YES;
     self.contentsScale = 1;
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
@@ -480,6 +488,7 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 }
 
 - (void)dealloc {
+    if (_spectrumWanted) SGMusicSpectrumRemoveReader();
     [_link invalidate];
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }
@@ -503,6 +512,9 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 
 - (void)setCover:(CGImageRef)cover animated:(BOOL)animated {
     if (!cover) return;
+    _pictureRevision++;
+    _firstPending = NO;
+    if (_held) _drewOnce = NO;
     if (animated && _toPicture && _drewOnce && [self mayDraw]) {
         // One still coming in is cut short: the new one comes in over the one it was bringing.
         _fromPicture = _toPicture;
@@ -604,9 +616,9 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
 - (void)fit {
     CGSize bounds = self.bounds.size;
     CGSize size = CGSizeMake(MAX(1, round(bounds.width * self.contentsScale)), MAX(1, round(bounds.height * self.contentsScale)));
-    if (CGSizeEqualToSize(size, self.drawableSize)) return;
-    self.drawableSize = size;
-    _copies = _across = _blurred = nil;
+    if (CGSizeEqualToSize(size, _wantedSize)) return;
+    _wantedSize = size;
+    if (!_acquiring) self.drawableSize = size;
     _dirty = YES;
     [self update];
 }
@@ -641,10 +653,10 @@ static float easeInOut(float x) {
 // holds, and so does what the music had grown, as the Music app's does.
 - (void)hear {
     uint64_t readings = SGMusicSpectrumReadings();
-    if (_reading > readings) _reading = readings;
+    if (!_moving || _reading > readings) _reading = readings;
     for (; _reading < readings; _reading++) {
         float levels[3];
-        if (_moving && SGMusicSpectrumReading(_reading, levels)) [self take:levels];
+        if (SGMusicSpectrumReading(_reading, levels)) [self take:levels];
     }
     for (int b = 0; b < 3; b++) {
         float average = 0;
@@ -654,7 +666,8 @@ static float easeInOut(float x) {
     }
 }
 
-// Ticks whenever it may draw, as the Music app's view does: its clock turns the copies while the music is paused too.
+// The field owns playback, accessibility and power holds. Only the finite settle/fade
+// or a dirty still can keep the link after motion stops.
 - (void)update {
     if ((_held || _resigning) && _progress < 1) {
         _fromPicture = nil;
@@ -663,16 +676,21 @@ static float easeInOut(float x) {
         _dirty = YES;
     }
     BOOL eligible = _ready && _toPicture && [self mayDraw] && _firstFailures < 3;
-    BOOL wants = eligible;
-    SGMusicSpectrumSetWanted(eligible && _moving);
+    BOOL wants = eligible && self.bounds.size.width >= 1 && self.bounds.size.height >= 1 &&
+                 (_moving || _settle > 0 || _progress < 1 || _dirty);
+    BOOL spectrum = wants && _moving;
+    if (spectrum != _spectrumWanted) {
+        _spectrumWanted = spectrum;
+        if (spectrum) {
+            _reading = SGMusicSpectrumReadings();
+            SGMusicSpectrumAddReader();
+        } else SGMusicSpectrumRemoveReader();
+    }
     if (wants && !_link) {
         SGRFluidTicker *ticker = [SGRFluidTicker new];
         ticker.layer = self;
         _link = [CADisplayLink displayLinkWithTarget:ticker selector:@selector(tick:)];
-        // 120 Hz stays allowed so the player's own transitions are not held to this; it draws at 60.
-        // 120 Hz stays allowed, preferred 60: the player's own transitions and scrolling still run at 120, while the
-        // backdrop alone no longer holds the whole screen at 120 Hz (it was asking for 120 and drawing 60).
-        _link.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 60);
+        _link.preferredFrameRateRange = CAFrameRateRangeMake(15, 120, kDrawFramesPerSecond);
         _last = 0;
         [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     } else if (!wants && _link) {
@@ -687,21 +705,11 @@ static float easeInOut(float x) {
         return;
     }
     CFTimeInterval now = link.timestamp;
-    // The display's 120 Hz cadence is accepted without drawing more than 60 times a second.
-    // A frame is skipped only when it comes well inside one sixtieth of a second, so 60 Hz draws every frame and
-    // 120 Hz every other one, evenly.
-    NSProcessInfo *process = NSProcessInfo.processInfo;
-    BOOL calm = (!_moving && _settle <= 0 && _progress >= 1) || process.lowPowerModeEnabled
-        || process.thermalState >= NSProcessInfoThermalStateSerious;
-    double rate = calm ? kHeldFramesPerSecond : kDrawFramesPerSecond;
-    if (_last > 0 && now - _last < 0.75 / rate) return;
+    if (_acquiring || _firstPending || (_last > 0 && now - _last + 1e-6 < 1.0 / kDrawFramesPerSecond)) return;
     CFTimeInterval step = _last > 0 ? MIN(0.1, now - _last) : 0;
     _last = now;
-    // One of its frames per frame drawn, as the Music app counts them: a late frame does not catch up.
-    double clock = SGRReduceMotion() ? kFrameClockReduced : kFrameClock;
-    // Its clock still counts its own frames: a frame drawn at the held rate is two of them, so time runs as before.
-    _time += clock * _rate * (kDrawFramesPerSecond / rate);
-    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? 1 : -1) * 2 * clock * (kDrawFramesPerSecond / rate) / kSettleClock));
+    if (_moving) _time += step * _rate;
+    _settle = (float)MAX(0.0, MIN(1.0, _settle + (_moving ? step : -step) / kSettleClock));
     [self hear];
     if (_progress < 1) {
         _progress = (float)MIN(1.0, _progress + step / MAX(0.05, _length));
@@ -711,10 +719,35 @@ static float easeInOut(float x) {
         }
     }
     _dirty = YES;
-    [self draw];
+    [self acquireFrame];
 }
 
-- (BOOL)draw {
+- (void)acquireFrame {
+    if (_acquiring || _firstPending) return;
+    _acquiring = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+        id<CAMetalDrawable> output = [self nextDrawable];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_acquiring = NO;
+            if (!CGSizeEqualToSize(self.drawableSize, self->_wantedSize)) {
+                self.drawableSize = self->_wantedSize;
+                if (self->_link && [self mayDraw]) [self acquireFrame];
+                return;
+            }
+            if (!self->_link || ![self mayDraw]) return;
+            CGSize size = self.drawableSize;
+            if (output && output.texture.width == (NSUInteger)size.width && output.texture.height == (NSUInteger)size.height
+                && [self draw:output]) self->_misses = 0;
+            else if (!self->_moving && self->_progress >= 1 && ++self->_misses >= 30) {
+                self->_dirty = NO;
+                self->_misses = 0;
+            }
+            [self update];
+        });
+    });
+}
+
+- (BOOL)draw:(id<CAMetalDrawable>)output {
     CGRect bounds = self.bounds;
     if (bounds.size.width < 1 || bounds.size.height < 1) return NO;
     if (!_to) _to = textureOf(_toPicture);
@@ -726,13 +759,12 @@ static float easeInOut(float x) {
     NSUInteger divisor = MIN(kMostDivisor, MAX(kLeastDivisor, (NSUInteger)floorf(sigmaDrawable / kBlurTexels)));
     NSUInteger qw = MAX((NSUInteger)4, (NSUInteger)drawable.width / divisor), qh = MAX((NSUInteger)4, (NSUInteger)drawable.height / divisor);
     if (!_copies || _copies.width != qw || _copies.height != qh) {
-        _copies = target(qw, qh);
-        _across = target(qw, qh);
-        _blurred = target(qw, qh);
+        id<MTLTexture> copies = target(qw, qh), across = target(qw, qh), blurred = target(qw, qh);
+        if (!copies || !across || !blurred) return NO;
+        _copies = copies;
+        _across = across;
+        _blurred = blurred;
     }
-    if (!_copies || !_across || !_blurred) return NO;
-    id<CAMetalDrawable> output = [self nextDrawable];
-    if (!output) return NO;
 
     // Where the copies go: the unit is half the visible rect's longer side, about its middle, in the layer's clip space.
     CGRect visible = CGRectIsEmpty(_visibleRect) ? bounds : _visibleRect;
@@ -780,10 +812,10 @@ static float easeInOut(float x) {
     pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     pass.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> encoder = [buffer renderCommandEncoderWithDescriptor:pass];
-    [encoder setRenderPipelineState:sCopy];
+    [encoder setRenderPipelineState:_from ? sFade : sCopy];
     [encoder setVertexBytes:copies length:sizeof(copies) atIndex:0];
     [encoder setFragmentBytes:copies length:sizeof(copies) atIndex:0];
-    [encoder setFragmentTexture:_from ?: _to atIndex:0];
+    if (_from) [encoder setFragmentTexture:_from atIndex:0];
     [encoder setFragmentTexture:_to atIndex:1];
     [encoder setFragmentSamplerState:sLinear atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:drawn];
@@ -843,26 +875,40 @@ static float easeInOut(float x) {
     [shown drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:kMeshCells * kMeshCells * 6];
     [shown endEncoding];
 
-    if (!_drewOnce && !_firstPending && _firstFailures < 3) {
+    self.presentsWithTransaction = !_drewOnce;
+    if (!_drewOnce) {
         _firstPending = YES;
-        // Settled once the GPU has finished it and a frame or so later, when it is on screen: the layer lies under
-        // the Light copies, so going a little late shows nothing missing.
+        // Uncover this revision in the transaction presenting it, never an old completion.
+        NSUInteger revision = _pictureRevision;
         __weak SGRFluidGPULayer *weakSelf = self;
         [buffer addCompletedHandler:^(id<MTLCommandBuffer> done) {
             BOOL completed = done.status == MTLCommandBufferStatusCompleted;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((completed ? 0.1 : 0) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [weakSelf firstFrameCompleted:completed];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                SGRFluidGPULayer *layer = weakSelf;
+                if (!layer || revision != layer->_pictureRevision) return;
+                layer->_firstPending = NO;
+                if (![layer mayDraw] || !CGSizeEqualToSize(drawable, layer->_wantedSize)) {
+                    layer->_dirty = YES;
+                    [layer update];
+                    return;
+                }
+                [CATransaction begin];
+                if (completed) [output present];
+                [layer firstFrameCompleted:completed];
+                [CATransaction commit];
             });
         }];
-    }
-    [buffer presentDrawable:output];
+    } else [buffer presentDrawable:output];
+#ifdef SGR_FLUID_FRAME_PROBE
+    extern void SGRProbeFluidFrame(CAMetalLayer *, id<CAMetalDrawable>, id<MTLCommandBuffer>);
+    SGRProbeFluidFrame(self, output, buffer);
+#endif
     [buffer commit];
     _dirty = NO;
     return YES;
 }
 
 - (void)firstFrameCompleted:(BOOL)completed {
-    _firstPending = NO;
     if (_drewOnce) return;
     if (!completed) {
         SGLog(@"redesign kit: Fluid's first frame failed on the GPU (%d), Light stays", ++_firstFailures);
@@ -873,7 +919,6 @@ static float easeInOut(float x) {
     _drewOnce = YES;
     SGLog(@"redesign kit: Fluid drew its first frame at %.0fx%.0f", self.drawableSize.width, self.drawableSize.height);
     void (^drawn)(void) = _drawn;
-    _drawn = nil;
     if (drawn) drawn();
 }
 

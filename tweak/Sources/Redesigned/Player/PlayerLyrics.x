@@ -913,17 +913,21 @@ static void forgetPreview(void) {
 // flick on sent them away (sg_flickedAlone).
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldReceiveTouch:(UITouch *)touch {
     UIView *host = sg_host;
-    if (!host || sg_flickedAlone) return NO;
+    if (!host) return NO;
     for (UIView *v = touch.view; v; v = v.superview) {
         if ([v isKindOfClass:SGRSingButton.class]) return NO;
     }
     SGRPlayerLyricsOverlay *overlay = objc_getAssociatedObject(host, &kOverlayKey);
+    // Plain text never seeks or resumes following the song after a flick.
+    if (overlay.lyrics.untimed) return YES;
+    if (sg_flickedAlone) return NO;
     if (overlay.superview && [overlay.lyrics touchIsOnLine:touch]) return NO;
     SGRLyricsLayout l = layoutIn(host, sg_wide);
     if (l.ok && [touch locationInView:host].y <= CGRectGetMaxY(l.stage)) return NO;
     return YES;
 }
 - (void)sgr_woke {
+    sg_flickedAlone = NO;
     setAlone(NO, YES);
     restartRest();
 }
@@ -968,7 +972,7 @@ static void setAlone(BOOL alone, BOOL animated) {
         if (overlay.superview) {
             // The mic goes with the controls as the Music app's does, unless it is to stay or Sing is on.
             SGSingState sing = SGSingCurrentState();
-            overlay.lyrics.keepsSing = SGFlag(SGRKeyLyricsKeepMic, NO) || sing >= SGSingStateWaiting;
+            overlay.lyrics.keepsSing = SGFlag(SGRKeyLyricsKeepMic, YES) || sing >= SGSingStateWaiting;
             overlay.lyrics.extrasHidden = alone;
         }
         fadeControls(alone);

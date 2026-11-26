@@ -22,7 +22,8 @@ if mode == "seams":
         replace("SGMotionAlbumCover(artist, album, pixels,", "SGRAlbumTestAlbumCover(artist, album, pixels,")
     if "SGMotionAlbumRowMatcher(" in source:  # earlier BASELINE revisions have no row lookup
         replace("SGMotionAlbumRowMatcher(", "SGRAlbumTestRowMatcher(")
-    if "SGMotionPageIdentifierCover(" in source:
+    # Only the current hero runs the identifier scenarios. Baselines draw the off hero with their own API.
+    if sys.argv[3] == "0":
         replace("SGMotionPageIdentifierCover(", "SGRAlbumTestIdentifierCover(")
     if "SGMotionPageStillEditionCover(" in source:
         replace("SGMotionPageStillEditionCover(", "SGRAlbumTestStillEditionCover(")

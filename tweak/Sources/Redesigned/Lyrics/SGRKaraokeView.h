@@ -37,6 +37,7 @@
 @property (nonatomic) CGFloat anchorTop;
 // The ascent of the lines' font, so a caller can rest the sung line's baseline rather than its top.
 @property (nonatomic, readonly) CGFloat lineAscent;
+@property (nonatomic, readonly) BOOL untimed;
 // Whether a touch is on a line it would seek to when tapped (not a corner control, a bubble or the credit), for a
 // host that lets a tap on the lines stay theirs while its controls are hidden.
 - (BOOL)touchIsOnLine:(UITouch *)touch;

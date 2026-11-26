@@ -920,7 +920,7 @@ static char kScrollContext;
             if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != owner) return;
             if (file) { [hero showMotion:file]; return; }
             if (identified || !SGMotionAppleMusicOn()) return;
-            // The rows and the identifiers may both answer; the first clip stays, so a second does not restart it.
+            // Only one row clip may take ownership of this hero.
             __block BOOL shown = NO;
             void (^show)(NSURL *) = ^(NSURL *clip) {
                 SGRAlbumHero *target = weakSelf;
@@ -928,11 +928,7 @@ static char kScrollContext;
                 shown = YES;
                 [target showMotion:clip];
             };
-            void (^tryIdentifiers)(void) = ^{
-                if (!albumURI) return;
-                SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *clip, BOOL identified) { show(clip); });
-            };
-            if (!SGRAlbumMotionRowsAllowed(owner)) { tryIdentifiers(); return; }
+            if (!SGRAlbumMotionRowsAllowed(owner)) return;
             BOOL (^stillCurrent)(void) = ^BOOL {
                 SGRAlbumHero *current = weakSelf;
                 return current && current->_motionGeneration == generation && SGRAlbumPageOf(current) == weakPage &&
@@ -944,12 +940,8 @@ static char kScrollContext;
                     if (!stillCurrent()) return;
                     // Read rows again from the settled list, not strings captured before the search.
                     SGRAlbumWaitForMotionRow(weakPage, YES, match);
-                    // A row may never match (a credit Spotify shows in another script than Apple Music, say "아이유" for
-                    // "IU"), and when the rows are done is never known: the identifiers are asked alongside them.
-                    if (match) tryIdentifiers();
                 }, ^(NSURL *clip) {
                     if (clip && stillCurrent()) show(clip);
-                    else if (!clip && stillCurrent()) tryIdentifiers();
                 });
                 return YES;
             };
@@ -963,11 +955,12 @@ static char kScrollContext;
     // is asked then too, among Apple's releases of the album's year only (SGMotionPageStillEditionCover). Only an album
     // they cannot name goes to the title of every year and the rows.
     if (!albumURI) { byTitle(); return; }
-    SGMotionPageIdentifierCover(albumURI, album, pixels, ^(NSURL *file, BOOL identified) {
+    SGMotionPageIdentifierCover(albumURI, artist, album, pixels, ^(NSURL *file, SGMotionIdentifierOutcome outcome) {
         SGRAlbumHero *hero = weakSelf;
         if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != weakPage) return;
         if (file) { [hero showMotion:file]; return; }
-        if (!identified) { byTitle(); return; }
+        if (outcome == SGMotionIdentifierMiss) { byTitle(); return; }
+        if (outcome != SGMotionIdentifierStill) return;
         SGMotionPageStillEditionCover(albumURI, artist, album, pixels, ^(NSURL *clip) {
             SGRAlbumHero *target = weakSelf;
             if (clip && target && target->_motionGeneration == generation && SGRAlbumPageOf(target) == weakPage) [target showMotion:clip];

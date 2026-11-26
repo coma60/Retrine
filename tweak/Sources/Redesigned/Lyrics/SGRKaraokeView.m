@@ -2233,6 +2233,8 @@ static BOOL cornerControlShown(UIView *view) {
     [CATransaction commit];
 }
 
+- (BOOL)untimed { return _plain; }
+
 - (BOOL)touchIsOnLine:(UITouch *)touch {
     if (_plain || _browsing || !_scroll) return NO;
     CGPoint inSelf = [touch locationInView:self];

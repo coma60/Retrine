@@ -252,7 +252,7 @@ static void checkBarcode(void) {
         CHECK(!file && !identified);
         SGMotionAlbumRowMatcher(@"Pink Floyd", name, 720, ^(SGMotionRowMatch rows) { CHECK(!rows); }, ^(NSURL *row) {
             CHECK(!row);
-            SGMotionPageIdentifierCover(uri, name, 720, ^(NSURL *clip, BOOL identified) {
+            SGMotionPageIdentifierCover(uri, @"Pink Floyd", name, 720, ^(NSURL *clip, SGMotionIdentifierOutcome outcome) {
                 CHECK([clip.path isEqual:@"/1665303755/clip.mp4"]); page = YES;
             });
             pageAsked = YES;
@@ -289,7 +289,7 @@ static void checkBarcode(void) {
 
     expectedTrack = @"spotify:track:0000000000000000000001"; // page uses the album's first GID, not the player
     __block BOOL firstTrack = NO;
-    SGMotionPageIdentifierCover(@"spotify:album:0000000000000000000004", name, 720, ^(NSURL *file, BOOL identified) {
+    SGMotionPageIdentifierCover(@"spotify:album:0000000000000000000004", @"Pink Floyd", name, 720, ^(NSURL *file, SGMotionIdentifierOutcome outcome) {
         CHECK([file.path isEqual:@"/1665303755/clip.mp4"]); firstTrack = YES;
     });
     waitFor(^BOOL { return firstTrack; });
@@ -624,10 +624,10 @@ int main(int argc, char **argv) {
             CHECK(album(name) != nil);
         }
         waitFor(^BOOL {
-            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n4\nartist\nalbum 200"] != nil;
+            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n5\nartist\nalbum 200"] != nil;
         });
         NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:store];
-        CHECK(saved.count == 200 && !saved[@"album\n4\nartist\nexpired"] && !saved[@"album\n4\nartist\nalbum 0"]);
+        CHECK(saved.count == 200 && !saved[@"album\n4\nartist\nexpired"] && !saved[@"album\n5\nartist\nalbum 0"]);
         edition = @"second";
         CHECK([album(@"Album 200").absoluteString isEqual:@"https://fixture.invalid/first/Album-200/clip.mp4"]);
         CHECK([album(@"Album 0").absoluteString isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"]);
@@ -665,7 +665,7 @@ int main(int argc, char **argv) {
         [NSURLProtocol unregisterClass:CatalogProtocol.class];
         if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
         waitFor(^BOOL {
-            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n4\nartist\nalbum 0"][@"url"]
+            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n5\nartist\nalbum 0"][@"url"]
                 isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"];
         });
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:nil]);

@@ -372,8 +372,15 @@ static BOOL isSearch(UIView *item) {
 
 // The title a tab of Spotify's shows on the bar: Search's is the Music app's word for it ("검색" where Spotify says
 // "검색하기"), every other its label's.
+NSString *SGRStockTabTitle(NSString *title) {
+    if (![title isEqualToString:@"검색하기"]) return title;
+    NSString *uri = SGRNavbarStockURIs()[title];
+    return [uri isEqual:kSearchURI] || [uri isEqual:kFindURI] ? @"검색" : title;
+}
+
 static NSString *tabTitle(UIView *item) {
-    return isSearch(item) ? SGL(@"settings.tabbar.search_tab", @"Search") : labelIn(item).text;
+    NSString *title = labelIn(item).text;
+    return isOwnTab(item) ? title : SGRStockTabTitle(title);
 }
 
 // For the Tab bar page's list and preview: a tab of Spotify's drawn from its item on the bar, hidden or not,
@@ -854,10 +861,11 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
             if (item.image && item.selectedImage) objc_setAssociatedObject(item, &kGlyphKeysKey, keys, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         missing |= !item.image || !item.selectedImage;
-        item.accessibilityLabel = labelIn(sources[i]).text;
+        NSString *resolvedTitle = tabTitle(sources[i]);
+        item.accessibilityLabel = resolvedTitle;
         item.largeContentSizeImage = item.image;
         item.accessibilityHint = sg_minimized && bar == objc_getAssociatedObject(bar.stockBar, &kBarKey) ? SGL(@"settings.tabbar.minimized.hint", @"Shows all tabs") : nil;
-        NSString *title = hideLabels ? nil : tabTitle(sources[i]);
+        NSString *title = hideLabels ? nil : resolvedTitle;
         if (hideLabels ? item.title != nil : title.length && ![title isEqualToString:item.title]) item.title = title;
     }
     if (drew) {

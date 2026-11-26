@@ -870,19 +870,15 @@ static void readField(void) {
     CGContextDrawImage(bitmap, CGRectMake(0, 0, kInkColumns, kInkRows), cg);
     CGContextRelease(bitmap);
     float rows[kInkRows], cells[kInkRows][kInkColumns];
-    BOOL any = NO;
     for (int y = 0; y < kInkRows; y++) {
         CGFloat sum = 0;
         for (int x = 0; x < kInkColumns; x++) {
             const uint8_t *p = pixels + (y * kInkColumns + x) * 4;
             cells[y][x] = (float)inkLuma(p);
             sum += cells[y][x];
-            any = any || p[0] || p[1] || p[2];
         }
         rows[y] = sum / kInkColumns;
     }
-    // A blank picture is a failed draw (nothing is black all the way down the player), not a reading.
-    if (!any) return;
     BOOL moved = !sg_inkHave;
     for (int y = 0; y < kInkRows && !moved; y++) {
         for (int x = 0; x < kInkColumns && !moved; x++) moved = fabsf(cells[y][x] - sg_inkCells[y][x]) > kInkReportDelta;
@@ -898,16 +894,16 @@ static void readField(void) {
 // every frame, so its text follows a new cover's crossfade (0.8 s) as it goes. Read every kInkEvery, Retrine's ink
 // jumped in three or four steps through the same crossfade, and a dark cover giving way to a light one left the text
 // dim over the light one for up to a quarter second. While the backdrop changes the readings follow it at the
-// display's pace instead: from a change of cover (SGRBackdropInkFollow), every kInkFollow until it has ended and
+// crossfade a little more closely: from a change of cover (SGRBackdropInkFollow), every kInkFollow until it has ended and
 // kInkFollowSettle more. Only then: the field drifts all the time it plays, and following that would never stop. Not in
 // Low Power Mode.
-static const NSTimeInterval kInkFollow = 1.0 / 30, kInkFollowSettle = 0.2;
+static const NSTimeInterval kInkFollow = kInkEvery / 2, kInkFollowSettle = 0.2;
 static CFTimeInterval sg_inkFollowUntil;
 static BOOL sg_inkFollowing;
 
 static void followStep(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kInkFollow * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (!sg_inkSource || NSProcessInfo.processInfo.lowPowerModeEnabled || CACurrentMediaTime() > sg_inkFollowUntil) {
+        if (!sourceShows(sg_inkSource) || NSProcessInfo.processInfo.lowPowerModeEnabled || CACurrentMediaTime() > sg_inkFollowUntil) {
             sg_inkFollowing = NO;
             return;
         }
@@ -925,6 +921,7 @@ void SGRBackdropInkFollow(CFTimeInterval duration) {
 }
 
 static void inkTick(void) {
+    if (!sourceShows(sg_inkSource)) { SGRBackdropInkSetSource(nil); return; }
     sg_inkTicks++;
     if (NSProcessInfo.processInfo.lowPowerModeEnabled && sg_inkTicks % 4) return;
     if (sg_inkFollowing) return;
@@ -934,10 +931,11 @@ static void inkTick(void) {
 static void scheduleInkTree(void);
 
 void SGRBackdropInkSetSource(UIView *source) {
+    if (source == sg_inkSource && (source ? sg_inkTimer.valid : !sg_inkTimer)) return;
     if (source) scheduleInkTree();
-    if (source == sg_inkSource && (sg_inkTimer.valid || !source)) return;
     sg_inkSource = source;
     sg_inkHave = NO;
+    sg_inkFollowUntil = 0;
     [sg_inkTimer invalidate];
     sg_inkTimer = nil;
     if (!source) return;
@@ -1037,9 +1035,11 @@ CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {
 static NSHashTable<UIView *> *sg_inkViews;
 
 static void noteInkView(UIView *view) {
+#if SG_DRIVER
     if (!view) return;
     if (!sg_inkViews) sg_inkViews = [NSHashTable weakObjectsHashTable];
     [sg_inkViews addObject:view];
+#endif
 }
 
 static NSString *shortClass(id object) {
@@ -1126,6 +1126,9 @@ static void logInkTree(void) {
 }
 
 static void scheduleInkTree(void) {
+#if !SG_DRIVER
+    return;
+#endif
     static NSUInteger logged;
     static CFTimeInterval last;
     CFTimeInterval now = CACurrentMediaTime();

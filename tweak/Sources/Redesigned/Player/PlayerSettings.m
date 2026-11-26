@@ -1122,7 +1122,7 @@ SGModRow *SGRLyricsHideRow(void) {
 }
 
 SGModRow *SGRLyricsKeepMicRow(void) {
-    SGModRow *row = SGOptionRow(SGL(@"settings.lyrics.keep_mic.title", @"Keep the mic"),
+    SGModRow *row = SGSwitchRow(SGL(@"settings.lyrics.keep_mic.title", @"Keep the mic"),
                                 SGL(@"settings.lyrics.keep_mic.subtitle", @"Sing's mic stays when the controls are hidden. Off, it hides with them, as in Apple Music, and stays only while Sing is on."),
                                 SGRKeyLyricsKeepMic);
     row.visible = ^BOOL { return SGRLyricsHideMode() != SGRLyricsHideOff; };

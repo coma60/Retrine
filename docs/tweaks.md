@@ -768,15 +768,17 @@ Shared:
                   Otherwise a single release must contain the song with its artist credit;
                   trailing features and version tags are simplified on the song, never on the album. A soundtrack's songs
                   share the title search; only a full page with no identified release can be narrowed by artist.
-                  If the title search cannot identify the release and the Spotify album URI is known, Spotify's album metadata
-                  supplies its UPC (on the album page, while same-name candidates are matched by track rows, these identifiers are
-                  asked alongside, since a row may never match, and the first clip either finds stays). Apple Music gets the barcode as supplied; only albums whose own UPC matches (ignoring
+                  A known title answer is reused without asking Spotify for identifiers. Otherwise, with an album URI,
+                  Spotify's album metadata supplies its UPC. Apple Music gets the barcode as supplied; only albums whose own UPC matches (ignoring
                   leading zeros) qualify. If Apple returns no UPC match, the player's track (on the album page, the first
                   track on the album) supplies a recording code from Spotify. Of the Apple albums containing that ISRC,
                   exactly one distinct non-single must share the edition-stripped album name, whether it has video or not;
                   with none, exactly one "X - Single" whose whole name (less the suffix) is the album's.
-                  The answer is cached by Spotify album URI in the same week-long album cache.
-                  An identified album without video stays still rather than borrowing another artist's cover. Header and track share the
+                  A confirmed identifier miss permits the title lookup (and, on the album page, matching track rows).
+                  An unanswered request remains retryable; multiple candidate release IDs do not select a clip.
+                  For an identified still edition only a title match within one year of Spotify's release year can move;
+                  without a year it stays still. Only an identifier-verified clip that downloaded successfully is kept
+                  for all songs by Spotify album URI. Header and track share the
                   master and media playlist lookup for the same stream size. The catalog is
                   left alone for 10 minutes after a 403 or 429; an album's answer kept on disk for a week, so a relaunch skips the search), kept as local files (SGMotionStore.m, a download that
                   fails on a transient error (a timeout, a lost connection, DNS or no network, HTTP 408, 429 or 5xx) tried once more while
@@ -1030,8 +1032,9 @@ Shared:
                   progress bar between the two times and on their middle (AudioQuality.x, AudioQualityRules.m). The
                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
                   4.6 pt corners (a quarter of its height) in semibold caption type (the times'), lit by adding light to what is behind it
-                  (plusL: 17 of 255 for the fill, 0.40 white for the text and glyph, the times' own alpha so the two read alike; over a
-                  light backdrop both rise to 0.85 and, where plusL cannot see the backdrop, are drawn plain: see Backdrop ink below), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 6 pt further from the bar and, with the artist, added to what is behind them (plusL, 0.265 and 0.44 white, as measured on the Music app's player over a light, a mid and a dark cover) so they brighten and darken with the cover, plainly composited under Increase Contrast
+                  (17 of 255 for the fill, 0.40 white for the text and glyph; see Backdrop ink below), in the label colors
+                  under Increase Contrast. The times sit 7.3 pt further from the bar; the times and artist add 0.265 and 0.48 white
+                  respectively, plainly composited under Increase Contrast
                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
@@ -1765,7 +1768,8 @@ Redesigned:
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, as the Music
                   app's player does), white landing where 0.46 added would. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
-                  the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.40 alpha (0.7 with Increase Contrast; 0.85 over a light backdrop, see Backdrop ink) added to what is behind it, a minus sign before the time left) and, with Rolling time digits on (the
+                  the system font, semibold, 12 pt (Caption 1) at the default text size, 0.265 white added to the backdrop
+                  (plain white at 0.7 alpha with Increase Contrast; see Backdrop ink), a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
                   Player page) keeps the player's add button on the title row, which the ⋯ otherwise stands in for, and
@@ -1976,13 +1980,15 @@ Redesigned:
                   a tap under the lines' place, where the controls were, brings it all back; a scroll decides as the
                   finger lifts, a flick on toward the lines to come sending the controls away at once (playing or not) and a
                   flick back bringing them back, a scroll that stops dead changing nothing, and after a flick on a tap brings
-                  nothing back until the lines follow the song again; a tap on a line seeks there, flashing the Music app's
+                  nothing back until timed lines follow the song again. On untimed text a tap brings the controls back
+                  without moving the text. A tap on a timed line seeks there, flashing the Music app's
                   plate behind it, white at 8 % with 16 pt corners, the line's own box grown 16 pt, and changes nothing
                   else (in a song for two voices every line is set in 85 % of the width against its voice's side,
-                  so the plate stops short of the far edge as the Music app's does); set
+                  so the plate stops short of the far edge as the Music app's does; the Lyrics settings preview alternates voices
+                  and uses the same blur on lines adjacent to the sung line); set
                   to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
                   and the mic fade (the mic, under either choice, stays with Keep the mic,
-                  spotifyglass.redesign.lyrics.keepMic, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with
+                  spotifyglass.redesign.lyrics.keepMic, on by default, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with
                   the title 12 pt from the cover, and the lines start 16 pt under them and grow down the safe area, the sung line resting 238 pt down the player
                   as the Music app's): line views only for the lines in and near sight, built nearest
                   the middle first, at most four a pass and none after the first once the pass has spent 1 ms, the
@@ -2866,8 +2872,8 @@ the width, and the volume row 5 pt past the side margins with a 4 pt glyph gap.
 
 The artist, the times and the audio quality badge are white ADDED to the backdrop (plusL), which goes nowhere over a
 light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a
-reader that draws it 8 by 48 pixels four times a second (once in four in Low Power Mode, never while the player is
-hidden or the app inactive) and keeps each row's mean encoded luma; it is read through the render server
+reader that draws it 16 by 48 pixels four times a second (eight during a cover crossfade, once a second in Low Power Mode).
+It runs only while the player is visible and active and weighs the cells behind each label's text; the field is read through the render server
 (drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. The Music app adds a
 fixed alpha of white to the backdrop (artist 0.48, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.46),
 so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the

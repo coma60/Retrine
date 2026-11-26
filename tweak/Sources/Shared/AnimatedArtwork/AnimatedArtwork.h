@@ -96,9 +96,12 @@ typedef BOOL (^SGMotionRowMatch)(NSString *artist, NSString *song);
 void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(SGMotionRowMatch match), void (^found)(NSURL *file));
 // Main queue. A page may use rows only when the header did not identify a release.
 void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
-// The album by its identifiers (barcode, then a recording): `identified` YES when they named a release, with a clip or
-// still, so a title search cannot take a same-named release of another year in its place.
-void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
+// Only a confirmed miss permits an unrestricted title search. A known still edition permits a year-bound one.
+typedef NS_ENUM(NSInteger, SGMotionIdentifierOutcome) {
+    SGMotionIdentifierUnavailable, SGMotionIdentifierMiss, SGMotionIdentifierStill, SGMotionIdentifierClip, SGMotionIdentifierAmbiguous,
+    SGMotionIdentifierKnownTitle
+};
+void SGMotionPageIdentifierCover(NSString *albumURI, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file, SGMotionIdentifierOutcome outcome));
 // After the identifiers named a still edition: the album by its title among Apple's releases of the album's year on
 // Spotify (within a year), so another of the same name and another year cannot stand in; nil without a year or a clip.
 void SGMotionPageStillEditionCover(NSString *albumURI, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file));

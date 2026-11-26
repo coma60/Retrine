@@ -1353,13 +1353,6 @@
 "settings.lyrics.offline.none" = "None";
 "settings.lyrics.offline.subtitle" = "Saved lyrics play without a connection.";
 "settings.lyrics.offline.title" = "Keep lyrics for offline listening";
-"settings.lyrics.pixie.capacity" = "Lyrics storage is full.";
-"settings.lyrics.pixie.counts" = "Saved: %@ · Missing: %@ · Deferred: %@";
-"settings.lyrics.pixie.hint" = "Ask your enabled lyrics sources about downloaded songs. Turning this off cancels the queue, not the saved lyrics.";
-"settings.lyrics.pixie.missing" = "Download missing lyrics";
-"settings.lyrics.pixie.pause" = "Pause lyrics downloads";
-"settings.lyrics.pixie.title" = "Save lyrics for Pixie downloads";
-"settings.lyrics.pixie.unavailable" = "Could not read the download library or queue.";
 "settings.lyrics.pip.alignment" = "Text alignment";
 "settings.lyrics.pip.aspect" = "Aspect ratio";
 "settings.lyrics.pip.background" = "Background";
@@ -1411,6 +1404,13 @@
 "settings.lyrics.pip.weight.medium" = "Medium";
 "settings.lyrics.pip.weight.regular" = "Regular";
 "settings.lyrics.pip.weight.semibold" = "Semibold";
+"settings.lyrics.pixie.capacity" = "Lyrics storage is full.";
+"settings.lyrics.pixie.counts" = "Saved: %@ · Missing: %@ · Deferred: %@";
+"settings.lyrics.pixie.hint" = "Ask your enabled lyrics sources about downloaded songs. Turning this off cancels the queue, not the saved lyrics.";
+"settings.lyrics.pixie.missing" = "Download missing lyrics";
+"settings.lyrics.pixie.pause" = "Pause lyrics downloads";
+"settings.lyrics.pixie.title" = "Save lyrics for Pixie downloads";
+"settings.lyrics.pixie.unavailable" = "Could not read the download library or queue.";
 "settings.lyrics.prefer_words.subtitle" = "In In order mode, keep looking past line-timed lyrics";
 "settings.lyrics.prefer_words.title" = "Prefer word-by-word timing";
 "settings.lyrics.pronunciation.alphabet" = "Pronunciation alphabet";
@@ -3210,7 +3210,6 @@
 "settings.tabbar.reset.title" = "Use Spotify's order";
 "settings.tabbar.reset_alert.message" = "Every tab of Spotify's comes back where Spotify put it, the tabs you added go, and no tab is split apart.";
 "settings.tabbar.reset_alert.title" = "Use Spotify's tabs";
-"settings.tabbar.search_tab" = "Search";
 "settings.tabbar.split.intro" = "Tabs switched on here sit apart from the others at the right end of the bar, the way the Music app sets Search apart. Hidden tabs stay hidden.";
 "settings.tabbar.split.status.default" = "With the others";
 "settings.tabbar.split.status.hidden" = "Hidden";

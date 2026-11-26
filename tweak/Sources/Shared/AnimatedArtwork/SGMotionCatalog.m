@@ -1176,17 +1176,6 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         deliver(sg_kept[key], NO);
         return ticket;
     }
-    // A header (or its notes) may already have fetched all the evidence for this release.
-    NSArray *knownRecords = sg_kept[albumRecordsKey(artist, album)];
-    if (!year && [knownRecords isKindOfClass:NSArray.class]) {
-        NSUInteger matches;
-        NSString *video = coverVideo(knownRecords, albumKey, artistKey, nil, NO, &matches);
-        if (matches == 1) {
-            if (video) masterFile(video, pixels, ^(NSURL *remote) { deliver(remote, NO); });
-            else deliver(@NO, NO);
-            return ticket;
-        }
-    }
     void (^byTitle)(NSNumber *) = ^(NSNumber *wantYear) {
         if (verifiedClip(albumURI)) { deliver(nil, NO); return; }
         // A year-held search is its own answer, never one kept from a search of every year, nor kept for one.
@@ -1194,6 +1183,18 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
         NSString *b = wantYear ? [base stringByAppendingFormat:@"\nyear\n%@", wantYear] : base;
         id kept = sg_kept[k];
         if (kept) { deliver(kept == NSNull.null ? nil : kept, NO); return; }
+        // A header (or its notes) may already have fetched the title's records. They are a title's evidence, so they
+        // answer only where a title search would: after the identifiers, never in their place.
+        NSArray *knownRecords = wantYear ? nil : sg_kept[albumRecordsKey(artist, album)];
+        if ([knownRecords isKindOfClass:NSArray.class]) {
+            NSUInteger matches;
+            NSString *video = coverVideo(knownRecords, albumKey, artistKey, nil, NO, &matches);
+            if (matches == 1) {
+                if (video) masterFile(video, pixels, ^(NSURL *remote) { deliver(remote, NO); });
+                else deliver(@NO, NO);
+                return;
+            }
+        }
         // Raw records and playlists still coalesce. Selection belongs to this URI:
         // its verified clip must neither satisfy nor suppress another edition's search.
         void (^search)(void) = ^{

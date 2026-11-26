@@ -532,7 +532,8 @@ NSData *SGRFluidGradeTable(int side) {
             }
             layer->_cover = cover;
             [layer->_gpu setCover:cover.CGImage animated:fade];
-            [layer show:blur small:small ?: blur lowerLight:lowerLight animated:fade];
+            // A picture the blur cannot read (no CGImage) keeps the copies showing the last cover, not black.
+            if (blur) [layer show:blur small:small ?: blur lowerLight:lowerLight animated:fade];
             layer->_awaitingCoveredBlur = NO;
             [layer setHidden:layer->_requestedHidden];
         });

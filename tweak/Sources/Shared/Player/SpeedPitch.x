@@ -82,7 +82,7 @@ static const double kSilentFor = 1;
 // How often the outputs are checked for that while two or more run.
 static const double kCheckEvery = 0.5;
 
-enum { kMaxOutputs = 8, kMaxWatchers = 4 };
+enum { kMaxOutputs = 8, kMaxWatchers = 5 }; // Effects, Haptics, Sing, sleep timer and Fluid
 
 #pragma mark - shared between the threads
 
@@ -816,7 +816,7 @@ static NSString *describe(Output *output) {
 static void tellWatchers(void) {
     Output *output = music();
     AudioUnit unit = output ? atomic_load(&output->unit) : NULL;
-    for (int i = 0; i < kMaxWatchers && sg_watchers[i]; i++) sg_watchers[i](unit);
+    for (int i = 0; i < kMaxWatchers; i++) if (sg_watchers[i]) sg_watchers[i](unit);
 }
 
 static void applyToFormat(void);
@@ -1425,16 +1425,32 @@ static void rebind(void) {
     });
 }
 
-BOOL SGPlayerWatchMusicOutput(SGPlayerOutputWatcher watcher) {
+static BOOL setWatcher(SGPlayerOutputWatcher watcher, BOOL on, BOOL replay) {
+    if (!watcher) return NO;
     rebind();
+    if (!sg_reachable) return NO;
     pthread_mutex_lock(&sg_outputsLock);
+    int slot = -1;
     for (int i = 0; i < kMaxWatchers; i++) {
-        if (sg_watchers[i]) continue;
-        sg_watchers[i] = watcher;
-        break;
+        if (sg_watchers[i] == watcher) { slot = i; break; }
+        if (on && slot < 0 && !sg_watchers[i]) slot = i;
+    }
+    if (slot >= 0) {
+        sg_watchers[slot] = on ? watcher : NULL;
+        // A screen can open mid-song. Its first/last callback needs the same unit
+        // lifetime guarantee as a route-change callback, not an unlocked snapshot.
+        if (replay) watcher(on ? SGPlayerMusicOutput() : NULL);
     }
     pthread_mutex_unlock(&sg_outputsLock);
-    return sg_reachable;
+    return slot >= 0;
+}
+
+BOOL SGPlayerWatchMusicOutput(SGPlayerOutputWatcher watcher) {
+    return setWatcher(watcher, YES, NO);
+}
+
+BOOL SGPlayerSetDemandWatcher(SGPlayerOutputWatcher watcher, BOOL on) {
+    return setWatcher(watcher, on, YES);
 }
 
 #pragma mark - Spotify's clock

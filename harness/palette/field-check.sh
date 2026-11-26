@@ -13,3 +13,10 @@ xcrun clang -fobjc-arc -O0 -g -target arm64-apple-ios17.0-macabi -isysroot "$SDK
     -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Symbols \
     -o "$OUT/field-check"
 "$OUT/field-check"
+xcrun clang -fobjc-arc -O0 -g -target arm64-apple-ios17.0-macabi -isysroot "$SDK" \
+    -iframework "$SDK/System/iOSSupport/System/Library/Frameworks" -I"$SRC" \
+    "$HERE/fluid-steps-check.m" "$SRC/Redesigned/Kit/SGRFluid.m" "$SRC/Redesigned/Kit/SGRFluidGPU.m" \
+    "$SRC/Redesigned/Kit/SGRTokens.m" "$SRC/Core/SGLog.m" "$SRC/Core/SGPrefs.m" "$SRC/Core/SGLocalize.m" \
+    -framework UIKit -framework QuartzCore -framework CoreGraphics -framework CoreImage -framework Metal \
+    -o "$OUT/fluid-steps-check"
+"$OUT/fluid-steps-check"

@@ -36,6 +36,6 @@ NSData *SGRFluidGradeTable(int side);
 @property (nonatomic) BOOL contrast;
 // As SGRFluidLayer's: the part on screen, in this layer's coordinates. The whole layer while empty.
 @property (nonatomic) CGRect visibleRect;
-// Called once, after the first frame has been handed to the screen.
+// Called when the first drawable (or a covered replacement) is presented.
 @property (nonatomic, copy) void (^drawn)(void);
 @end

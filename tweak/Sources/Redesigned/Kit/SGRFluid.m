@@ -5,10 +5,6 @@
 #import "SGRTokens.h"
 #import "SGRBackdropInk.h"
 
-@interface CAFilter : NSObject
-+ (instancetype)filterWithType:(NSString *)type;
-@end
-
 // The copies, laid out as the Music app's player lays its own: the unit is half the visible rect's longer side (its
 // height on a phone), measured from its middle with y up. Each copy is a square of the cover `side` units across,
 // centered `x`, `y` units from the middle, turning clockwise about its own center once in `turn` seconds; a copy with
@@ -26,8 +22,7 @@ enum { kCopies = sizeof(kCopy) / sizeof(kCopy[0]) };
 static const CFTimeInterval kBackdropCrossfade = 0.8;
 // Held still (paused), the Music app shows its backdrop flat and this much larger, going there and back over kSettle.
 static const CGFloat kHeldZoom = 1.25;
-// The scale Light's canvas is drawn at before its blur.
-static const CGFloat kCanvasScale = 0.125;
+static const CGFloat kGPUHeightStepPoints = 256;
 static const CFTimeInterval kSettle = 0.8;
 // Its blur's standard deviation, in points on screen. Core Image's radius is the standard deviation itself (measured on
 // a macOS runner: 1.00 at 4 to 64 px). Fitted to a few screenshots, 1.8 times it looked nearer,
@@ -290,8 +285,6 @@ NSData *SGRFluidGradeTable(int side) {
     CAGradientLayer *_shade;
     CGFloat _lowerLight;   // how light the shown cover's lower part is, 0 to 1 (blurred())
     UIImage *_source;
-    UIImage *_blur;   // the last blurred cover shown, handed to Smooth when it comes
-    UIImage *_blurSmall;   // the same blurred for the smaller copies
     UIImage *_cover;       // the cover as the GPU renderer takes it (upright, 256 px)
     NSUInteger _generation;
     BOOL _moving;
@@ -301,6 +294,7 @@ NSData *SGRFluidGradeTable(int side) {
     CGRect _laidOutFor;
     SGRFluidGPULayer *_gpu;   // Smooth, under the copies; nil while Light is chosen
     BOOL _gpuShown;           // its first frame is on screen and the copies are hidden
+    BOOL _requestedHidden, _preparing, _awaitingCoveredBlur;
 }
 
 - (instancetype)init {
@@ -309,12 +303,7 @@ NSData *SGRFluidGradeTable(int side) {
     self.backgroundColor = UIColor.blackColor.CGColor;
     _canvas = [CALayer layer];
     _canvas.transform = CATransform3DMakeScale(kHeldZoom, kHeldZoom, 1);
-    // As the Music app does, the copies are laid over each other sharp and the whole is blurred once (a blur of each
-    // copy's own cover drew a mostly black cover's banner out of the top of the screen). Drawn at an eighth of the
-    // screen's scale, which a blur this wide does not show.
-    _canvas.rasterizationScale = kCanvasScale;
-    _canvas.shouldRasterize = YES;
-    [self applyCanvasBlur];
+    _canvas.backgroundColor = UIColor.blackColor.CGColor;
     [self addSublayer:_canvas];
     for (int i = 0; i < kCopies; i++) {
         _orbits[i] = [CALayer layer];
@@ -354,15 +343,6 @@ NSData *SGRFluidGradeTable(int side) {
     [self setArtwork:source animated:NO];
 }
 
-// The canvas's blur, kBackdropSigma at the standard Blur and in proportion (Core Animation's radius is in points).
-- (void)applyCanvasBlur {
-    CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
-    if (!blur) return;
-    [blur setValue:@(kBackdropSigma * SGRFluidValue(SGRFluidBlur) / SGRFluidLimitsOf(SGRFluidBlur).standard) forKey:@"inputRadius"];
-    [blur setValue:@YES forKey:@"inputNormalizeEdges"];
-    _canvas.filters = @[blur];
-}
-
 // Warp is how far from the middle the smaller copies sit, and how much they show (opaque at the standard 100 %): at
 // none, the large copy turns alone, a still picture turning, with nothing to flow through it.
 - (void)applyWarp {
@@ -377,7 +357,6 @@ NSData *SGRFluidGradeTable(int side) {
     // Restarted at the new speed from the angle each copy is at, and laid out again for the new warp.
     if (_turning) [self stop];
     [self applyWarp];
-    [self applyCanvasBlur];
     _laidOutFor = CGRectNull;
     [self setNeedsLayout];
     [self applyRenderer];
@@ -387,10 +366,9 @@ NSData *SGRFluidGradeTable(int side) {
 
 #pragma mark - the renderer
 
-// The GPU renderer (the Music app's pipeline, SGRFluidGPU.h) made and laid under the copies wherever Metal exists; the
-// copies (Light) show only until its first frame, or for good where it cannot draw.
+// Smooth stays beneath the prepared Light copies until its current cover is presented.
 - (void)applyRenderer {
-    BOOL smooth = SGRFluidGPUAvailable();
+    BOOL smooth = SGRFluidRendererChosen() == SGRFluidRendererSmooth && SGRFluidGPUAvailable();
     if (smooth && !_gpu) {
         _gpu = [SGRFluidGPULayer layer];
         [self insertSublayer:_gpu atIndex:0];
@@ -441,8 +419,10 @@ NSData *SGRFluidGradeTable(int side) {
 }
 
 - (void)setHidden:(BOOL)hidden {
-    [super setHidden:hidden];
-    _gpu.held = hidden;
+    _requestedHidden = hidden;
+    if (hidden && _preparing) _awaitingCoveredBlur = YES;
+    [super setHidden:hidden || _awaitingCoveredBlur];
+    _gpu.held = self.hidden;
 }
 
 - (BOOL)moving {
@@ -478,8 +458,9 @@ NSData *SGRFluidGradeTable(int side) {
     NSMutableArray *at = [NSMutableArray arrayWithCapacity:kShadeSteps + 1];
     for (int i = 0; i <= kShadeSteps; i++) [at addObject:@(shadeTop + (shadeBottom - shadeTop) * i / kShadeSteps)];
     _shade.locations = at;
-    _gpu.frame = bounds;
-    _gpu.visibleRect = visible;
+    _gpu.frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width,
+                            ceil(bounds.size.height / kGPUHeightStepPoints) * kGPUHeightStepPoints);
+    if (_gpu) _gpu.visibleRect = [self convertRect:visible toLayer:_gpu];
     // Grown about the visible rect's middle.
     if (bounds.size.width >= 1 && bounds.size.height >= 1) {
         _canvas.bounds = bounds;
@@ -506,6 +487,9 @@ NSData *SGRFluidGradeTable(int side) {
 - (void)setArtwork:(UIImage *)image animated:(BOOL)animated {
     if (!image || image == _source) return;
     _source = image;
+    _preparing = YES;
+    if (self.hidden) _awaitingCoveredBlur = YES;
+    BOOL needsCover = _gpu != nil;
     NSUInteger generation = ++_generation;
     BOOL contrast = SGRIncreaseContrast();
     // The blur in points on screen, as the Music app's (kBackdropSigma at the standard Blur), as a radius on the large
@@ -523,24 +507,26 @@ NSData *SGRFluidGradeTable(int side) {
         // The smaller copies are half the large one's size, so their cover is blurred twice as far for the same blur
         // on screen, as the Music app blurs the whole square at once.
         UIImage *small = blurred(image, contrast, radius * kCopy[0].side / kCopy[1].side, saturation, gain, &ignored);
-        // Light's copies: the same treatment unblurred, as the canvas blurs them together.
-        UIImage *sharp = blurred(image, contrast, 0, saturation, gain, &ignored);
-        UIImage *cover = upright(image);
+        UIImage *cover = needsCover ? upright(image) : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             SGRFluidLayer *layer = weakSelf;
-            if (!blur || !layer || generation != layer->_generation) return;
-            if (cover) {
-                layer->_cover = cover;
-                [layer->_gpu setCover:cover.CGImage animated:animated];
+            if (!layer || generation != layer->_generation) return;
+            layer->_preparing = NO;
+            BOOL fade = animated && !layer->_awaitingCoveredBlur && !layer->_gpu.held;
+            if (layer->_awaitingCoveredBlur || !cover) {
+                layer->_gpuShown = NO;
+                [layer showCopies];
             }
-            [layer show:blur small:small ?: blur sharp:sharp ?: blur lowerLight:lowerLight animated:animated];
+            layer->_cover = cover;
+            if (cover) [layer->_gpu setCover:cover.CGImage animated:fade];
+            [layer show:blur small:small ?: blur lowerLight:lowerLight animated:fade];
+            layer->_awaitingCoveredBlur = NO;
+            [layer setHidden:layer->_requestedHidden];
         });
     });
 }
 
-- (void)show:(UIImage *)blur small:(UIImage *)small sharp:(UIImage *)sharp lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
-    _blur = blur;
-    _blurSmall = small;
+- (void)show:(UIImage *)blur small:(UIImage *)small lowerLight:(CGFloat)lowerLight animated:(BOOL)animated {
     _lowerLight = lowerLight;
     // The player's ink follows the backdrop through the change: the crossfade, or Smooth's longer run-in while playing
     // (SGRFluidGPU.m's 1.4 s).
@@ -560,7 +546,8 @@ NSData *SGRFluidGradeTable(int side) {
             fade.duration = kBackdropCrossfade;
             [_copies[i] addAnimation:fade forKey:@"contents"];
         }
-        _copies[i].contents = (__bridge id)sharp.CGImage;
+        else [_copies[i] removeAnimationForKey:@"contents"];
+        _copies[i].contents = (__bridge id)(i ? small : blur).CGImage;
     }
     [CATransaction commit];
 }

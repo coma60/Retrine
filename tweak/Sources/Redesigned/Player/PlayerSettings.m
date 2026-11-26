@@ -1206,9 +1206,10 @@ UIViewController *SGRPlayerSettingsPage(NSArray *more) {
         fluidSlider(SGL(@"settings.player.fluid.saturation", @"Saturation"), SGRFluidSaturation, @"%"), fluidSlider(SGL(@"settings.player.fluid.brightness", @"Brightness"), SGRFluidBrightness, @"%"), grain, reset,
     ];
     for (SGModRow *row in fluid) row.visible = ^BOOL { return SGRPlayerBackground() == SGRPlayerBackgroundFluid; };
-    // One renderer now, the Music app's pipeline on the GPU (SGRFluidGPU.h); the style menu is kept only for its key.
-    renderer.visible = ^BOOL { return NO; };
-    grain.visible = ^BOOL { return SGRPlayerBackground() == SGRPlayerBackgroundFluid && SGRFluidGPUAvailable(); };
+    renderer.visible = ^BOOL { return SGRPlayerBackground() == SGRPlayerBackgroundFluid && SGRFluidGPUAvailable(); };
+    grain.visible = ^BOOL {
+        return SGRPlayerBackground() == SGRPlayerBackgroundFluid && SGRFluidGPUAvailable() && SGRFluidRendererChosen() == SGRFluidRendererSmooth;
+    };
     // The header's glass and the footer's glyphs, followed by the open player at once.
     SGModRow *headerGlass = SGWithNew(SGSwitchRow(SGL(@"settings.player.header_glass.title", @"Header glass"),
                                                   SGL(@"settings.player.header_glass.subtitle", @"Glass circles behind the close and ⋯ buttons at the top of the AI DJ's player. The player itself has only a grabber there."),

@@ -1029,9 +1029,9 @@ Shared:
                   Lossless: a small capsule in semibold caption type and the secondary label color, centered under the
                   progress bar between the two times and on their middle (AudioQuality.x, AudioQualityRules.m). The
                   redesigned player draws it as the Music app does: a rounded rectangle 18.3 pt tall with circular
-                  4.6 pt corners (a quarter of its height) in regular caption type, lit by adding light to what is behind it
-                  (plusL: 17 of 255 for the fill, 107 more for the text and glyph, measured on the Music app's iOS 26
-                  player), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 8 pt further from the bar
+                  4.6 pt corners (a quarter of its height) in semibold caption type (the times'), lit by adding light to what is behind it
+                  (plusL: 17 of 255 for the fill, 0.40 white for the text and glyph, the times' own alpha so the two read alike; over a
+                  light backdrop both rise to 0.85 and, where plusL cannot see the backdrop, are drawn plain: see Backdrop ink below), in the label colors over the backdrop under Increase Contrast, so more opaque there; the times 6 pt further from the bar and, with the artist, added to what is behind them (plusL, 0.265 and 0.44 white, as measured on the Music app's player over a light, a mid and a dark cover) so they brighten and darken with the cover, plainly composited under Increase Contrast
                   (PlayerControls.x kTimesDrop), the badge's text on the times' baseline (placed again from the elapsed
                   time's own layout, since a change of text size resizes the times without a pass of the unit), a
                   template waveform glyph before every tier, and the Music app's words: Low, Normal, High and Highest
@@ -1659,7 +1659,11 @@ Redesigned:
                   bar uses Spotify's requested range; a label-only tracker keeps its range. Settled
                   callbacks forward without rediscovering the outputs or observing animated digit labels.
                   Both track colors are more opaque under Increase Contrast (SGRPlayerBarFill,
-                  SGRPlayerBarTrack). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
+                  SGRPlayerBarTrack). Over a light backdrop they are drawn at the plain alpha that equals the Music app's white
+                  ADDED to it (fill 0.44, volume fill 0.55, track 0.175; SGRPlayerBarFillOver, SGRPlayerBarTrackOver over
+                  SGRInkPlainAlpha), so a white cover's bar is white and not gray; over a dark one that is the usual 0.6 and
+                  0.2. The volume row's speaker glyphs and the footer's glyphs at rest follow the backdrop the same way
+                  (0.46 added; PlayerVolume.m, PlayerFooter.x refreshFooterInk). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
                   (SGRPlayerBarDragHeight) and lights the fill whole white: the progress bar's as a rail of the mod's own
                   drawn over the slider while it is held — one capsule clipping a rectangular fill to the value, Spotify's
                   track image views hidden under it and given back on release, so the held shape does not depend on how
@@ -1743,8 +1747,25 @@ Redesigned:
                   the slot (shown or hidden by Spotify) rather than from where the ⋯ was drawn, so the pass in which
                   Spotify takes the pill away and brings the slot back already ends the title before it. Where
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
-                  in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. The
-                  timestamps under the slider are metered (SGRMonospacedDigits) and, with Rolling time digits on (the
+                  in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. Queue (the
+                  Player page's Controls, spotifyglass.redesign.player.queueStyle: 0 Spotify, the default, 1 Apple Music)
+                  puts that glyph in place of Spotify's queue button too: it opens the Music app's queue in the player
+                  (PlayerLyrics.x's page with PlayerQueue.m's SGRPlayerQueuePage in its stage, the cover a thumbnail as for
+                  the lyrics): shuffle, repeat, sleep timer (in the Music app's Autoplay slot: Spotify's player.autoplay has
+                  no Objective-C setter) and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
+                  Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. A song's grip moves it within its
+                  section the way Spotify's queue screen does (copy of the reported queue, setNextTracks:, setQueue:options:
+                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). As in the Music app, the thumbnail,
+                  the title row and the toggles ride with the list (the page's stage starts at the thumbnail, its first
+                  section the room they stand in, SGRPlayerQueuePageConfigure): pulled down, History shows above them, with
+                  Clear (setPrevTracks: @[] through the same setQueue:options:); pushed up, they leave and the songs to come
+                  take the room. A History row plays its song again (skipToPreviousTrackWithOptions:track: with
+                  SPTSkipPrevOptions.overrideRestrictions), and songs a pick skipped over stay out of History. Shuffle and
+                  repeat dim (UIKit's disabled 0.3) while SPTPlayerState.restrictions disallow toggling them. The footer's lyrics and queue
+                  glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, as the Music
+                  app's player does), white landing where 0.46 added would. The
+                  timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
+                  the system font, semibold, 12 pt (Caption 1) at the default text size, white at 0.40 alpha (0.7 with Increase Contrast; 0.85 over a light backdrop, see Backdrop ink) added to what is behind it, a minus sign before the time left) and, with Rolling time digits on (the
                   Player page, on until switched off), their changed characters roll into place (SGRRefinements.h,
                   described under Redesigned/Kit/), checked on the Mac by harness/player-refinements/. Star add button (off until switched on, also the
                   Player page) keeps the player's add button on the title row, which the ⋯ otherwise stands in for, and
@@ -1821,12 +1842,29 @@ Redesigned:
                   player against 9% so (1.4% held still, 6.5% for Spotify's own player). A black gradient dims the clip by its brightness (the 75th
                   percentile of the linear luminance of three frames), so white text keeps 4.5:1 (7:1 with Increase
                   Contrast), from 0.10 to 0.80, only where text is: a band at the top and from above the title
-                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is whole over the
-                  status bar, and down over the header (to 14% of the screen) only while the header shows where it plays
-                  from, Spotify's arrow or the AI DJ's buttons; with only the grabber it fades out right under the status
-                  bar (issue #39). Over the dim, a second black deepens from where the dim turns whole down to the
-                  bottom of the screen (0.35 there), so the lower part darkens toward the bottom as the Music app's
-                  does and is nowhere lighter than the dim alone. A track that changes
+                  down; behind the lyrics it covers the whole clip, 0.15 darker (issue #101). The band is darkest at the very
+                  top and has no edge: the dim is 0.9 of itself at the very top and 0.49 where the band ends (over the status bar, and over the
+                  header, to 14% of the screen, only while the header shows where it plays from, Spotify's arrow or the
+                  AI DJ's buttons) and fades out from there over 108 points (issue #39). The lower half is untouched down
+                  to 23% of the screen, then both the dim and a second black over it (0.40 at the foot) grow along x^1.75
+                  to the bottom of the screen, measured on the Music app's player (0.63 in all over a white cover), so the
+                  lower part darkens as the Music app's does, with no knee at the title. A clip that is black or nearly so
+                  (the 75th percentile of its linear luminance up to 0.04, fading out by 0.12; a dark blue or pink cover, 0.15 to 0.25, ends in its own color) ends in the Music app's gray
+                  rather than in black: a white layer over the clip (kLiftFoot 0.066 at the foot, 17 of 255 over black)
+                  rises from 27% of the screen along x^1.5, as measured on the Music app's player over a black cover, and
+                  is gone behind the lyrics. Under a cover shorter than the screen (the tall 3:4 one) the area below it is
+                  not the poster's last rows stretched down, which stood as a vertical streak, but a small picture the layer
+                  stretches smoothly (PlayerMotion.x veilImage): the foot's colors smoothed along the width, more the further
+                  down (0 to 120 pt below the cover's bottom edge, the edge's own columns first, then the brightness-weighted
+                  mean), and darkened by up to 0.49 of black under a dark cover and by none under a light one (the dim and the
+                  deepening already darken a light cover to the Music app's 0.63; the veil's black on top of them took a white
+                  cover to 0.75), as fitted to the Music app's player; the clip dissolves into it over its last 3.5%, so a
+                  cover's own dark middle stays dark to its edge as the Music app's does. A Canvas, which fills the screen, has none.
+                  The foot is not the poster's: while the clip plays, its current frame is read 15 times a second
+                  (AVPlayerItemVideoOutput, on the item the player has) for the colors of its last rows, and the foot and
+                  the veil close 0.35 of the way to them each time, so the lower part's color and brightness move with the
+                  clip as the Music app's do; a paused or stood-down clip leaves them where they were.
+                  A track that changes
                   while the player cannot be seen (no window, or the app not in front) takes the last clip away at
                   once. Checked in the simulator against harness/player/ (`motion`). The Visualizer
                   (PlayerVisualiser.m) draws two soft hills of the song's spectrum across the foot of the player, the kick
@@ -1933,9 +1971,20 @@ Redesigned:
     Lyrics/       the full screen lyrics page on glass with Apple Music style lyrics over it, always on (SGRKaraokeView,
                   which the player shows in itself too, Player/PlayerLyrics.x, where with Hide the controls set to
                   Everything, everything else -- the header row, the thumbnail, the title row and the controls --
-                  fades a few seconds after the last touch and the lines take the whole safe area until a tap; set
-                  to Keep the title, only the controls under the title row and the lyrics' own button fade and the
-                  lines grow down into their room): line views only for the lines in and near sight, built nearest
+                  fades 4 s after the last touch while the song plays (5 s when it starts again with Sing on) and the lines take
+                  the whole safe area, as the Music app does it:
+                  a tap under the lines' place, where the controls were, brings it all back; a scroll decides as the
+                  finger lifts, a flick on toward the lines to come sending the controls away at once (playing or not) and a
+                  flick back bringing them back, a scroll that stops dead changing nothing, and after a flick on a tap brings
+                  nothing back until the lines follow the song again; a tap on a line seeks there, flashing the Music app's
+                  plate behind it, white at 8 % with 16 pt corners, the line's own box grown 16 pt, and changes nothing
+                  else (in a song for two voices every line is set in 85 % of the width against its voice's side,
+                  so the plate stops short of the far edge as the Music app's does); set
+                  to Keep the title, as the Music app's: only the controls under the title row, the lyrics' own button
+                  and the mic fade (the mic, under either choice, stays with Keep the mic,
+                  spotifyglass.redesign.lyrics.keepMic, or while Sing is on), the thumbnail, the title row and its ⋯ rise 22 pt with
+                  the title 12 pt from the cover, and the lines start 16 pt under them and grow down the safe area, the sung line resting 238 pt down the player
+                  as the Music app's): line views only for the lines in and near sight, built nearest
                   the middle first, at most four a pass and none after the first once the pass has spent 1 ms, the
                   next pass picking up the rest (a work budget; the display link is never slowed); lines sung over each other lit together, the stack moving on
                   once the first is sung out; an instrumental break of 7 s or more held by three dots
@@ -1993,7 +2042,8 @@ Redesigned:
                   card draws them over the blurred cover with the small cover, title and artist on top, off the main thread
                   (LyricCardPicker.m, ShareCards.m), and nothing is fetched. The items, what Copy and
                   Share say (SGRLyricsShareText), the anchor and the dismissals are checked in the simulator against
-                  harness/lyrics-hold/, the press itself on the phone. The size, the room between lines, the blur, the glow and the wave are the Lyrics page's look
+                  harness/lyrics-hold/, the press itself on the phone. Every line but the sung one is blurred as the Music app's are (one more than its distance ahead, two more behind,
+                  up to 4, times the look's Blur). The size, the room between lines, the blur, the glow and the wave are the Lyrics page's look
                   (LyricsLook.h): five presets (Apple Music, the default, at the Music app's 34 pt bold; a stored look keeps
                   its values) and a sheet of sliders, applied at once to every view, the lines 32 pt in from the sides as
                   the player's title and bar are (SGRKaraokeView.m), under a live
@@ -2069,7 +2119,7 @@ Redesigned:
                   under Glass shortcuts (the
                   row after Home look, `spotifyglass.redesign.home.shortcutGlass`, read at launch; unset, it is what the
                   Home look is, so turning the look off before it existed still means plain shortcuts) each shortcut tile as
-                  a glass pill in its cover's color with its name in bold on up to two lines; in FLEX builds a meter
+                  a glass pill in its cover's color, 72% opaque so the page shows through, with its name in bold on up to two lines; in FLEX builds a meter
                   of each scroll's frames and the hooks' time (Home.h lists its files)
     Search/       the Browse page decluttered to its category cards (an allow list of the list's cells: the watch feed
                   carousels and promos collapse (each on a switch of the Search page, on until switched off, and back when it is off), and the cards move up by the spacing they leave, the list's end with them), the header the way Home
@@ -2619,18 +2669,35 @@ blurred behind the lyrics as a clip is, under a black scrim of 45 % at the top f
 a later clip replaces it, Black and Your Photo win, and Low Power Mode, Reduce Motion or serious heat keeps the ordinary cover;
 PlayerMotion.x, harness/player/ `still`),
 while Fluid is chosen a Style menu, Light or Smooth (spotifyglass.redesign.fluid.renderer, offered where Metal exists),
-its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*). Light is the four turning
-copies below; Smooth (Redesigned/Kit/SGRFluidGPU.m) draws the same blurred cover on the GPU, bent along a slowly
-changing field at up to 30 Hz and only while it moves or a new cover runs in through the old one (a crossfade under
-Reduce Motion), from a shader compiled at run time. It lies under the copies, which hide only once its first frame
-is drawn, so a failed shader leaves Light; Reset keeps the style. Checked in the simulator with a bare SGRFluidLayer
+its six sliders and a red Reset (Redesigned/Kit/SGRFluid.h, spotifyglass.redesign.fluid.*); the Style menu is gone
+(its key is kept, unread). Fluid is drawn on the GPU as the Music app draws its backdrop (Redesigned/Kit/SGRFluidGPU.m):
+three copies of the cover, 1.4, 0.7 and 0.7 units across (a unit half the visible rect's height on a phone) at (0, 0),
+(-0.25, 0.15) and (0.7, 0.7), each turning clockwise about its own center once in 120, 70 and 90 s, the third carried
+about the middle by the first's turn, drawn opaque into a quarter-size half-float picture (as the Music app's, so what the saturation pushes past 0 or 1 is
+kept through the blur) after a mix toward black, a contrast
+about middle gray and a saturation about Rec. 709 luma; the picture blurred by a two-pass Gaussian; then shown through a
+24 x 24 mesh, flat and a quarter larger while held still; flowing (0.8 s between, eased), bent by one of two 6 x 6 grids
+of Retrine's own, made at random per layer (the inner points well off the even grid,
+the second the first with a few points moved, never folding over itself), and breathing from one to the other once in 2 pi * 3.5 s; mixed toward white, read through a 32^3 color table made from
+Retrine's own grade (SGRFluidGradeTable), and its lowest channel taken down by a share of the spread. With these numbers (0.5
+toward black, 2.4 saturation, 0.1 toward white, a 160 pt blur) it matched screenshots of the Music app's player
+closely. Like it, it hears the music (Shared/Player/SGMusicSpectrum.x: each band's
+share of the spectral power of Spotify's output, bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz, from an
+unwindowed 2048-point FFT at 48 kHz, resampled to it if need be, 23.4 a second, scaled by the
+frame's loudness, 20 log10 of its power over 120, then by an intensity of 0.2): each reading taken once into
+the last four and averaged, held at its peak and let fall, followed and eased, bass raising the contrast (0.076), treble
+the saturation (0.166) and bass and middle growing the picture (0.33 m^2). Paused, one empty reading goes in and no
+more, so the average of the last four, and what the music grew, holds. Every reading goes in, in order. Its clock,
+settling and hearing step once per frame drawn, 1/60 s each at 60 frames a second, playing or paused, as the Music app's
+count frames: a late frame does not catch up.
+The Core Animation copies (Light) show only
+until its first frame, or where Metal cannot draw. Checked by simulation only, not on a device
 (both styles, switched both ways while moving, a cover change mid-flow). The sliders:
-Speed (25-300 %, how fast the four blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
-far from the middle they turn and how much the upper three show; at none one copy turns alone), Blur (2-24, the
-radius at 1.25 px a step on the 128 px cover), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
-light that the luminance ceiling for the player's text, 0.07 or 0.04 with Increase Contrast, still caps) and Grain (0-200 %, 100 standard, shown only while Smooth
-is the style, spotifyglass.redesign.fluid.grain: the noise that breaks up banding, half an eight-bit step either way at 100
-and none at 0, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the
+Speed (25-300 %, how fast the three blurred copies turn, picked up from the angle each is at), Warp (0-100 %, how
+far from the middle the two smaller copies sit and how much they show, opaque at 100; at none the large copy turns alone), Blur (2-32, 160 pt at the standard 24 and in proportion), Saturation (0-250 %), Brightness (40-150 %, a gain on linear
+light that the luminance ceiling, 0.17 or 0.04 with Increase Contrast, still caps; the shade over the lower part, not the ceiling, keeps the text's 4.5:1: see Backdrop ink) and Grain (0-200 %, 100 standard, shown only while Smooth
+is the style, spotifyglass.redesign.fluid.grain: noise over the picture, none at 100 or below, as the Music app's backdrop has
+none, at 200 a visible grain of 24 steps, spread only darker above 100 so no pixel rises over the ceiling and the
 text keeps its contrast; the Light copies have no grain to scale); the
 card and the player follow each step at once through SGRFluidSettingsDidChangeNotification, the last three by
 blurring the cover again off the main thread, and Animated and Visualizer's Fluid with them,
@@ -2718,7 +2785,8 @@ stands, the split tabs on a bar of their own, and changing with every change on 
 bar (off, the bar is Spotify's own tabs in Spotify's order, the list kept); two picture cards for the labels,
 Icons and names or Icons only (Icons and names the default, as the Music app's bar has; applying straight away); Apple symbols (on
 until switched off, applying straight away to the bar, the preview, the cards and the list: Spotify's tabs take SF
-Symbols, the tabs you added keep their icons); Fade under the bar (on until switched off, applying straight away, the preview showing the
+Symbols, Home a house Retrine draws to the Music app's measure (no chimney, rounded apex and foot, the door open at the foot), the tabs you added keep their
+icons); Search's tab always titled Search (검색), as the Music app's is; Fade under the bar (on until switched off, applying straight away, the preview showing the
 fade over a page's rows); the tabs, each with a
 check circle that shows or hides it, its glyph (TabBar.x draws Spotify's own off their items on the bar, or with Apple symbols' symbol) and
 the drag handle, a tap on a tab of the mod's own opening the Add a Tab sheet as Edit Tab, with Save and Remove
@@ -2782,3 +2850,38 @@ a page using `SGL` compiles `Core/SGLocalize.m` too; harness/mod-settings/ copie
 
 A class Spotify has renamed shows up in the log as `class X not found, its hooks are inactive`;
 declare the classes a feature needs in `Headers/` only when a hook calls into them by type.
+
+Fluid's cost (Redesigned/Kit/SGRFluidGPU.m): the blur runs on a picture small enough that its Gaussian spans about
+10 texels (a sixteenth of the drawable at the standard 160 pt, read through the cover's mipmaps), the display link
+prefers 60 Hz with 120 allowed (it asked for 120 and drew 60, holding the whole screen at 120 Hz), and a held picture,
+Low Power Mode or a serious thermal state draw at 30 frames a second with the clock counting the same time.
+
+Layout against the Music app's player (3x measurements, 402 x 874 pt): the footer row's middle 32 pt over the safe
+area's bottom (kRowAboveSafeArea), the gaps from the artist to the bar, the bar to play and play to the volume row 35,
+90 and 92 pt with the volume row 50 pt over the footer row (SGRPlayerVolumeToRow), previous and next 107 pt from play
+(kSpreadShare 0.31) at 29.5 pt glyph size and play at 50 pt, the footer's lyrics and queue glyphs at 0.216 and 0.784 of
+the width, and the volume row 5 pt past the side margins with a 4 pt glyph gap.
+
+### Backdrop ink (Redesigned/Kit/SGRBackdropInk.h, in SGRRestyle.m)
+
+The artist, the times and the audio quality badge are white ADDED to the backdrop (plusL), which goes nowhere over a
+light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a
+reader that draws it 8 by 48 pixels four times a second (once in four in Low Power Mode, never while the player is
+hidden or the app inactive) and keeps each row's mean encoded luma; it is read through the render server
+(drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. The Music app adds a
+fixed alpha of white to the backdrop (artist 0.48, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.46),
+so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the
+"ink tree" log lines (SGRRestyle.m) show no mask, rasterized layer or filter between the ink and the field on 9.2.0:
+added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink
+plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), up to white over a light
+backdrop as the Music app's goes (measured side by side over a light gray and a blue cover), and the alpha as it is with
+no reading yet. The badge's fill (17/255) is drawn the same way, so its box stays as visible over a light backdrop as the Music app's (+19 of 255 over a 184 gray). Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
+times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk)
+and the footer (refreshFooterInk) take the ink again at each new reading; the badge uses the times' semibold.
+
+The Fluid field's lower part follows the Music app's player (Mr. Blue Sky cover, measured: ochre at the title, olive at
+the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before), and the
+shade over the bottom starts at 40% of the visible rect and grows along x^1.75 to a peak of 0.30 over a dark cover up to
+0.62 over one at the ceiling (SGRFluid.m, kShade*), the peak read from the lower half of each blurred cover and
+crossfaded with it, so white text keeps 4.5:1 whatever the cover. Not run on a device or simulator: checked by reading
+the code paths only.

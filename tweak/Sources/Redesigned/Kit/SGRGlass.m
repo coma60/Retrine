@@ -202,3 +202,13 @@ void SGRShowGlass(UIView *shape, BOOL shown) {
         shape.alpha = shown ? 1 : 0;
     }
 }
+
+void SGRRefreshGlass(UIView *shape) {
+    if (![shape isKindOfClass:UIVisualEffectView.class]) return;
+    UIVisualEffectView *glass = (UIVisualEffectView *)shape;
+    if (!glass.effect || glass.hidden || !glass.window) return;
+    [UIView performWithoutAnimation:^{
+        glass.effect = nil;
+        glass.effect = shapeEffect([objc_getAssociatedObject(shape, &kInsideModeKey) integerValue]);
+    }];
+}

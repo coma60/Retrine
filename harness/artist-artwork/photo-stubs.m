@@ -29,6 +29,8 @@ BOOL SGIsBaseSurface(CGColorRef color) { return NO; }
 // Redesigned/Kit/SGRBridges.x: the field asks whether the player is opening or closing.
 BOOL SGRPlayerIsTransitioning(void) { return NO; }
 void SGRObservePlayerTransition(id owner, void (^changed)(id owner)) {}
+// Redesigned/Kit/SGRRestyle.m: the field tells the player's ink a new cover is crossfading in.
+void SGRBackdropInkFollow(CFTimeInterval duration) {}
 
 // Core/SGUIMode.m: the redesign is on, every hook installs.
 BOOL SGRedesignedUI(void) { return YES; }

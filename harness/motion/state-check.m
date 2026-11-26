@@ -252,7 +252,7 @@ static void checkBarcode(void) {
         CHECK(!file && !identified);
         SGMotionAlbumRowMatcher(@"Pink Floyd", name, 720, ^(SGMotionRowMatch rows) { CHECK(!rows); }, ^(NSURL *row) {
             CHECK(!row);
-            SGMotionPageIdentifierCover(uri, name, 720, ^(NSURL *clip) {
+            SGMotionPageIdentifierCover(uri, name, 720, ^(NSURL *clip, BOOL identified) {
                 CHECK([clip.path isEqual:@"/1665303755/clip.mp4"]); page = YES;
             });
             pageAsked = YES;
@@ -289,7 +289,7 @@ static void checkBarcode(void) {
 
     expectedTrack = @"spotify:track:0000000000000000000001"; // page uses the album's first GID, not the player
     __block BOOL firstTrack = NO;
-    SGMotionPageIdentifierCover(@"spotify:album:0000000000000000000004", name, 720, ^(NSURL *file) {
+    SGMotionPageIdentifierCover(@"spotify:album:0000000000000000000004", name, 720, ^(NSURL *file, BOOL identified) {
         CHECK([file.path isEqual:@"/1665303755/clip.mp4"]); firstTrack = YES;
     });
     waitFor(^BOOL { return firstTrack; });

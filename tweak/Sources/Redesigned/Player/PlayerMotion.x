@@ -78,8 +78,18 @@
 
 // Where the clip starts dissolving into its foot, as a share of its height.
 static const CGFloat kFootFrom = 0.9;
-// The share of the poster's height, at its bottom, whose colors the foot is.
-static const CGFloat kFootRows = 0.03;
+// A cover shorter than the screen (the tall 3:4 one) keeps its own pixels down to near its bottom edge and dissolves
+// only over the last of it, as the Music app's does: measured on its player, the cover's dark middle is still dark
+// at the cover's bottom edge and only fades into its surroundings below it. Dissolving over the last tenth, into
+// the foot's colors, washed the cover out above its own edge (a fog) where the Music app's stays sharp.
+static const CGFloat kTallFootFrom = 0.965;
+// The share of the poster's (and the playing clip's) height, at its bottom, whose colors the foot is, each column's
+// own. The Music app carries what runs down a column of the cover's lower part on to the screen's foot: a lightning
+// bolt down the left of a black cover ending a little above the cover's edge kept the left of its foot blue, where the
+// last 3% of rows read black there and the foot went a flat gray. The lower quarter holds such a bolt in any frame.
+static const CGFloat kFootRows = 0.25;
+// Rows read across that band of each clip frame (liveRow).
+static const size_t kFootRowSamples = 16;
 // The foot's colors from side to side: that many means of the last rows, each over its share of the width, laid
 // between by a gradient. A few, so the foot keeps the clip's left and right without columns: a row's own pixels
 // stretched on down read as vertical streaks (issue #40).
@@ -105,12 +115,144 @@ static const CGFloat kStillLeastAspect = 4.0 / 3, kStillLeastPixels = 300;
 static const CGFloat kStillScrimTop = 0.45, kStillScrimBelowSafeTop = 76;
 // The dim's floor and ceiling, and what the lyrics add to it.
 static const CGFloat kDimLeast = 0.10, kDimMost = 0.80, kDimLyrics = 0.15;
-// The dim's band at the top: whole over the status bar, and down to this share of the screen while the header
-// shows something to read, so its text gets all of it, then gone over kDimFade points.
-static const CGFloat kDimTop = 0.14, kDimFade = 48;
-// The black over the dim at the bottom of the screen, from none where the dim is whole above the title: the Music
+// The dim's band at the top: over the status bar, and down to this share of the screen while the header shows
+// something to read, so its text gets it, then gone over kDimFade points (eased as the next constants say).
+static const CGFloat kDimTop = 0.14, kDimFade = 108;
+// The Music app's top is not a band with an edge: it is darkest at the very top (kDimTopShare of the dim) and
+// lightens all the way down. The dim is this share of itself where the band ends (over the status bar), whole only at the top edge, and from there
+// it fades out over kDimFade points along a curve (kDimCurve: 1 is a line, more lingers dark near the top and
+// clears sooner). Measured on the Music app's player over a white cover (3x, 874 pt): the top is gone 167 pt down,
+// and the lower half is untouched down to 23% of the screen, then darkens along x^1.75 (x the share of the way from
+// there to the bottom) to the bottom's end, with no knee at the title. The dim and the black over it (kDeepenBottom)
+// each follow that curve (kDimEase) from kBottomStart of the screen to its foot, so together they come to the
+// measured 0.63 over a white cover.
+static const CGFloat kDimTopShare = 0.9, kDimBandShare = 0.49, kDimCurve = 1.5, kDimEase = 1.75, kBottomStart = 0.23;
+// How many steps the top's fade is drawn in, and the curve down the lower half.
+enum { kDimSteps = 4, kRampSteps = 8 };
+// The black over the dim at the bottom of the screen, from none where the lower half starts to darken: the Music
 // app's player darkens toward its foot (issue #39).
-static const CGFloat kDeepenBottom = 0.35;
+static const CGFloat kDeepenBottom = 0.40;
+// Under a cover shorter than the screen the veil carries the foot, and the Music app's colors there hold nearly their
+// brightness to the bottom: over a pink animated cover (3x, 874 pt) they lost an eighth from the times to the foot,
+// where the deepening above took two fifths. There the deepening is this much (the lyrics and Increase Contrast keep
+// kDeepenBottom).
+static const CGFloat kDeepenVeiled = 0.12;
+// The Music app's player gets dark only a little at a time, down the whole lower half of the screen, and ends in the
+// cover's own color rather than a gray one. The dim over the clip is eased to this share of what the rule
+// (SGRPlayerClipDim) asks for, and it grows down the whole lower half (kBottomStart), not over kBlurRamp. Increase
+// Contrast and the lyrics keep the full dim, so their contrast is not given up.
+static const CGFloat kDimSoften = 0.7;
+// A clip that is black or nearly so ends in a gray, not in black: the Music app's player, over a black cover, rises
+// from the cover's own black at 27% of the screen to a gray of 17 of 255 at its foot, along x^1.5 (x the share of the
+// way from there to the bottom; measured at 3x, 874 pt). It is white over the clip, kLiftFoot of it at the foot, and
+// only as far as the clip is black: whole up to kLiftDark of linear luminance (the clip's bright end, as the dim
+// reads it, so a black cover with a white sleeve's lettering is still one) and gone from kLiftNone up. A colored
+// cover (measured over a dark blue and a dark pink one, bright end 0.15 to 0.25) ends in its own color on the Music
+// app's player; the gray lift turned it gray and lighter. Not behind the lyrics.
+static const CGFloat kLiftFrom = 0.27, kLiftEase = 1.5, kLiftFoot = 0.066, kLiftDark = 0.04, kLiftNone = 0.12;
+// What the Music app's player draws below a cover that is shorter than the screen (its tall 3:4 cover): not the
+// poster's last rows stretched down, which stand as a vertical streak, but the cover's foot blurred more the further
+// down it goes, and darker. Measured on the Music app's player over an animated cover (3x, 874 pt) and fitted: the
+// foot's colors smoothed along the width by a Gaussian of kVeilNear of the width, and from kVeilCrossFrom to
+// kVeilCrossTo points below the cover's bottom taken over by the same smoothed by kVeilWide and pulled kVeilMean of
+// the way to the foot's mean color, then brought row by row to the luma kVeilFootLuma says.
+// It is a small picture (kVeilColumns by kVeilRows) the layer stretches smoothly, drawn once for a cover and a
+// layout. It comes in over the clip's last tenth, as the clip dissolves into it.
+// Fitted again against the Music app's center-to-side brightness below a dark blue cover (rms error 0.07 against
+// 0.65 before): the edge's colors keep their own columns (kVeilNear) and are taken over from the cover's bottom
+// edge (kVeilCrossFrom 0) down to kVeilCrossTo. The mean the far color is pulled to weighs each column by its
+// brightness plus kVeilMeanFloor, so a dark middle does not pull a bright cover's sides down to it.
+// The Music app keeps each column's own color down to the foot: over a black cover with a blue lightning bolt down its
+// left side (3x, 874 pt) the left columns stayed blue (106 of 255) to the bottom while the right ones stayed black, where
+// a far color pulled 0.67 of the way to the foot's mean cut the bolt off under the title (47). Fitted on that frame: a
+// wide smoothing of 0.25 of the width, and 0.2 of the way to the mean (rms 0.020, against 0.030 before).
+static const CGFloat kVeilNear = 0.03, kVeilWide = 0.25, kVeilMean = 0.2, kVeilMeanFloor = 0.5;
+// Against the Music app's player over a pink animated cover, its colors had come to the mean 76 pt below the cover's
+// bottom, where the cover's own dark and light columns still ran on down here: taken over by kVeilCrossTo 70, not 120.
+static const CGFloat kVeilCrossFrom = 0, kVeilCrossTo = 70;
+// How light the veil ends. Measured on the Music app's player over three animated covers (3x, 874 pt: a light blue and
+// pink collage, a dark pink photo, a dark blue one), the foot ends at one luma, 44 to 50 of 255, in each cover's own
+// hue, however light or dark the cover's foot was, and gets there in a straight line from the cover's bottom edge (the
+// collage's sides: 117, 101, 80, 59 and 47 at 1, 76, 163, 250 and 316 pt below it). A fixed black over the dim and the
+// deepening ended a dark cover a third too light and a light one too dark, and darkened late, so the controls stood on
+// the cover's colors and the foot came in under them. So each row of the veil takes the luma that straight line puts
+// there as it will be seen, the dim and the deepening over it included (veilShade), from what shows at the cover's
+// edge to the foot's luma (kVeilFootShare) at the bottom of the screen, scaled by at most kVeilGainLeast to kVeilGainMost of its own.
+// The line ends at the bottom of the screen (the ramp's end), not the view's: the view runs the field's bleed (600 pt)
+// past it, and a line to there stood a third of the way at the screen's foot, a light cover's foot left gray at 125
+// of 255 where the Music app's is 72. A light foot ends lighter than a dark one: kVeilFootShare of what shows at the
+// cover's edge (the Music app's 72 under a beige wall at 184, 47 under a collage at 125), never under kVeilFootLuma
+// (a dark pink and a dark blue cover end at 50 and 46), joined by a soft maximum of power kVeilFootSoft.
+// A foot darker than that floor is not lifted to it: under the black and blue cover the Music app's foot ends about
+// kVeilDarkLift of what shows at the cover's edge, so the floor is never more than that.
+static const CGFloat kVeilFootLuma = 0.184, kVeilFootShare = 0.38, kVeilFootSoft = 4, kVeilGainLeast = 0.35, kVeilGainMost = 1.8;
+static const CGFloat kVeilDarkLift = 1.3;
+enum { kVeilColumns = 32, kVeilRows = 48, kVeilSamples = 16 };
+// The foot follows the playing clip, not its poster: this often the clip's current frame is read for the colors of its
+// last rows (AVPlayerItemVideoOutput), and the colors on screen close this share of the way to them each time, so they
+// glide with the clip, as the Music app's lower part moves with its cover.
+static const NSTimeInterval kLiveEvery = 1.0 / 15;
+static const float kLiveFollow = 0.35f;
+// The material blur under the controls tints the bottom of the player gray, which the Music app's player does not
+// have: its colors run on to the bottom untouched. NO leaves the blur's view in place with no effect on it.
+static const BOOL kSeamBlur = NO;
+// Under a cover shorter than the screen the Music app does not cut from the sharp cover to its colors at one line: the
+// cover goes soft from well above its bottom edge (over the title), more the further down, and goes on below its edge
+// as itself blurred and mirrored, so the colors under the title are the cover's own and move with it. Two blurred
+// copies of the same picture (the poster, and the playing clip over it) stand for that: a light blur coming in from
+// kSoftFrom to kSoftWhole of the cover's height, and over it a strong one, mirrored at the cover's bottom edge, from
+// kSofterFrom to kSofterWhole and on down to the bottom (kMirrorStretch). Radii in points; each copy is rendered at
+// its scale, as it is blurred anyway.
+// Against the Music app's player over two animated covers (402 by 874 pt, the same frames), the cover lost its detail
+// about 24 pt (0.045 of its height) higher than the Music app's, which stays sharp to 0.84 and is soft by 0.92: both
+// masks start that much lower. The mirror held 90 pt and fading over 150 more stood as the cover's own shapes, light
+// and dark patches, behind the times and the controls, where the Music app's colors run on smooth and dim steadily to
+// the foot: it is held 30 pt, gone into the veil 110 pt further down, and blurred more (32 against 26).
+// On the phone 0.045 lower kept the cover sharp past the Music app's (twice as much detail 50 pt above its bottom), so
+// they start halfway between. The mirror, held 30 pt, still stood as a light patch behind the badge: it is gone into
+// the veil 70 pt below the cover's edge.
+// Against the Music app's again over a light collage and a dark blue cover, 0.80 lost the detail 10 pt too soon
+// (three fifths of the Music app's 30 pt above the cover's bottom): 0.81 and 0.88.
+static const CGFloat kSoftFrom = 0.81, kSoftWhole = 0.91, kSoftRadius = 8, kSoftScale = 0.5;
+static const CGFloat kSofterFrom = 0.88, kSofterWhole = 1.0, kSofterRadius = 50, kSofterScale = 0.25;
+// Below the cover's edge the Music app's blur keeps growing: its blur over the mirror is a variable blur whose mask is
+// clear at the top of its region and whole about 60% of the way down, so the mirror ends as little more than a color
+// per row. Measured on its player against Retrine's over Rich Man's and Mr. Blue Sky's animated covers (3x, 874 pt),
+// the bottom fifth of the screen varied across a row by 1 to 2 levels of 255 where the mirror under one radius-50 blur
+// varied by 5 to 11, and a light in the clip's top showed at the foot. A third copy, mirrored the same way and blurred
+// kSoftestRadius, comes in over the strong one from the cover's edge and is whole kSoftestWhole of the way from there to
+// the foot of the screen.
+static const CGFloat kSoftestWhole = 0.6, kSoftestRadius = 160, kSoftestScale = 0.125;
+// Where the blurs come in is not a straight line on the Music app's player but a curve that dips in the middle: over A Sky
+// Full of Stars' animated cover its blur starts about 5% of the screen higher at the sides than in the middle, under the
+// title. Each copy's mask is a circle's edge through its start in the middle and kBlurArc higher at the screen's sides
+// (a radial gradient whose center lies above), not a horizontal band; below where it is whole it is whole all across.
+static const CGFloat kBlurArc = 44;
+// Below such a cover, as on the Music app's player, the playing clip itself is drawn mirrored at the cover's bottom edge
+// and stretched kMirrorStretch times down, live, so a flash in the clip's foot runs on down to the bottom of the screen,
+// under a blur of radius kSofterRadius. The mirror is whole from the cover's edge to the bottom and stands over the
+// still veil, which shows only until the clip draws.
+static const CGFloat kMirrorStretch = 2;
+// Over it a color adjustment chosen to match the Music app's: a gradient whose alpha takes each color toward kAdjustKeep
+// of itself plus kAdjustLift of white,
+// from none at kAdjustFrom of the screen to whole at its foot, along x^kAdjustEase (x the share of the way from there
+// to the foot). Measured on the Music app's player over Wish You Were Here's animated cover, whose white margins show
+// the adjustment alone (3x, 874 pt): white starts to darken at a quarter of the screen and goes on smoothly, 0.82 of
+// itself at the title, 0.39 at the foot, which that curve meets within a hundredth all the way down. Started at
+// the bottom 0.5675 of the screen and 0.2 into it, and drawn along a line, it left the screen white down to below the title, which vanished in it. Its saturation (2.4 in the same
+// matrix) is left out, so the mirror keeps the clip's own colors.
+static const CGFloat kAdjustKeep = 0.3, kAdjustLift = 0.0651, kAdjustFrom = 0.25, kAdjustEase = 1.52;
+enum { kAdjustSteps = 10 };
+// The adjustment also saturates, by kAdjustSaturation. Saturation and the dimming commute
+// (the lift is gray), so the mirror is saturated before it is dimmed, and its blur carries the change smoothly across
+// the cover's edge. The adjustment is all the Music app lays over that mirror: the dim's ramp down the lower half and
+// the deepening stand aside wherever it shows, and only the dim's top band stays.
+static const CGFloat kAdjustSaturation = 2.4;
+// The saturation comes in with the adjustment: none where the adjustment starts, whole at the
+// foot. Each mirrored copy holds the mirror twice, plain and saturated, the saturated one masked along the adjustment's
+// curve, so the two mix to a saturation from 1 to kAdjustSaturation down the screen. Saturated whole from the cover's
+// edge, the mirror came out bluer and lighter than the Music app's under the title and the controls (A Sky Full of Stars:
+// 80 against 62 of 255 in blue), and alike only at the foot.
 // The frames measured for the dim besides the poster, in seconds into the clip (one past its end is skipped).
 static const double kMeasuredAt[] = {1, 2};
 // Behind the lyrics the clip itself is blurred, a plain Gaussian blur with no material's gray tint over it
@@ -236,18 +378,24 @@ CGFloat SGRPlayerImageBrightEnd(CGImageRef image) {
 
 // The foot's colors from left to right (kFootSamples), each the mean of its share of the poster's last rows
 // (kFootRows), drawn 16 pixels wide.
-static NSArray *footColors(CGImageRef poster) {
-    enum { kWide = 16 };
+enum { kStripWide = 16 };
+// The poster's last rows (kFootRows), drawn kStripWide pixels wide and one tall: RGBX bytes.
+static void lastRows(CGImageRef poster, uint8_t pixels[kStripWide * 4]) {
     size_t height = CGImageGetHeight(poster), rows = MAX(1, (size_t)(height * kFootRows));
     CGImageRef strip = CGImageCreateWithImageInRect(poster, CGRectMake(0, height - rows, CGImageGetWidth(poster), rows));
-    uint8_t pixels[kWide * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    CGContextRef context = CGBitmapContextCreate(pixels, kWide, 1, 8, kWide * 4, space, (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
+    CGContextRef context = CGBitmapContextCreate(pixels, kStripWide, 1, 8, kStripWide * 4, space, (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
     CGColorSpaceRelease(space);
     CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
-    CGContextDrawImage(context, CGRectMake(0, 0, kWide, 1), strip);
+    CGContextDrawImage(context, CGRectMake(0, 0, kStripWide, 1), strip);
     CGContextRelease(context);
     CGImageRelease(strip);
+}
+
+static NSArray *footColors(CGImageRef poster) {
+    enum { kWide = kStripWide };
+    uint8_t pixels[kWide * 4] = {0};
+    lastRows(poster, pixels);
     const size_t per = kWide / kFootSamples;
     NSMutableArray *colors = [NSMutableArray arrayWithCapacity:kFootSamples];
     for (size_t s = 0; s < kFootSamples; s++) {
@@ -259,6 +407,157 @@ static NSArray *footColors(CGImageRef poster) {
                                                        blue:sum[2] / (per * 255.0) alpha:1].CGColor];
     }
     return colors;
+}
+
+// The foot's colors as kVeilSamples floats per channel, left to right (0 to 1).
+static NSData *veilRow(CGImageRef poster) {
+    uint8_t pixels[kStripWide * 4] = {0};
+    lastRows(poster, pixels);
+    float colors[kVeilSamples * 3];
+    for (int i = 0; i < kVeilSamples; i++) {
+        for (int c = 0; c < 3; c++) colors[i * 3 + c] = pixels[i * 4 + c] / 255.0f;
+    }
+    return [NSData dataWithBytes:colors length:sizeof colors];
+}
+
+// The foot gradient's colors from the row of kVeilSamples: the mean of each group, as footColors takes them.
+static NSArray *footColorsOf(NSData *rowData) {
+    const float *row = rowData.bytes;
+    const size_t per = kVeilSamples / kFootSamples;
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:kFootSamples];
+    for (size_t s = 0; s < kFootSamples; s++) {
+        CGFloat sum[3] = {0};
+        for (size_t i = s * per; i < (s + 1) * per; i++) {
+            for (int c = 0; c < 3; c++) sum[c] += row[i * 3 + c];
+        }
+        [colors addObject:(__bridge id)[UIColor colorWithRed:sum[0] / per green:sum[1] / per blue:sum[2] / per alpha:1].CGColor];
+    }
+    return colors;
+}
+
+// The colors of a clip frame's last rows (kFootRows of its height), kVeilSamples across, as floats; NO for a frame that
+// is not BGRA or cannot be read.
+static BOOL liveRow(CVPixelBufferRef buffer, float out[kVeilSamples * 3]) {
+    if (CVPixelBufferGetPixelFormatType(buffer) != kCVPixelFormatType_32BGRA) return NO;
+    if (CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return NO;
+    const uint8_t *base = CVPixelBufferGetBaseAddress(buffer);
+    size_t width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), stride = CVPixelBufferGetBytesPerRow(buffer);
+    BOOL ok = base && width >= kVeilSamples && height > 0;
+    if (ok) {
+        size_t rows = MAX(1, (size_t)(height * kFootRows)), first = height - rows;
+        size_t stepY = MAX(1, rows / kFootRowSamples), stepX = MAX(1, width / (kVeilSamples * 8));
+        for (size_t j = 0; j < kVeilSamples; j++) {
+            size_t from = j * width / kVeilSamples, to = (j + 1) * width / kVeilSamples;
+            double sum[3] = {0};
+            size_t count = 0;
+            for (size_t y = first; y < height; y += stepY) {
+                const uint8_t *line = base + y * stride;
+                for (size_t x = from; x < to; x += stepX) {
+                    const uint8_t *pixel = line + x * 4;
+                    sum[0] += pixel[2];
+                    sum[1] += pixel[1];
+                    sum[2] += pixel[0];
+                    count++;
+                }
+            }
+            for (int c = 0; c < 3; c++) out[j * 3 + c] = count ? (float)(sum[c] / (count * 255.0)) : 0;
+        }
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+    return ok;
+}
+
+static CGFloat smoothStep(CGFloat from, CGFloat to, CGFloat at) {
+    CGFloat u = MIN(1, MAX(0, (at - from) / (to - from)));
+    return u * u * (3 - 2 * u);
+}
+
+// `row` smoothed along its width by a Gaussian of `sigma` (a share of the width), at column `u` (0 to 1), each end
+// averaging only what is there.
+static void smoothedAt(const float *row, CGFloat sigma, CGFloat u, CGFloat out[3]) {
+    CGFloat sum[3] = {0}, weights = 0;
+    for (int j = 0; j < kVeilSamples; j++) {
+        CGFloat x = (j + 0.5) / kVeilSamples, w = exp(-0.5 * pow((u - x) / sigma, 2));
+        weights += w;
+        for (int c = 0; c < 3; c++) sum[c] += w * row[j * 3 + c];
+    }
+    for (int c = 0; c < 3; c++) out[c] = sum[c] / weights;
+}
+
+// The veil's picture for a view `width` wide and `total` tall whose cover ends at `bottom`, drawn from `seam` down: its
+// rows run from the seam to the foot of the view. Premultiplied, so the top rows, where it comes in over the clip's
+// dissolve, are clear. The caller releases it.
+// What the dim and the deepening over the veil leave of it (veilShade), as SGRPlayerMotionView's layout and dim set them:
+// their opacities, where their ramp down the lower half starts and ends, and whether the dim is whole at every stop
+// (the lyrics).
+typedef struct {
+    CGFloat dim, deepen, rampFrom, rampTo;
+    BOOL wholeDim;
+} SGRVeilShade;
+
+// The share of a row at `y` the dim and the deepening leave: each is black along kDimEase from rampFrom to rampTo.
+static CGFloat veilShade(SGRVeilShade shade, CGFloat y) {
+    CGFloat span = MAX(1, shade.rampTo - shade.rampFrom), r = pow(MIN(1, MAX(0, (y - shade.rampFrom) / span)), kDimEase);
+    return (1 - shade.dim * (shade.wholeDim ? 1 : r)) * (1 - shade.deepen * r);
+}
+
+static CGImageRef veilImage(NSData *rowData, CGFloat seam, CGFloat bottom, CGFloat total, SGRVeilShade shade) {
+    const float *row = rowData.bytes;
+    CGFloat mean[3] = {0}, weights = 0;
+    for (int j = 0; j < kVeilSamples; j++) {
+        CGFloat w = kVeilMeanFloor + 0.299 * row[j * 3] + 0.587 * row[j * 3 + 1] + 0.114 * row[j * 3 + 2];
+        weights += w;
+        for (int c = 0; c < 3; c++) mean[c] += w * row[j * 3 + c];
+    }
+    for (int c = 0; c < 3; c++) mean[c] /= weights;
+    CGFloat edgeShade = veilShade(shade, bottom), run = MAX(1, MIN(total, shade.rampTo) - bottom);
+    uint8_t *pixels = calloc(kVeilColumns * kVeilRows * 4, 1);
+    // Each column's two colors, the near and the far, once for every row.
+    CGFloat narrowAt[kVeilColumns][3], farAt[kVeilColumns][3];
+    for (int k = 0; k < kVeilColumns; k++) {
+        CGFloat u = (k + 0.5) / kVeilColumns, wide[3];
+        smoothedAt(row, kVeilNear, u, narrowAt[k]);
+        smoothedAt(row, kVeilWide, u, wide);
+        for (int c = 0; c < 3; c++) farAt[k][c] = wide[c] * (1 - kVeilMean) + mean[c] * kVeilMean;
+    }
+    // Where the line ends: from the luma at the cover's edge as it is seen (kVeilFootShare).
+    CGFloat edgeLuma = 0;
+    for (int k = 0; k < kVeilColumns; k++) edgeLuma += 0.299 * narrowAt[k][0] + 0.587 * narrowAt[k][1] + 0.114 * narrowAt[k][2];
+    edgeLuma = edgeLuma / kVeilColumns * edgeShade;
+    CGFloat floorLuma = MIN(kVeilFootLuma, kVeilDarkLift * edgeLuma);
+    CGFloat footLuma = pow(pow(kVeilFootShare * edgeLuma, kVeilFootSoft) + pow(floorLuma, kVeilFootSoft), 1 / kVeilFootSoft);
+    for (int r = 0; r < kVeilRows; r++) {
+        CGFloat y = seam + (r + 0.5) / kVeilRows * (total - seam), d = MAX(0, y - bottom);
+        CGFloat across = smoothStep(kVeilCrossFrom, kVeilCrossTo, d);
+        CGFloat enter = bottom > seam ? smoothStep(seam, bottom, y) : 1;
+        // The row's colors, and their mean luma: one gain for the whole row keeps its columns' light and dark.
+        CGFloat colors[kVeilColumns][3], luma = 0;
+        for (int k = 0; k < kVeilColumns; k++) {
+            for (int c = 0; c < 3; c++) colors[k][c] = narrowAt[k][c] * (1 - across) + farAt[k][c] * across;
+            luma += 0.299 * colors[k][0] + 0.587 * colors[k][1] + 0.114 * colors[k][2];
+        }
+        luma = MAX(0.01, luma / kVeilColumns);
+        // The straight line from what shows at the cover's edge to the foot's luma, as seen through the dim and the
+        // deepening at this row.
+        CGFloat along = MIN(1, d / run), seen = luma * edgeShade * (1 - along) + footLuma * along;
+        CGFloat gain = MIN(kVeilGainMost, MAX(kVeilGainLeast, seen / (luma * MAX(0.05, veilShade(shade, y)))));
+        for (int k = 0; k < kVeilColumns; k++) {
+            uint8_t *pixel = pixels + (r * kVeilColumns + k) * 4;
+            for (int c = 0; c < 3; c++) {
+                CGFloat color = colors[k][c] * gain;
+                pixel[c] = (uint8_t)lrint(MIN(1, MAX(0, color * enter)) * 255);
+            }
+            pixel[3] = (uint8_t)lrint(enter * 255);
+        }
+    }
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef context = CGBitmapContextCreate(pixels, kVeilColumns, kVeilRows, 8, kVeilColumns * 4, space,
+                                                 kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    free(pixels);
+    return image;
 }
 
 @interface SGRPlayerMotionView : UIView <SGPlayerStateObserver>
@@ -292,12 +591,27 @@ static NSArray *footColors(CGImageRef poster) {
     CALayer *_still;    // the poster, with the video drawn over it
     AVPlayerLayer *_clip;
     CAGradientLayer *_clipMask, *_seamMask;
+    CALayer *_soft, *_softer;   // the cover blurred a little, and a lot and mirrored below its edge (kSoftFrom)
+    CALayer *_softest;   // mirrored too and blurred more, coming in below the cover's edge (kSoftestWhole)
+    CAGradientLayer *_adjust, *_adjustLift;   // the Music app's color adjustment over the mirror (kAdjustKeep)
+    NSArray<CALayer *> *_softPictures;   // the poster in each of them, the clip drawn over it
+    NSArray<AVPlayerLayer *> *_softClips;   // the clip in each of them, on the same player as _clip
     CAGradientLayer *_foot;   // the colors of the poster's last rows, from side to side, from the seam down
+    SGRVeilShade _veilShade;   // what the veil's picture was drawn for of the dim and the deepening over it
+    CGFloat _rampFrom, _rampTo;   // the dim's and the deepening's ramp down the lower half, as last laid out
+    CALayer *_veil;   // under a cover shorter than the screen: the foot blurred, more the further down, over _foot
+    NSData *_veilRow;   // the foot's colors now (the poster's last rows at first, then the clip's), kVeilSamples (floats) left to right
+    AVPlayerItemVideoOutput *_liveOutput;   // reads the playing clip's frames, on the item it is on
+    AVPlayerItem *_liveItem;
+    NSTimer *_liveTimer;
+    CGRect _veilFor;   // the layout _veil's picture was drawn for (seam, cover's bottom, width, height of the view)
     CAGradientLayer *_dim;   // black over the clip's top and from above the title down, as dark as the clip is bright
     CAGradientLayer *_deepen;   // more black over the dim, from where it is whole down to the bottom of the screen
+    CAGradientLayer *_lift;   // white over a dark clip's lower part, so a black one ends in the Music app's gray
     CAGradientLayer *_scrim;   // a still's only: black from the top fading out under the header's controls
     NSMutableData *_luminances;   // of the frames measured so far
     BOOL _lyricsUp;
+    BOOL _dimTopOnly;   // the dim's colors are the band's only (dimColors)
     NSUInteger _blurTurn;   // counts the lyrics' turns, so a fade cut short leaves the filter to the turn after it
     UIVisualEffectView *_seamBlur;
     CGFloat _aspect;
@@ -309,15 +623,108 @@ static NSArray *footColors(CGImageRef poster) {
 
 // What fades is the effect views' effect, never their alpha or an ancestor's: UIKit draws a blur under a
 // fading alpha or a mask wrongly or not at all.
-// The dim's stops: black at the top and from above the title down, clear between; black all over behind the
-// lyrics, which run down the whole screen.
-static NSArray *dimColors(BOOL whole) {
-    id black = (__bridge id)UIColor.blackColor.CGColor, between = whole ? black : (__bridge id)UIColor.clearColor.CGColor;
-    return @[black, black, between, between, black];
+// The dim's stops, top to bottom (15 of them; SGRPlayerMotionView's layout puts each at its place): the very top
+// (whole), the end of the band over the status bar (kDimBandShare), kDimSteps down the fade to nothing, where the
+// lower half starts (nothing), and kRampSteps down it to the whole dim at the foot of the screen. `whole` (the
+// lyrics, which run down the whole screen) is black at every stop; `topOnly` (under the color adjustment,
+// kAdjustSaturation) keeps the band and leaves out the ramp.
+static NSArray *dimColors(BOOL whole, BOOL topOnly) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:3 + kDimSteps + kRampSteps];
+    void (^add)(CGFloat) = ^(CGFloat alpha) {
+        [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:whole ? 1 : alpha].CGColor];
+    };
+    add(kDimTopShare);
+    add(kDimBandShare);
+    for (int i = 1; i <= kDimSteps; i++) add(kDimBandShare * pow(1 - (CGFloat)i / kDimSteps, kDimCurve));
+    add(0);
+    for (int j = 1; j <= kRampSteps; j++) add(topOnly ? 0 : pow((CGFloat)j / kRampSteps, kDimEase));
+    return colors;
+}
+
+// The black over the dim: the same curve down the lower half, from nothing to whole (its opacity is kDeepenBottom).
+static NSArray *deepenColors(void) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
+    [colors addObject:(__bridge id)UIColor.clearColor.CGColor];
+    for (int j = 1; j <= kRampSteps; j++) [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:pow((CGFloat)j / kRampSteps, kDimEase)].CGColor];
+    return colors;
+}
+
+// The adjustment's stops (kAdjustEase): nothing where it starts, then the curve to whole, `white` at `alpha` when whole.
+static NSArray *adjustColors(CGFloat white, CGFloat alpha) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
+    for (int j = 0; j <= kAdjustSteps; j++)
+        [colors addObject:(__bridge id)[UIColor colorWithWhite:white alpha:alpha * pow((CGFloat)j / kAdjustSteps, kAdjustEase)].CGColor];
+    return colors;
+}
+
+// The white that lifts a dark clip's foot: nothing where it starts, then the curve to whole (its opacity is kLiftFoot).
+static NSArray *liftColors(void) {
+    NSMutableArray *colors = [NSMutableArray arrayWithCapacity:1 + kRampSteps];
+    [colors addObject:(__bridge id)UIColor.clearColor.CGColor];
+    for (int j = 1; j <= kRampSteps; j++) [colors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:pow((CGFloat)j / kRampSteps, kLiftEase)].CGColor];
+    return colors;
 }
 
 static UIBlurEffect *blurEffect(void) {
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+}
+
+// The poster with the clip drawn over it, as _still is, for one of the blurred copies.
+static CALayer *softPicture(NSMutableArray *pictures, NSMutableArray *clips) {
+    CALayer *picture = [CALayer layer];
+    picture.contentsGravity = kCAGravityResizeAspectFill;
+    picture.masksToBounds = YES;
+    AVPlayerLayer *clip = [AVPlayerLayer layer];
+    clip.videoGravity = AVLayerVideoGravityResizeAspectFill;
+    [picture addSublayer:clip];
+    [pictures addObject:picture];
+    [clips addObject:clip];
+    return picture;
+}
+
+// `mask` comes in from `from` to `to` (points down a layer `width` by `total`) in the middle, kBlurArc higher at the sides.
+static void arcRamp(CAGradientLayer *mask, CGFloat width, CGFloat total, CGFloat from, CGFloat to) {
+    CGFloat half = width / 2, radius = (half * half + kBlurArc * kBlurArc) / (2 * kBlurArc), outer = radius + MAX(1, to - from);
+    if (width <= 0 || total <= 0) return;
+    mask.type = kCAGradientLayerRadial;
+    mask.startPoint = CGPointMake(0.5, (from - radius) / total);
+    mask.endPoint = CGPointMake(0.5 + outer / width, (from - radius + outer) / total);
+    mask.locations = @[@(radius / outer), @1];
+}
+
+// A blurred copy of the cover, masked in (see kSoftFrom); `mirrored` adds the cover flipped below its bottom edge.
+static CALayer *softCopy(CGFloat radius, CGFloat scale, BOOL mirrored, NSMutableArray *pictures, NSMutableArray *clips) {
+    CALayer *copy = [CALayer layer];
+    copy.hidden = YES;
+    [copy addSublayer:softPicture(pictures, clips)];
+    if (mirrored) {
+        // Plain, then saturated over it along the adjustment (kAdjustSaturation).
+        CALayer *plain = softPicture(pictures, clips);
+        plain.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+        [copy addSublayer:plain];
+        CAFilter *saturate = [NSClassFromString(@"CAFilter") filterWithType:@"colorSaturate"];
+        if (saturate) {
+            CALayer *mirror = softPicture(pictures, clips);
+            mirror.transform = CATransform3DMakeScale(1, -kMirrorStretch, 1);
+            [saturate setValue:@(kAdjustSaturation) forKey:@"inputAmount"];
+            mirror.filters = @[saturate];
+            mirror.mask = [CAGradientLayer layer];
+            [copy addSublayer:mirror];
+        }
+    }
+    CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
+    if (blur) {
+        [blur setValue:@(radius) forKey:@"inputRadius"];
+        // The copy's edges blur against themselves, not against the clear around it.
+        [blur setValue:@YES forKey:@"inputNormalizeEdges"];
+        copy.filters = @[blur];
+        copy.rasterizationScale = scale;
+        copy.shouldRasterize = YES;
+    }
+    CAGradientLayer *mask = [CAGradientLayer layer];
+    mask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
+    copy.mask = mask;
+    return copy;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -333,6 +740,10 @@ static UIBlurEffect *blurEffect(void) {
     for (size_t s = 0; s < kFootSamples; s++) [footAt addObject:@((s + 0.5) / kFootSamples)];
     _foot.locations = footAt;
     [_picture.layer addSublayer:_foot];
+    _veil = [CALayer layer];
+    _veil.magnificationFilter = kCAFilterLinear;
+    _veil.hidden = YES;
+    [_picture.layer addSublayer:_veil];
     // An AVPlayerLayer draws nothing until its first frame is decoded, so the poster, the clip's first
     // frame and where the looper starts, is the contents of the layer the video draws in: there is a
     // picture from the first frame, and the video covers it exactly.
@@ -347,14 +758,36 @@ static UIBlurEffect *blurEffect(void) {
     _clipMask.locations = @[@0, @(kFootFrom), @1];
     _still.mask = _clipMask;
     [_picture.layer addSublayer:_still];
+    NSMutableArray *softPictures = [NSMutableArray array], *softClips = [NSMutableArray array];
+    _soft = softCopy(kSoftRadius, kSoftScale, NO, softPictures, softClips);
+    _softer = softCopy(kSofterRadius, kSofterScale, YES, softPictures, softClips);
+    _softest = softCopy(kSoftestRadius, kSoftestScale, YES, softPictures, softClips);
+    _softPictures = softPictures;
+    _softClips = softClips;
+    [_picture.layer addSublayer:_soft];
+    [_picture.layer addSublayer:_softer];
+    [_picture.layer addSublayer:_softest];
+    _adjust = [CAGradientLayer layer];
+    _adjust.colors = adjustColors(0, 1 - kAdjustKeep);
+    _adjust.hidden = YES;
+    [_picture.layer addSublayer:_adjust];
+    _adjustLift = [CAGradientLayer layer];
+    _adjustLift.colors = adjustColors(1, kAdjustLift);
+    _adjustLift.compositingFilter = @"plusL";
+    _adjustLift.hidden = YES;
+    [_picture.layer addSublayer:_adjustLift];
     _dim = [CAGradientLayer layer];
-    _dim.colors = dimColors(NO);
+    _dim.colors = dimColors(NO, NO);
     _dim.opacity = kDimLeast;
     [_picture.layer addSublayer:_dim];
     _deepen = [CAGradientLayer layer];
-    _deepen.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor];
+    _deepen.colors = deepenColors();
     _deepen.opacity = kDeepenBottom;
     [_picture.layer addSublayer:_deepen];
+    _lift = [CAGradientLayer layer];
+    _lift.colors = liftColors();
+    _lift.opacity = 0;
+    [_picture.layer addSublayer:_lift];
     _scrim = [CAGradientLayer layer];
     _scrim.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
     _scrim.hidden = YES;
@@ -390,9 +823,11 @@ static UIBlurEffect *blurEffect(void) {
     // A looper let go while it plays is what AVFoundation minds: the player stops, the looper stops watching it,
     // and the layer lets the player go before any of them can be freed playing.
     [self unwatch];
+    [self dropLive];
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
+    for (AVPlayerLayer *clip in _softClips) clip.player = nil;
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
@@ -428,7 +863,9 @@ static UIBlurEffect *blurEffect(void) {
     CGFloat screen = _screenHeight > 0 ? _screenHeight : total;
     CGFloat height = round(width * _aspect);
     if (_aspect > kCanvasAspect) height = MAX(height, screen);
-    CGFloat seam = round(height * kFootFrom), blurFrom = MIN(seam, round(screen * kBlurByControls));
+    BOOL tall = height < screen - 0.5;
+    CGFloat from = tall ? kTallFootFrom : kFootFrom;
+    CGFloat seam = round(height * from), blurFrom = MIN(seam, round(screen * kBlurByControls));
     _picture.frame = bounds;
     _seamBlur.frame = bounds;
     _seamBlur.maskView.frame = bounds;
@@ -437,9 +874,24 @@ static UIBlurEffect *blurEffect(void) {
     _still.frame = CGRectMake(0, 0, width, height);
     _clip.frame = _still.bounds;
     _clipMask.frame = _still.bounds;
+    _clipMask.locations = @[@0, @(from), @1];
     _foot.frame = CGRectMake(0, seam, width, MAX(0, total - seam));
+    // A cover shorter than the screen gets the blurred foot below it, a Canvas (which fills the screen) none.
+    BOOL shorter = _veilRow && height < screen - 0.5 && total > seam;
+    _veil.hidden = !shorter;
+    [self updateDeepen];
+    [self layoutSoftFor:shorter width:width height:height total:total];
+    if (shorter) {
+        _veil.frame = _foot.frame;
+        CGRect geometry = CGRectMake(seam, height, width, total);
+        if (!CGRectEqualToRect(geometry, _veilFor)) {
+            _veilFor = geometry;
+            _veilShade.rampTo = -1;   // drawn again below, once the ramp is laid out
+        }
+    }
     _dim.frame = bounds;
     _deepen.frame = bounds;
+    _lift.frame = bounds;
     // The window's safe area: this view's own, on the field in the player's list, reads none.
     CGFloat safeTop = self.window.safeAreaInsets.top;
     _scrim.frame = CGRectMake(0, 0, width, safeTop + kStillScrimBelowSafeTop);
@@ -450,11 +902,166 @@ static UIBlurEffect *blurEffect(void) {
     // The band at the top reaches as far as there is something to read: the status bar, and the header while it
     // shows more than the grabber.
     CGFloat bandEnd = SGRPlayerHeaderShowsIn(self) ? screen * kDimTop : safeTop;
-    CGFloat topEnd = MIN(bandEnd, dimFrom), rampFrom = MAX(topEnd, dimFrom - kBlurRamp);
-    _dim.locations = @[@0, at(topEnd), at(MIN(topEnd + kDimFade, rampFrom)), at(rampFrom), at(dimFrom)];
-    _deepen.locations = @[at(dimFrom), at(screen)];
+    CGFloat topEnd = MIN(bandEnd, dimFrom);
+    CGFloat fadeEnd = topEnd + kDimFade, rampFrom = MAX(fadeEnd, screen * kBottomStart);
+    NSMutableArray *stops = [NSMutableArray arrayWithObjects:@0, at(topEnd), nil];
+    for (int i = 1; i <= kDimSteps; i++) [stops addObject:at(topEnd + (fadeEnd - topEnd) * i / kDimSteps)];
+    [stops addObject:at(rampFrom)];
+    for (int j = 1; j <= kRampSteps; j++) [stops addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
+    _dim.locations = stops;
+    NSMutableArray *deepen = [NSMutableArray arrayWithObject:at(rampFrom)];
+    for (int j = 1; j <= kRampSteps; j++) [deepen addObject:at(rampFrom + (screen - rampFrom) * j / kRampSteps)];
+    _deepen.locations = deepen;
+    _rampFrom = rampFrom;
+    _rampTo = screen;
+    [self redrawVeilIfShaded];
+    CGFloat liftFrom = screen * kLiftFrom;
+    NSMutableArray *lift = [NSMutableArray arrayWithObject:at(liftFrom)];
+    for (int j = 1; j <= kRampSteps; j++) [lift addObject:at(liftFrom + (screen - liftFrom) * j / kRampSteps)];
+    _lift.locations = lift;
     _seamMask.frame = bounds;
     _seamMask.locations = @[at(blurFrom), at(blurFrom + kBlurRamp)];
+    [CATransaction commit];
+}
+
+// Lighter under the veil (kDeepenVeiled), except behind the lyrics and under Increase Contrast.
+- (void)updateDeepen {
+    BOOL veiled = !_veil.hidden && !_lyricsUp && !UIAccessibilityDarkerSystemColorsEnabled();
+    float opacity = (float)([self adjusted] ? 0 : veiled ? kDeepenVeiled : kDeepenBottom);
+    if (_deepen.opacity != opacity) _deepen.opacity = opacity;
+}
+
+// The blurred copies over a cover shorter than the screen (kSoftFrom), none over a Canvas or in the cover. Called
+// inside the layout's transaction.
+- (void)layoutSoftFor:(BOOL)shorter width:(CGFloat)width height:(CGFloat)height total:(CGFloat)total {
+    BOOL shown = shorter && !_inCover && height > 0;
+    _soft.hidden = _softer.hidden = _softest.hidden = !shown;
+    BOOL adjusted = shown && !_lyricsUp;
+    if (_adjust.hidden == adjusted) {
+        _adjust.hidden = _adjustLift.hidden = !adjusted;
+        [self updateDim];   // the lift gives way to the adjustment's (kAdjustLift)
+    }
+    if (!shown) return;
+    CGRect cover = CGRectMake(0, 0, width, height);
+    for (CALayer *copy in @[_soft, _softer, _softest]) {
+        copy.frame = CGRectMake(0, 0, width, total);
+        copy.mask.frame = copy.bounds;
+    }
+    for (CALayer *picture in _softPictures) {
+        picture.bounds = cover;
+        // The mirrors follow each mirrored copy's picture: flipped about the cover's bottom edge and stretched down.
+        CALayer *copy = picture.superlayer;
+        BOOL mirror = (copy == _softer || copy == _softest) && picture != copy.sublayers.firstObject;
+        picture.position = CGPointMake(width / 2, mirror ? height * (1 + kMirrorStretch / 2) : height / 2);
+        ((CALayer *)picture.sublayers.firstObject).frame = picture.bounds;
+    }
+    NSNumber *(^at)(CGFloat) = ^NSNumber *(CGFloat y) { return @(MIN(1, MAX(0, y / total))); };
+    CGFloat screen = _screenHeight > 0 ? MIN(_screenHeight, total) : total, adjustFrom = screen * kAdjustFrom;
+    arcRamp((CAGradientLayer *)_soft.mask, width, total, height * kSoftFrom, height * kSoftWhole);
+    arcRamp((CAGradientLayer *)_softer.mask, width, total, height * kSofterFrom, height * kSofterWhole);
+    arcRamp((CAGradientLayer *)_softest.mask, width, total, height, height + MAX(0, screen - height) * kSoftestWhole);
+    // The saturated mirrors' masks, in their own (flipped, stretched) coordinates: a point y of the picture is drawn at
+    // height + kMirrorStretch * (height - y) down the screen, where the adjustment has its strength.
+    for (CALayer *picture in _softPictures) {
+        CAGradientLayer *mask = (CAGradientLayer *)picture.mask;
+        if (!mask || height <= 0) continue;
+        mask.frame = picture.bounds;
+        NSMutableArray *colors = [NSMutableArray array], *stops = [NSMutableArray array];
+        for (int j = 0; j <= kAdjustSteps; j++) {
+            CGFloat y = height * j / kAdjustSteps, down = height + kMirrorStretch * (height - y);
+            CGFloat share = MIN(1, MAX(0, (down - adjustFrom) / MAX(1, screen - adjustFrom)));
+            [colors addObject:(__bridge id)[UIColor colorWithWhite:0 alpha:pow(share, kAdjustEase)].CGColor];
+            [stops addObject:@((CGFloat)j / kAdjustSteps)];
+        }
+        mask.colors = colors;
+        mask.locations = stops;
+    }
+    NSMutableArray *adjustAt = [NSMutableArray arrayWithCapacity:1 + kAdjustSteps];
+    for (int j = 0; j <= kAdjustSteps; j++) [adjustAt addObject:at(adjustFrom + (screen - adjustFrom) * j / kAdjustSteps)];
+    for (CAGradientLayer *layer in @[_adjust, _adjustLift]) {
+        layer.frame = CGRectMake(0, 0, width, total);
+        layer.locations = adjustAt;
+    }
+}
+
+// The veil's picture again from the foot's colors now, for the layout it was last placed in.
+- (void)redrawVeil {
+    if (_veil.hidden || !_veilRow || CGRectIsEmpty(_veilFor)) return;
+    _veilShade = [self veilShadeNow];
+    CGImageRef image = veilImage(_veilRow, _veilFor.origin.x, _veilFor.origin.y, _veilFor.size.height, _veilShade);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _veil.contents = (__bridge id)image;
+    [CATransaction commit];
+    CGImageRelease(image);
+}
+
+// The dim and the deepening over the veil now (kVeilFootLuma).
+- (SGRVeilShade)veilShadeNow {
+    if ([self adjusted]) return (SGRVeilShade){0, 0, _rampFrom, _rampTo, NO};   // the ramps stand aside there
+    return (SGRVeilShade){_dim.opacity, _deepen.opacity, _rampFrom, _rampTo, _lyricsUp};
+}
+
+// Whether the Music app's color adjustment is over the lower half (kAdjustSaturation).
+- (BOOL)adjusted {
+    return !_adjust.hidden && !_lyricsUp;
+}
+
+// The veil's picture again when the dim or the deepening over it changed since it was drawn.
+- (void)redrawVeilIfShaded {
+    SGRVeilShade now = [self veilShadeNow], was = _veilShade;
+    if (fabs(now.dim - was.dim) > 0.01 || fabs(now.deepen - was.deepen) > 0.01 || fabs(now.rampFrom - was.rampFrom) > 0.5
+        || fabs(now.rampTo - was.rampTo) > 0.5 || now.wholeDim != was.wholeDim) [self redrawVeil];
+}
+
+// While the clip plays, the foot takes its colors from the clip's frames. The output is on the item the player has
+// now (the looper swaps items, and an output belongs to one at a time).
+- (void)startLive {
+    if (_liveTimer) return;
+    __weak SGRPlayerMotionView *weakSelf = self;
+    _liveTimer = [NSTimer timerWithTimeInterval:kLiveEvery repeats:YES block:^(NSTimer *timer) { [weakSelf liveTick]; }];
+    [NSRunLoop.mainRunLoop addTimer:_liveTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopLive {
+    [_liveTimer invalidate];
+    _liveTimer = nil;
+}
+
+// Also lets the item go of the output, for a player that is being replaced or a view that is going.
+- (void)dropLive {
+    [self stopLive];
+    [_liveItem removeOutput:_liveOutput];
+    _liveItem = nil;
+}
+
+- (void)liveTick {
+    AVPlayerItem *item = _player.currentItem;
+    if (_inCover || !item || !_veilRow || !self.window) return;
+    if (!_liveOutput) {
+        _liveOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:@{(id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)}];
+    }
+    if (item != _liveItem) {
+        [_liveItem removeOutput:_liveOutput];
+        _liveItem = nil;
+        if (![item.outputs containsObject:_liveOutput]) [item addOutput:_liveOutput];
+        _liveItem = item;
+    }
+    CMTime time = [_liveOutput itemTimeForHostTime:CACurrentMediaTime()];
+    if (![_liveOutput hasNewPixelBufferForItemTime:time]) return;
+    CVPixelBufferRef buffer = [_liveOutput copyPixelBufferForItemTime:time itemTimeForDisplay:NULL];
+    if (!buffer) return;
+    float now[kVeilSamples * 3], shown[kVeilSamples * 3];
+    BOOL read = liveRow(buffer, now);
+    CVPixelBufferRelease(buffer);
+    if (!read || _veilRow.length != sizeof shown) return;
+    memcpy(shown, _veilRow.bytes, sizeof shown);
+    for (int i = 0; i < kVeilSamples * 3; i++) shown[i] += (now[i] - shown[i]) * kLiveFollow;
+    _veilRow = [NSData dataWithBytes:shown length:sizeof shown];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _foot.colors = footColorsOf(_veilRow);
+    [self redrawVeil];
     [CATransaction commit];
 }
 
@@ -462,7 +1069,10 @@ static UIBlurEffect *blurEffect(void) {
 - (void)takePicture:(UIImage *)picture aspect:(CGFloat)aspect {
     _aspect = aspect;
     _foot.colors = footColors(picture.CGImage);
+    _veilRow = veilRow(picture.CGImage);
+    _veilFor = CGRectZero;
     _still.contents = (__bridge id)picture.CGImage;
+    for (CALayer *soft in _softPictures) soft.contents = (__bridge id)picture.CGImage;
     [self setNeedsLayout];
 }
 
@@ -481,7 +1091,7 @@ static UIBlurEffect *blurEffect(void) {
     if (_inCover) {
         // The cover's own picture: nothing over it to keep readable, and nothing under it to fade into.
         _still.mask = nil;
-        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = YES;
+        _foot.hidden = _dim.hidden = _deepen.hidden = _seamBlur.hidden = _soft.hidden = _softer.hidden = _softest.hidden = _adjust.hidden = _adjustLift.hidden = YES;
         return;
     }
     [self measure:file poster:poster];
@@ -492,9 +1102,11 @@ static UIBlurEffect *blurEffect(void) {
 // go on. What they watch goes before another is made, so an observer never outlives the object it was put on.
 - (void)build {
     [self unwatch];
+    [self dropLive];
     [_player pause];
     [_looper disableLooping];
     _clip.player = nil;
+    for (AVPlayerLayer *clip in _softClips) clip.player = nil;
     _player = [AVQueuePlayer new];
     _player.muted = YES;
     _player.preventsDisplaySleepDuringVideoPlayback = NO;
@@ -503,6 +1115,7 @@ static UIBlurEffect *blurEffect(void) {
     _looper = [AVPlayerLooper playerLooperWithPlayer:_player templateItem:[AVPlayerItem playerItemWithURL:_file]];
     [_looper addObserver:self forKeyPath:@"status" options:0 context:&SGRPlayerMotionLooperContext];
     _clip.player = _player;
+    for (AVPlayerLayer *clip in _softClips) clip.player = _player;
     // The layer's readiness belongs to the item it has now, and goes back to NO for every one the looper swaps
     // in: what is kept is that this clip drew a frame at all, not that this item has.
     [_clip addObserver:self forKeyPath:@"readyForDisplay" options:NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew
@@ -643,7 +1256,24 @@ static UIBlurEffect *blurEffect(void) {
     // Reduce Transparency puts the lyrics on black, as the material it replaced went opaque there.
     BOOL contrast = UIAccessibilityDarkerSystemColorsEnabled();
     CGFloat dim = _lyricsUp && SGRReduceTransparency() ? 1 : SGRPlayerClipDim(brightEnd(_luminances), contrast, _lyricsUp);
+    // Eased toward the Music app's look, except where the text's contrast is a setting's (Increase Contrast) or the
+    // lyrics' own.
+    if (!_lyricsUp && !contrast) dim *= kDimSoften;
     _dim.opacity = (float)dim;
+    // Behind the lyrics their own colors stand (setBlurred:animated:).
+    if (!_lyricsUp) {
+        BOOL topOnly = [self adjusted];
+        if (topOnly != _dimTopOnly) {
+            _dimTopOnly = topOnly;
+            _dim.colors = dimColors(NO, topOnly);
+        }
+    }
+    [self updateDeepen];
+    // The gray a dark clip ends in: all of it for a black one, less up to kLiftNone, none behind the lyrics.
+    CGFloat bright = brightEnd(_luminances), share = MIN(1, MAX(0, (kLiftNone - bright) / (kLiftNone - kLiftDark)));
+    // Under the color adjustment its own lift (kAdjustLift) stands for this one.
+    _lift.opacity = _lyricsUp || !_adjust.hidden ? 0 : (float)(kLiftFoot * share);
+    [self redrawVeilIfShaded];
     _scrim.opacity = (float)(contrast ? kStillScrimTop * SGRPlayerClipDim(1, YES, NO) / SGRPlayerClipDim(1, NO, NO) : kStillScrimTop);
 }
 
@@ -652,7 +1282,7 @@ static UIBlurEffect *blurEffect(void) {
     _picture.alpha = 0;
     void (^apply)(void) = ^{
         self->_picture.alpha = 1;
-        if (!self->_inCover) self->_seamBlur.effect = blurEffect();
+        if (!self->_inCover && kSeamBlur) self->_seamBlur.effect = blurEffect();
     };
     if (animated) {
         SGRAnimate(SGRMotionFade, apply, ^(BOOL finished) {
@@ -678,6 +1308,8 @@ static UIBlurEffect *blurEffect(void) {
     // Asked again on every footer layout pass: the same state again would restart the fade.
     if (blurred == _lyricsUp) return;
     _lyricsUp = blurred;
+    // Behind the lyrics the whole clip is blurred and dimmed instead (the dim's lyrics share).
+    _adjust.hidden = _adjustLift.hidden = _softer.hidden || blurred;
     NSUInteger turn = ++_blurTurn;
     CALayer *layer = _picture.layer;
     if (blurred && !layer.filters && !SGRReduceTransparency()) {
@@ -699,7 +1331,8 @@ static UIBlurEffect *blurEffect(void) {
     [CATransaction begin];
     [CATransaction setDisableActions:!animated];
     [CATransaction setAnimationDuration:SGRCrossfade];
-    _dim.colors = dimColors(blurred);
+    _dim.colors = dimColors(blurred, NO);
+    _dimTopOnly = NO;
     [self updateDim];
     if (layer.filters) {
         __weak SGRPlayerMotionView *weakSelf = self;
@@ -742,6 +1375,8 @@ static UIBlurEffect *blurEffect(void) {
     BOOL may = [self mayPlay];
     if (may) [_player play];
     else [_player pause];
+    if (may) [self startLive];
+    else [self stopLive];
     // A clip that plays again is asked whether its item or looper failed while it could not: the failure is
     // answered here, on the pass that puts it back on screen, and never behind a paused song or off screen.
     // This reads a state, it does not poll a clock.
@@ -1112,7 +1747,7 @@ static void showBehind(NSString *track, NSString *name, void (^draw)(SGRPlayerMo
     SGRPlayerLyricClipChanged();
     layOut();
     SGRPlayerHoldField();
-    [motion setBlurred:SGRPlayerLyricsOpen() animated:NO];
+    [motion setBlurred:SGRPlayerPageOpen() animated:NO];
     BOOL animated = seen(motion);
     [motion appear:animated then:^{
         if (sg_motion == motion) cover(YES);
@@ -1199,7 +1834,7 @@ BOOL SGRPlayerVisualiserFallbackWanted(void) {
 }
 
 void SGRPlayerMotionLyricsChanged(void) {
-    [sg_motion setBlurred:SGRPlayerLyricsOpen() animated:sg_motion.window != nil];
+    [sg_motion setBlurred:SGRPlayerPageOpen() animated:sg_motion.window != nil];
     SGRPlayerBackdropLyricsChanged();
 }
 

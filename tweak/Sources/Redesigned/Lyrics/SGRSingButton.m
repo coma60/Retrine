@@ -81,6 +81,11 @@ static char kButtonGlassKey, kPanelGlassKey;
     SGRShowGlass(shape, !_tucked);
 }
 
+- (void)refreshGlass {
+    if (_tucked) return;
+    SGRRefreshGlass(objc_getAssociatedObject(self, &kButtonGlassKey));
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect bounds = self.bounds;

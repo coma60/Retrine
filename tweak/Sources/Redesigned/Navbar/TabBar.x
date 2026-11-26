@@ -256,6 +256,43 @@ static UIImage *glyphOf(UIView *item, BOOL active) {
 // An SF Symbol on a tab, its filled variant on the selected tab where the symbol has one: UIKit's own symbol image
 // with no size of its own, so the bar sizes and weighs it the way UIKit does every app's tab symbols, the Music app's
 // included. One object per name, so setGlyphs sees the same image again and leaves the item alone.
+// The Music app's Home glyph, drawn by Retrine to its measure (its tab bar at 3x, 2026-11-25): a house 71 x 72 px
+// with no chimney, its roof meeting the walls 28.5 px down, the apex and the foot rounded, the eaves a little, and a
+// door 20.5 px wide open at the foot whose top stands 46 px down. The same glyph in either state, as the Music app's.
+static UIImage *musicHomeGlyph(void) {
+    static UIImage *image;
+    if (image) return image;
+    const CGFloat unit = 1.0 / 3, width = 71 * unit, height = 72 * unit;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.opaque = NO;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(width, height) format:format];
+    image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        CGMutablePathRef path = CGPathCreateMutable();
+        // Corners in px, each with the radius it is rounded by; the apex's corner stands above the drawing so that
+        // its arc's top meets it.
+        struct { CGFloat x, y, r; } corners[] = {
+            {35.5, -2, 7}, {71, 28.5, 3}, {71, 72, 6}, {45.5, 72, 0}, {45.5, 46, 1.5},
+            {25, 46, 1.5}, {25, 72, 0}, {0, 72, 6}, {0, 28.5, 3},
+        };
+        const int count = sizeof corners / sizeof corners[0];
+        // Starting halfway along the last side, so every corner is drawn as an arc between its sides.
+        CGPathMoveToPoint(path, NULL, (corners[count - 1].x + corners[0].x) / 2 * unit, (corners[count - 1].y + corners[0].y) / 2 * unit);
+        for (int i = 0; i < count; i++) {
+            int next = (i + 1) % count;
+            CGFloat r = corners[i].r * unit;
+            if (r > 0) CGPathAddArcToPoint(path, NULL, corners[i].x * unit, corners[i].y * unit, corners[next].x * unit, corners[next].y * unit, r);
+            else CGPathAddLineToPoint(path, NULL, corners[i].x * unit, corners[i].y * unit);
+        }
+        CGPathCloseSubpath(path);
+        CGContextAddPath(context.CGContext, path);
+        CGContextSetFillColorWithColor(context.CGContext, UIColor.blackColor.CGColor);
+        CGContextFillPath(context.CGContext);
+        CGPathRelease(path);
+    }];
+    image = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    return image;
+}
+
 static UIImage *symbolGlyph(NSString *symbol, BOOL active) {
     static NSCache<NSString *, UIImage *> *cache;
     if (!cache) { cache = [NSCache new]; cache.countLimit = 16; }
@@ -316,6 +353,14 @@ static NSString *stockSymbol(NSString *title) {
     return kOtherTabSymbol;
 }
 
+// A glyph Apple symbols gives one of Spotify's tabs (stockSymbol): Home's is the house drawn to the Music app's
+// measure, every other its SF Symbol. Only Apple symbols draws that house; a tab of the mod's own given the house
+// symbol keeps the symbol.
+static UIImage *stockGlyph(NSString *symbol, BOOL active) {
+    if ([symbol isEqualToString:pageSymbols()[@"spotify:home"]]) return musicHomeGlyph();
+    return symbolGlyph(symbol, active);
+}
+
 // Spotify's own Search tab, known by the page it opens in Spotify's list of tabs, never by its name or its place. A tab
 // of the mod's own is not, whatever it opens.
 static BOOL isSearch(UIView *item) {
@@ -325,13 +370,19 @@ static BOOL isSearch(UIView *item) {
     return [uri isEqualToString:kSearchURI] || [uri isEqualToString:kFindURI];
 }
 
+// The title a tab of Spotify's shows on the bar: Search's is the Music app's word for it ("검색" where Spotify says
+// "검색하기"), every other its label's.
+static NSString *tabTitle(UIView *item) {
+    return isSearch(item) ? SGL(@"settings.tabbar.search_tab", @"Search") : labelIn(item).text;
+}
+
 // For the Tab bar page's list and preview: a tab of Spotify's drawn from its item on the bar, hidden or not,
 // found by the label its entry is named after, or with Apple symbols' symbol; a tab of the mod's own drawn from
 // its entry, as Navbar.x draws it on the bar. Nil while Spotify's item has not been built.
 UIImage *SGRNavbarGlyph(NSDictionary *entry, BOOL active) {
     if (entry[SGRNavbarURI]) return iconGlyph(entry[SGRNavbarIcon], [entry[SGRNavbarIconSet] isEqual:SGTabIconSetSymbols], active);
     NSString *symbol = stockSymbol(entry[SGRNavbarID]);
-    if (symbol) return symbolGlyph(symbol, active);
+    if (symbol) return stockGlyph(symbol, active);
     for (UIView *item in SGRowIn(sg_stockBar).arrangedSubviews) {
         if (isOwnTab(item)) continue;
         if ([labelIn(item).text isEqualToString:entry[SGRNavbarID]]) return glyphOf(item, active);
@@ -749,7 +800,7 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
     bar.tintColor = SGRAccent();
     if (![sources isEqualToArray:bar.sources]) {
         NSMutableArray<UITabBarItem *> *items = [NSMutableArray array];
-        for (UIView *source in sources) [items addObject:[[UITabBarItem alloc] initWithTitle:hideLabels ? nil : labelIn(source).text image:nil tag:items.count]];
+        for (UIView *source in sources) [items addObject:[[UITabBarItem alloc] initWithTitle:hideLabels ? nil : tabTitle(source) image:nil tag:items.count]];
         bar.sources = sources;
         [bar setItems:items animated:NO];
         NSMutableString *out = [NSMutableString stringWithString:@"tab bar icons"];
@@ -796,7 +847,8 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
         NSArray<NSString *> *keys = symbol ? nil : glyphKeysOf(live);
         if (!item.image || !item.selectedImage || (keys && ![objc_getAssociatedObject(item, &kGlyphKeysKey) containsObject:keys.firstObject])) {
             BOOL bare = !item.image;
-            if (symbol) setGlyphs(item, symbolGlyph(symbol, NO), symbolGlyph(symbol, YES));
+            if (symbol && own) setGlyphs(item, symbolGlyph(symbol, NO), symbolGlyph(symbol, YES));
+            else if (symbol) setGlyphs(item, stockGlyph(symbol, NO), stockGlyph(symbol, YES));
             else setGlyphs(item, glyphOfIcon(live, NO), glyphOfIcon(live, YES));
             drew |= bare && item.image;
             if (item.image && item.selectedImage) objc_setAssociatedObject(item, &kGlyphKeysKey, keys, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -805,7 +857,7 @@ static BOOL fillBar(SGRSystemTabBar *bar, NSArray<UIView *> *sources, BOOL hideL
         item.accessibilityLabel = labelIn(sources[i]).text;
         item.largeContentSizeImage = item.image;
         item.accessibilityHint = sg_minimized && bar == objc_getAssociatedObject(bar.stockBar, &kBarKey) ? SGL(@"settings.tabbar.minimized.hint", @"Shows all tabs") : nil;
-        NSString *title = hideLabels ? nil : labelIn(sources[i]).text;
+        NSString *title = hideLabels ? nil : tabTitle(sources[i]);
         if (hideLabels ? item.title != nil : title.length && ![title isEqualToString:item.title]) item.title = title;
     }
     if (drew) {

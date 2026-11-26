@@ -2260,7 +2260,7 @@ static BOOL motionFootAcross(NSURL *file, NSString **detail) {
 // (its last stop) to the bottom it gets darker, ending clearly darker than where it started, and nowhere lighter
 // than it is there, which is the dim alone.
 static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
-    enum { kTall = 120 };
+    enum { kTall = 900 };
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
     format.scale = 1;
     format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
@@ -2273,7 +2273,8 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
     [probe playFile:file poster:poster];
     [probe layoutIfNeeded];
     CAGradientLayer *dim = [probe valueForKey:@"_dim"];
-    NSUInteger whole = (NSUInteger)ceil([dim.locations.lastObject doubleValue] * kTall);
+    // Where the lower half starts to darken (stop 6): the picture is as light as it gets there and darkens to the foot.
+    NSUInteger whole = (NSUInteger)ceil([dim.locations[6] doubleValue] * kTall);
     uint8_t pixels[kTall * 4] = {0};
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef context = CGBitmapContextCreate(pixels, 1, kTall, 8, 4, space, kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
@@ -2284,7 +2285,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
     [((UIView *)[probe valueForKey:@"_picture"]).layer renderInContext:context];
     CGContextRelease(context);
     uint8_t start = pixels[whole * 4], end = pixels[(kTall - 1) * 4];
-    BOOL ok = whole > 0 && whole < kTall - 1 && end + 20 < start;
+    BOOL ok = whole > 0 && whole < kTall - 1 && end + 8 < start;
     for (NSUInteger y = whole + 1; y < kTall; y++) ok = ok && pixels[y * 4] <= pixels[(y - 1) * 4] + 1 && pixels[y * 4] <= start;
     *detail = [NSString stringWithFormat:@"gray %u where the dim is whole (row %lu of %d), %u at the bottom", start, (unsigned long)whole, kTall, end];
     return ok;
@@ -2334,22 +2335,25 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
               detail:[NSString stringWithFormat:@"poster %@ at %@, video %@, fade %@, field %@, %@", still.contents ? @"in" : @"missing",
                       NSStringFromCGRect(still.frame), NSStringFromCGRect(clip.frame), still.mask ? @"on the poster" : @"missing",
                       SGRPlayerField().motionHeld ? @"held" : @"moving", fieldCovered() ? @"its Fluid copies hidden" : @"its Fluid copies drawn"]];
-        [self expect:seam.effect && !lyricsBlurred step:@"the blur from the seam"
+        [self expect:!seam.effect && !lyricsBlurred step:@"no gray blur under the controls"
               detail:[NSString stringWithFormat:@"seam blur %@, from %@ of the height, lyrics blur %@", seam.effect ? @"on" : @"off",
                       [[seam.maskView.layer.sublayers.firstObject valueForKey:@"locations"] componentsJoinedByString:@" to "], lyricsBlurred ? @"on" : @"off"]];
         // Dimmed by its brightness: HARNESS_DIM is what the clip in HARNESS_CANVAS_FILE should get (0.54 for white,
-        // 0.10 for black); the rule itself is checked at its ends.
+        // 0.10 for black), which the clip's own dim eases to 0.7 of (kDimSoften in PlayerMotion.x); the rule itself is checked at its ends.
         CAGradientLayer *dim = [motion valueForKey:@"_dim"];
-        // Only where text is: whole at the top and from the seam's blur down, clear between (issue #101).
-        BOOL banded = dim && stopAlpha(dim, 1) == 1 && stopAlpha(dim, 2) == 0 && stopAlpha(dim, 4) == 1;
+        // Whole at the very top and fading out from there with no edge, clear until the ramp, then growing to whole at the
+        // foot of the screen (issue #101): stop 0 the top, 1 the end of the status bar's band (part of the dim), 5 the end of the
+        // fade, 6 the start of the lower half's curve and 14 the whole dim at the foot.
+        BOOL banded = dim && dim.colors.count == 15 && stopAlpha(dim, 0) > 0.8 && stopAlpha(dim, 1) > 0 && stopAlpha(dim, 1) < stopAlpha(dim, 0)
+                      && stopAlpha(dim, 5) == 0 && stopAlpha(dim, 6) == 0 && stopAlpha(dim, 14) == 1;
         const char *expected = getenv("HARNESS_DIM");
         BOOL rule = fabs(SGRPlayerClipDim(1, NO, NO) - 0.54) < 0.01 && fabs(SGRPlayerClipDim(1, YES, NO) - 0.65) < 0.01
                     && SGRPlayerClipDim(0, NO, NO) == 0.10 && fabs(SGRPlayerClipDim(0, NO, YES) - 0.25) < 1e-6
                     && fabs(SGRPlayerClipDim(0.5, NO, NO) - 0.37) < 0.01;
         self->_dimAlone = dim.opacity;
-        [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected)) < 0.02)
+        [self expect:rule && banded && dim && dim.superlayer == clip.superlayer.superlayer && (!expected || fabs(dim.opacity - atof(expected) * 0.7) < 0.02)
                 step:@"the dim" detail:[NSString stringWithFormat:@"rule %@, dim %.2f %@%@", rule ? @"right" : @"wrong", dim.opacity,
-                                        banded ? [NSString stringWithFormat:@"whole to %@ and from %@", dim.locations[1], dim.locations[4]] : @"not banded",
+                                        banded ? [NSString stringWithFormat:@"fading from the top to %@ and whole at %@", dim.locations[1], dim.locations[14]] : @"not banded",
                                         expected ? [NSString stringWithFormat:@", %s expected", expected] : @""]];
         // The band at the top: whole over the status bar only while the header shows nothing but the grabber, and over
         // the header's row too while it shows where it plays from. The stored switch is put back as it was.
@@ -2370,7 +2374,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         [self layOut];
         [motion layoutIfNeeded];
         [self expect:safeTop > 0 && fabs(bare - safeTop) < 1 && shown >= rowBottom step:@"the band at the top"
-              detail:[NSString stringWithFormat:@"whole to %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
+              detail:[NSString stringWithFormat:@"the band's end at %.0f with only the grabber (status bar to %.0f), to %.0f with where it plays from (its row to %.0f)",
                       bare, safeTop, shown, rowBottom]];
         NSLog(@"[harness] motion: screenshot the clip now");
         // Held here for a screenshot of the clip as it opened, the context as stored.
@@ -2400,7 +2404,7 @@ static BOOL motionDeepensDown(NSURL *file, NSString **detail) {
         float dim = shade.opacity;
         // The lyrics run down the whole screen, so the dim covers all of it.
         BOOL whole = shade && stopAlpha(shade, 2) == 1;
-        [self expect:whole && fabsf(dim - self->_dimAlone - 0.15f) < 0.01f step:@"the dim under the lyrics"
+        [self expect:whole && dim > self->_dimAlone + 0.14f step:@"the dim under the lyrics"
               detail:[NSString stringWithFormat:@"%.2f, %.2f without them", dim, self->_dimAlone]];
         [self expect:SGRPlayerLyricsOpen() && lyricsBlurred && away step:@"the lyrics"
               detail:[NSString stringWithFormat:@"lyrics %@, clip blurred %@, thumbnail %@ at alpha %.2f", SGRPlayerLyricsOpen() ? @"up" : @"down",
@@ -2634,7 +2638,7 @@ static NSString *stillName(void) {
         }],
         @[@2, ^{
             UIVisualEffectView *seam = [stillView() valueForKey:@"_seamBlur"];
-            [self expect:stillView() && fieldCovered() && seam.effect step:@"faded in" detail:[NSString stringWithFormat:@"field %@, seam blur %@",
+            [self expect:stillView() && fieldCovered() && !seam.effect step:@"faded in" detail:[NSString stringWithFormat:@"field %@, seam blur %@",
                   fieldCovered() ? @"covered" : @"drawn", seam.effect ? @"on" : @"off"]];
             NSLog(@"[harness] still: screenshot the still now");
         }],

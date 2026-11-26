@@ -212,6 +212,7 @@ static UIViewController *lyricsPage(void) {
                 SGOptionRow(SGL(@"settings.lyrics.break_labels.title", @"Name the breaks"), SGL(@"settings.lyrics.break_labels.subtitle", @"Intro, Interlude or Outro beside the dots"), SGRKeyLyricsBreakLabels),
                 SGSimplifyTitlesRow(),
                 SGRLyricsHideRow(),
+                SGRLyricsKeepMicRow(),
                 SGSwitchRow(SGL(@"settings.lyrics.landscape.title", @"Landscape lyrics"), SGL(@"settings.lyrics.landscape.subtitle", @"Turn the phone with the lyrics open"), SGRKeyLyricsLandscape)]),
             timing,
             SGSection(nil, @[translation]),

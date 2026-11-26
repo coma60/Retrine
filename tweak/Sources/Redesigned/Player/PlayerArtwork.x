@@ -24,7 +24,9 @@
 #import "PlayerMix.h"
 #import "PlayerLyricLine.h"
 
-static const CGFloat kPausedScale = 0.84;
+// The Music app's paused cover: 590 px wide on screen where its playing one is 809 px (and Retrine's at 0.71 was 574 px),
+// so 590 / 809.
+static const CGFloat kPausedScale = 0.73;
 // The bar's 40pt cover lives in a tilt view of its own; the player's is 354.
 static const CGFloat kCoverMinWidth = 200;
 // The Music app's cover top under the window's safe area (its player, iOS 26 at 3x: 95 pt under a 62 pt inset, 22 pt

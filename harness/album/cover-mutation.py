@@ -24,6 +24,8 @@ if mode == "seams":
         replace("SGMotionAlbumRowMatcher(", "SGRAlbumTestRowMatcher(")
     if "SGMotionPageIdentifierCover(" in source:
         replace("SGMotionPageIdentifierCover(", "SGRAlbumTestIdentifierCover(")
+    if "SGMotionPageStillEditionCover(" in source:
+        replace("SGMotionPageStillEditionCover(", "SGRAlbumTestStillEditionCover(")
     replace("SGMotionPoster(file,", "SGRAlbumTestPoster(file,")
     replace("SGRCoverRead(poster,", "SGRAlbumTestStillRead(poster,")
     if "_clip = [[SGRHeaderClip alloc]" in source:

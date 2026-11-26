@@ -674,10 +674,26 @@ static NSString *releaseKey(id name) {
     return key;
 }
 
-// `album` is Spotify's whole name: one that already reads "X - Single" stays apart from Apple's album "X".
+// A name's words in order, every run of punctuation one gap: Spotify's "Moana (Original Motion Picture
+// Soundtrack/Deluxe Edition)" and Apple Music's "Moana (Original Motion Picture Soundtrack) [Deluxe Edition]" are the
+// same words, set apart by a slash on one side and brackets on the other.
+static NSString *wordsKey(NSString *name) {
+    if (![name isKindOfClass:NSString.class]) return @"";
+    NSString *key = [name stringByFoldingWithOptions:NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch | NSWidthInsensitiveSearch
+                                              locale:nil].lowercaseString;
+    // An apostrophe joins its word ("n'" and "n’" both "n"), every other mark parts words.
+    key = [key stringByReplacingOccurrencesOfString:@"['’]" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, key.length)];
+    key = [key stringByReplacingOccurrencesOfString:@"[^\\p{L}\\p{N}]+" withString:@" " options:NSRegularExpressionSearch range:NSMakeRange(0, key.length)];
+    return [key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+}
+
+// `album` is Spotify's whole name: one that already reads "X - Single" stays apart from Apple's album "X". The same
+// words with other punctuation are the same release; a " - Single" or " - EP" still has to be there to count.
 static BOOL sameRelease(id record, NSString *album) {
     NSString *name = coverKey(dig(record, @"attributes/name"));
-    return [name isEqual:album] || [releaseKey(name) isEqual:album];
+    if ([name isEqual:album] || [releaseKey(name) isEqual:album]) return YES;
+    NSString *words = wordsKey(album);
+    return words.length && ([wordsKey(name) isEqual:words] || [wordsKey(releaseKey(name)) isEqual:words]);
 }
 
 // An Apple single that Spotify names without " - Single". It is taken only when no album or EP of that name
@@ -746,7 +762,7 @@ static const NSUInteger kCoverSearchLimit = 10;
 static void songCoverRecords(NSString *term, void (^done)(NSArray *records)) {
     lookUp([@"cover-tracks\n" stringByAppendingString:coverKey(term)], done, ^(void (^answer)(id, BOOL)) {
         NSString *url = [NSString stringWithFormat:@"%@?term=%@&types=albums&limit=%lu&extend=editorialVideo"
-            "&include%%5Balbums%%5D=tracks&fields%%5Bsongs%%5D=name,artistName&fields%%5Balbums%%5D=name,artistName,isSingle,editorialVideo", kSearch, escaped(term), (unsigned long)kCoverSearchLimit];
+            "&include%%5Balbums%%5D=tracks&fields%%5Bsongs%%5D=name,artistName&fields%%5Balbums%%5D=name,artistName,isSingle,editorialVideo,releaseDate", kSearch, escaped(term), (unsigned long)kCoverSearchLimit];
         askCatalog(url, @"results/albums/data", YES, ^(NSArray *records, BOOL answered) { answer(records, answered); });
     });
 }
@@ -795,6 +811,29 @@ static void identifiedCover(NSString *video, CGFloat pixels, CoverAnswer answer)
     masterFile(video, pixels, ^(NSURL *file) { answer(file ?: (id)@NO, file != nil); });
 }
 
+// The recording's albums of the same name are editions of one release (Apple Music's "Moana (Original Motion Picture
+// Soundtrack)" and its "[Deluxe Edition]"), and either may be the one that moves. Of those that move, the one whose
+// words are most like Spotify's name (the edition words, "deluxe edition", decide it), then the shortest name (the
+// standard edition, which the others add words to), then the lowest identifier, so every song of the release lands
+// on the same clip. nil when none moves.
+static NSString *editionWithVideo(NSDictionary<NSString *, id> *albums, NSString *album) {
+    NSSet *wanted = [NSSet setWithArray:[wordsKey(album) componentsSeparatedByString:@" "]];
+    NSString *chosen = nil;
+    NSUInteger chosenShared = 0, chosenLength = NSUIntegerMax;
+    for (NSString *identifier in [albums.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        id record = albums[identifier];
+        if (!videoOf(dig(record, @"attributes/editorialVideo"))) continue;
+        NSArray *words = [wordsKey(dig(record, @"attributes/name")) componentsSeparatedByString:@" "];
+        NSUInteger shared = 0;
+        for (NSString *word in words) if ([wanted containsObject:word]) shared++;
+        NSUInteger length = words.count;
+        if (!chosen || shared > chosenShared || (shared == chosenShared && length < chosenLength)) {
+            chosen = identifier; chosenShared = shared; chosenLength = length;
+        }
+    }
+    return chosen;
+}
+
 static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSUInteger generation, CoverAnswer answer) {
     if (!SGSpotifyValidURI(track, @"track")) {
         SGLog(@"motion: ISRC not read for %@: no track URI", album);
@@ -833,13 +872,60 @@ static void recordingCover(NSString *track, NSString *album, CGFloat pixels, NSU
                 }
             }
             if (!albums.count) albums = singles;
-            NSString *chosen = complete && albums.count == 1 ? albums.allKeys.firstObject : nil;
+            NSString *chosen = complete ? editionWithVideo(albums, album) : nil;
             SGLog(@"motion: %@ ISRC %@: %lu matching albums, %@", track, isrc, (unsigned long)albums.count,
-                  chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"ambiguous" : @"no matching non-single album"));
-            if (!chosen) { answer(nil, complete); return; }
+                  chosen ?: (!complete ? @"incomplete catalog reply" : albums.count ? @"none moves" : @"no matching non-single album"));
+            if (!chosen) { answer(albums.count && complete ? @NO : nil, complete); return; }
             identifiedCover(videoOf(dig(albums[chosen], @"attributes/editorialVideo")), pixels, answer);
         });
     });
+}
+
+// Spotify's release year of each album looked up this launch, by its URI (0: the metadata had none), for the title
+// search that follows a still edition (inYear).
+static NSMutableDictionary<NSString *, NSNumber *> *sg_albumYears;
+
+static NSNumber *yearIn(id json) {
+    id year = dig(json, @"date/year");
+    return [year isKindOfClass:NSNumber.class] && [year integerValue] > 0 ? year : nil;
+}
+
+static void keepAlbumYear(NSString *uri, NSNumber *year) {
+    if (!sg_albumYears) sg_albumYears = [NSMutableDictionary dictionary];
+    sg_albumYears[uri] = year ?: @0;
+}
+
+// The album's release year from Spotify's metadata (the one the barcode was read from, else asked for); nil when it
+// has none or cannot be read. Main queue.
+static void albumYear(NSString *uri, void (^done)(NSNumber *year)) {
+    NSNumber *known = sg_albumYears[uri];
+    if (known) { done(known.integerValue ? known : nil); return; }
+    NSString *path = SGSpotifyAlbumMetadataPath(uri);
+    if (!path) { done(nil); return; }
+    SGSpotifyMetadataRequestAllowConstrained(path, nil, SGFlag(SGKeyMotionLowData, NO), ^(NSData *data, NSInteger status, NSError *error) {
+        id json = status == 200 && !error && data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSNumber *year = yearIn(json);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if ([json isKindOfClass:NSDictionary.class]) keepAlbumYear(uri, year);
+            done(year);
+        });
+    });
+}
+
+// Apple's releases within kYearSlack of `year`, nil `year` keeping them all. A release with no date is left out: the
+// title search after a still edition takes a release by its year or not at all. Two catalogs' dates for one release can
+// fall either side of a new year, never ten years apart (the 2016 and 2026 "Moana (Original Motion Picture
+// Soundtrack)").
+static const NSInteger kYearSlack = 1;
+static NSArray *inYear(NSArray *records, NSNumber *year) {
+    if (!year || ![records isKindOfClass:NSArray.class]) return records;
+    NSMutableArray *kept = [NSMutableArray array];
+    for (id record in records) {
+        id date = dig(record, @"attributes/releaseDate");
+        if (![date isKindOfClass:NSString.class] || [date length] < 4) continue;
+        if (labs([[date substringToIndex:4] integerValue] - year.integerValue) <= kYearSlack) [kept addObject:record];
+    }
+    return kept;
 }
 
 // A title miss isn't an identifier miss. A still or video from a previous exact-UPC
@@ -851,7 +937,8 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
     id previous = sg_kept[[@"album\nbarcode\n" stringByAppendingString:uri]];
     if (previous && previous != NSNull.null) { done(previous); return; }
     // "identifiers" misses were decided without the recording's single, so they are not read.
-    NSString *key = [@"album\nidentifiers2\n" stringByAppendingString:uri];
+    // "identifiers2" took a barcode's still edition as final, though another edition of the release may move.
+    NSString *key = [@"album\nidentifiers3\n" stringByAppendingString:uri];
     NSUInteger generation = sg_generation;
     lookUp(key, done, ^(void (^answer)(id, BOOL)) {
         SGSpotifyMetadataRequestAllowConstrained(path, nil, SGFlag(SGKeyMotionLowData, NO), ^(NSData *data, NSInteger status, NSError *error) {
@@ -859,7 +946,9 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
             NSString *upc = albumUPC(json);
             NSString *recording = track ?: firstTrackURI(json);
             SGLog(@"motion: Spotify album %@ UPC: %@", uri, upc ?: @"none found");
+            NSNumber *year = yearIn(json);
             dispatch_async(dispatch_get_main_queue(), ^{
+                if ([json isKindOfClass:NSDictionary.class]) keepAlbumYear(uri, year);
                 if (generation != sg_generation || !SGMotionAppleMusicOn()) { answer(nil, NO); return; }
                 if (![json isKindOfClass:NSDictionary.class]) { answer(nil, NO); return; }
                 if (!upc) { recordingCover(recording, album, pixels, generation, answer); return; }
@@ -874,7 +963,11 @@ static void identifierCover(NSString *uri, NSString *album, NSString *track, CGF
                         video = videoOf(dig(record, @"attributes/editorialVideo"));
                         if (video) break;
                     }
-                    if (identified) identifiedCover(video, pixels, answer);
+                    if (video) identifiedCover(video, pixels, answer);
+                    // The barcode's edition is still: another edition of the recording may move. Still it is, if not.
+                    else if (identified) recordingCover(recording, album, pixels, generation, ^(id result, BOOL keep) {
+                        answer(result ?: @NO, keep);
+                    });
                     else if (answered) recordingCover(recording, album, pixels, generation, answer);
                     else answer(nil, NO);
                 });
@@ -987,7 +1080,8 @@ void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pix
 }
 
 // Cache values: URL for a clip, @NO for an identified release without video, nil for no match.
-static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString *song, NSString *albumURI, NSString *trackURI, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
+// `year`, when given, holds the title search to Apple's releases of that year (inYear) and keeps its answers apart.
+static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString *song, NSString *albumURI, NSString *trackURI, NSNumber *year, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     SGMotionTicket *ticket = [SGMotionTicket new];
     NSString *artistKey = coverKey(artist), *albumKey = coverKey(album), *songKey = coverKey(song);
     if (!artistKey.length || !albumKey.length) {
@@ -996,7 +1090,8 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     }
     // A legacy URL (or miss) was decided with editions collapsed and no track evidence; a "2" miss could
     // be an EP that Apple Music names with " - EP", a "3" miss a single it names with " - Single".
-    NSString *base = [NSString stringWithFormat:@"album\n4\n%@\n%@", artistKey, albumKey];
+    // "4" and "song7" misses were decided before a name matched by its words alone (sameRelease): asked again.
+    NSString *base = [NSString stringWithFormat:@"album\n5\n%@\n%@", artistKey, albumKey];
     setUp();
     BOOL needsSong = songKey.length && (!sg_kept[base] || sg_kept[base] == NSNull.null);
     // Older song-level misses could also mean the track identified a release without video, so only the clips
@@ -1005,74 +1100,119 @@ static SGMotionTicket *requestCover(NSString *artist, NSString *album, NSString 
     if (needsSong) {
         NSString *song = [NSString stringWithFormat:@"%@\n%@\n%@", artistKey, albumKey, songKey];
         NSString *older = [@"album\nsong4\n" stringByAppendingString:song];
-        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong7\n" stringByAppendingString:song];
+        key = [sg_kept[older] isKindOfClass:NSURL.class] ? older : [@"album\nsong8\n" stringByAppendingString:song];
     }
     NSUInteger generation = sg_generation;
+    // The album's clip, once any of its songs found one: every song of the album plays the same clip, rather than each
+    // looking for its own by title and finding another edition's, or none.
+    NSString *albumClip = SGSpotifyValidURI(albumURI, @"album") ? [@"album\nclip\n" stringByAppendingString:albumURI] : nil;
     // The remote file is what is kept: the store may drop its local copy later in the launch.
     void (^deliver)(id) = ^(id remote) {
         if (ticket.cancelled) return;
         if (generation != sg_generation) { done(nil, NO); return; }   // asked before a clear: no download after it
         NSURL *address = [remote isKindOfClass:NSURL.class] ? remote : nil;
+        if (address && albumClip && ![sg_kept[albumClip] isEqual:address]) {
+            keepValue(albumClip, address);
+            keepAlbumAnswer(albumClip, address);
+        }
         ticket.child = SGMotionRequestFile(address, ^(NSURL *file) {
             ticket.child = nil;
             if (!ticket.cancelled) done(file, remote != nil);
         });
     };
-    lookUp(key, ^(id remote) {
-        if (!remote && albumURI && sg_kept[key] == NSNull.null && generation == sg_generation && !ticket.cancelled)
-            identifierCover(albumURI, album, trackURI, pixels, deliver);
-        else deliver(remote);
-    }, ^(void (^answer)(id, BOOL)) {
-        void (^resolveVideo)(NSString *, BOOL, BOOL, BOOL) = ^(NSString *video, BOOL answered, BOOL albumMatch, BOOL songMatch) {
-            void (^finish)(NSURL *) = ^(NSURL *file) {
-                id result = file ?: (albumMatch || songMatch ? (id)@NO : nil);
-                BOOL keep = answered && (!video || file);
-                if (needsSong && albumMatch && keep && generation == sg_generation) {
-                    keepValue(base, result);
-                    keepAlbumAnswer(base, result);
-                    answer(result, NO); // this proof belongs to the release, not today's song
-                } else answer(result, keep);
+    if (albumClip && [sg_kept[albumClip] isKindOfClass:NSURL.class]) {
+        deliver(sg_kept[albumClip]);
+        return ticket;
+    }
+    void (^byTitle)(NSNumber *) = ^(NSNumber *wantYear) {
+        // A year-held search is its own answer, never one kept from a search of every year, nor kept for one.
+        NSString *k = wantYear ? [key stringByAppendingFormat:@"\nyear\n%@", wantYear] : key;
+        NSString *b = wantYear ? [base stringByAppendingFormat:@"\nyear\n%@", wantYear] : base;
+        lookUp(k, ^(id remote) {
+            if (!remote && albumURI && sg_kept[k] == NSNull.null && generation == sg_generation && !ticket.cancelled)
+                identifierCover(albumURI, album, trackURI, pixels, deliver);
+            else deliver(remote);
+        }, ^(void (^answer)(id, BOOL)) {
+            void (^resolveVideo)(NSString *, BOOL, BOOL, BOOL) = ^(NSString *video, BOOL answered, BOOL albumMatch, BOOL songMatch) {
+                void (^finish)(NSURL *) = ^(NSURL *file) {
+                    id result = file ?: (albumMatch || songMatch ? (id)@NO : nil);
+                    BOOL keep = answered && (!video || file);
+                    if (needsSong && albumMatch && keep && generation == sg_generation) {
+                        keepValue(b, result);
+                        keepAlbumAnswer(b, result);
+                        answer(result, NO); // this proof belongs to the release, not today's song
+                    } else answer(result, keep);
+                };
+                if (video && generation == sg_generation) masterFile(video, pixels, finish);
+                else finish(nil);
             };
-            if (video && generation == sg_generation) masterFile(video, pixels, finish);
-            else finish(nil);
-        };
-        BOOL (^select)(NSArray *, BOOL) = ^BOOL(NSArray *records, BOOL final) {
-            NSUInteger albums, songs = 0;
-            NSString *video = coverVideo(records, albumKey, artistKey, nil, NO, &albums);
-            if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, NO, &songs);
-            if (!albums && !songs && final) {
-                video = coverVideo(records, albumKey, artistKey, nil, YES, &albums);
-                if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, YES, &songs);
-            }
-            if (!albums && !songs && !final) return NO;
-            resolveVideo(video, records != nil, albums != 0, songs == 1);
-            return YES;
-        };
-        if (needsSong) songCoverRecords(album, ^(NSArray *found) {
-            if (!select(found, found.count != kCoverSearchLimit || generation != sg_generation)) {
-                // Title-only ranking can omit an ordinary album that the qualified search finds.
-                NSString *term = [NSString stringWithFormat:@"%@ %@", artist, SGMotionSearchName(album)];
-                songCoverRecords(term, ^(NSArray *narrow) { select(narrow, YES); });
-            }
+            BOOL (^select)(NSArray *, BOOL) = ^BOOL(NSArray *found, BOOL final) {
+                NSArray *records = inYear(found, wantYear);
+                NSUInteger albums, songs = 0;
+                NSString *video = coverVideo(records, albumKey, artistKey, nil, NO, &albums);
+                if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, NO, &songs);
+                if (!albums && !songs && final) {
+                    video = coverVideo(records, albumKey, artistKey, nil, YES, &albums);
+                    if (!albums && needsSong) video = coverVideo(records, albumKey, artistKey, songKey, YES, &songs);
+                }
+                if (!albums && !songs && !final) return NO;
+                resolveVideo(video, records != nil, albums != 0, songs == 1);
+                return YES;
+            };
+            if (needsSong) songCoverRecords(album, ^(NSArray *found) {
+                if (!select(found, found.count != kCoverSearchLimit || generation != sg_generation)) {
+                    // Title-only ranking can omit an ordinary album that the qualified search finds.
+                    NSString *term = [NSString stringWithFormat:@"%@ %@", artist, SGMotionSearchName(album)];
+                    songCoverRecords(term, ^(NSArray *narrow) { select(narrow, YES); });
+                }
+            });
+            else albumRecords(artist, album, ^(NSArray *found) { select(found, YES); });
         });
-        else albumRecords(artist, album, ^(NSArray *found) { select(found, YES); });
-    });
+    };
+    // The album's identifiers first: they name the very release, where a title can name another of the same name (the
+    // 2016 "Moana (Original Motion Picture Soundtrack)" and the 2026 film's). A clip they find is the answer. A still
+    // edition they name is not the last word: a reissue's barcode and remastered recordings can point at an edition of
+    // Apple's that does not move while the one that does carries other codes (Lynyrd Skynyrd's "Pronounced' Leh-'Nerd
+    // 'Skin-'Nerd"), so the title is asked then too, with the same artist (or the song's credit) as it always needs; a
+    // title that finds nothing leaves the identifiers' still.
+    if (SGSpotifyValidURI(albumURI, @"album") && SGMotionAppleMusicOn()) {
+        identifierCover(albumURI, album, trackURI, pixels, ^(id remote) {
+            if (ticket.cancelled) return;
+            if ([remote isKindOfClass:NSURL.class] || generation != sg_generation) { deliver(remote); return; }
+            if (!remote) { byTitle(nil); return; }
+            // A still edition: the title only within the album's year, and not at all without one (inYear).
+            albumYear(albumURI, ^(NSNumber *released) {
+                if (ticket.cancelled) return;
+                if (released && generation == sg_generation) byTitle(released);
+                else deliver(remote);
+            });
+        });
+    } else byTitle(year);
     return ticket;
 }
 
 SGMotionTicket *SGMotionRequestSongCover(NSString *artist, NSString *album, NSString *song, NSString *albumURI, NSString *trackURI, CGFloat pixels, void (^done)(NSURL *)) {
-    return requestCover(artist, album, song, albumURI, trackURI, pixels, ^(NSURL *file, BOOL identified) { done(file); });
+    return requestCover(artist, album, song, albumURI, trackURI, nil, pixels, ^(NSURL *file, BOOL identified) { done(file); });
 }
 
 void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
-    requestCover(artist, album, nil, nil, nil, pixels, done);
+    requestCover(artist, album, nil, nil, nil, nil, pixels, done);
 }
 
-void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
+void SGMotionPageStillEditionCover(NSString *albumURI, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *)) {
+    NSUInteger generation = sg_generation;
+    albumYear(albumURI, ^(NSNumber *year) {
+        if (!year || generation != sg_generation) { done(nil); return; }
+        requestCover(artist, album, nil, nil, nil, year, pixels, ^(NSURL *file, BOOL identified) { done(file); });
+    });
+}
+
+void SGMotionPageIdentifierCover(NSString *albumURI, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL identified)) {
     NSUInteger generation = sg_generation;
     identifierCover(albumURI, album, nil, pixels, ^(id remote) {
-        if ([remote isKindOfClass:NSURL.class] && generation == sg_generation) SGMotionRequestFile(remote, done);
-        else done(nil);
+        if ([remote isKindOfClass:NSURL.class] && generation == sg_generation)
+            SGMotionRequestFile(remote, ^(NSURL *file) { done(file, YES); });
+        else done(nil, remote != nil && generation == sg_generation);
     });
 }
 

@@ -35,10 +35,21 @@
 static const CGFloat kMargin = 32, kRowTighten = 2;
 static const CGFloat kDimAlpha = 0.3, kFillEdge = 22, kLift = 2.5, kDimScale = 0.97;
 static const CGFloat kAnchor = 0.28;   // where the sung line rests, as a share of the height
+// A tapped line flashes a plate behind it, the Music app's line highlight (white at 0.08, corners of 16, the
+// plate 16 pt out from the line): it comes
+// up at once and fades as the line glides to the anchor. It is the line's own box grown by the margin, as the
+// Music app's is, so in a song for two voices it is as narrow as the line is.
+static const CGFloat kTapPlateAlpha = 0.08, kTapPlateRadius = 16, kTapPlateOut = 16, kTapPlateOutY = 8;
+static const NSTimeInterval kTapPlateHold = 0.12, kTapPlateFade = 0.45;
+// A song for two voices sets each line in this share of the width, against its voice's side, as the Music
+// app's are, so the two sides stand apart and a line's plate stops short of the far edge.
+static const CGFloat kVocalGroupShare = 0.85;
 static const CGFloat kEdgeFade = 0.1;  // the lines fade out over this share at the top and bottom
-// Apple Music's, scaled by the Lyrics page's blur. The lines right above and below what is sung stay sharp,
-// only dim; the blur starts from the second line away, kBlurPerLine more each line, up to kMaxBlur.
-static const CGFloat kBlurPerLine = 1.4, kMaxBlur = 6;
+// The Music app's, scaled by the Lyrics page's blur: no line next to what is sung is sharp. A line coming up is
+// blurred by one more than its distance and a line gone by by two more, up to kMaxBlur, the radius its lyrics view
+// holds every line under; the steps were measured off its
+// player (2026-11-25).
+static const CGFloat kBlurAhead = 1, kBlurBehind = 2, kMaxBlur = 4;
 // The (oh, aye) hanging under a line: smaller, a little dimmer, and just clear of it.
 static const CGFloat kBackingScale = 0.62, kBackingAlpha = 0.8, kBackingGap = 4;
 // The translation and the romanized line of a line being sung, brighter than a line waiting but never
@@ -58,6 +69,9 @@ static const CGFloat kCreditSize = 12, kCreditGap = 12, kCreditSlop = 8;
 // has it, and the gap between it and the credit beside it. The translate glyph is half again as wide as the
 // mic's across from it, so it is drawn smaller to weigh the same: 14 pt is about the mic's 17 pt in area.
 static const CGFloat kExtrasSide = 44, kExtrasBottom = 12, kExtrasGlyph = 14;
+// In the player, the Music app's: its translation button and Sing's slider are 38 pt across and stand 32 pt over the
+// bottom of its lyrics view, as measured on its player.
+static const CGFloat kPlayerExtrasSide = 38, kPlayerExtrasBottom = 32;
 static char kExtrasGlassKey;
 static const NSTimeInterval kRestyleFade = 0.3;
 // Furigana at a third of the words' size, as print sets them over kanji; a cultural note at the size of a third line.
@@ -1931,6 +1945,8 @@ typedef struct {
     SGRTranslationStatusView *_status;
     UIButton *_loadFailure;
     CGFloat _builtWidth, _placedHeight;
+    NSArray<SGKaraokeLine *> *_voicesOf;   // the lines _twoVoices was settled for
+    BOOL _twoVoices;
     BOOL _showing;
     BOOL _detached, _restoringRows;
     SGKaraokeLine *_detachedAnchor;
@@ -1939,7 +1955,7 @@ typedef struct {
     SGRCreditLabel *_credit;
     NSString *_creditSource;   // the source the credit was settled on, nil until the lyrics name one
     NSArray<SGLyricsLink *> *_creditLinks;
-    CGFloat _fontSize, _margin, _lineGap, _blurPerLine, _maxBlur;
+    CGFloat _fontSize, _margin, _lineGap, _blurScale, _maxBlur;
     BOOL _crediting;   // Show source, read once: the page asks for the source on every frame until it has one
     double _clock;
     NSInteger _reported;
@@ -2128,7 +2144,7 @@ typedef struct {
     CGFloat share = SGRLyricsSizeShare(_sizePlace);
     _fontSize = share == 1 ? look.size : round(look.size * share);
     _lineGap = look.spacing;
-    _blurPerLine = kBlurPerLine * look.blur;
+    _blurScale = look.blur;
     _maxBlur = kMaxBlur * look.blur;
     sgr_glowScale = look.glow;
     sgr_waveScale = look.wave;
@@ -2190,7 +2206,42 @@ static BOOL cornerControlShown(UIView *view) {
     }
     if (_plain) return;   // a line with no time has nowhere to seek to
     SGRKaraokeLineView *view = [self lineUnder:point];
-    if (view) [self seekToLine:view.line];
+    if (!view) return;
+    [self flashPlateBehind:view];
+    [self seekToLine:view.line];
+}
+
+// The plate is the line's own sublayer, under its words, so it rides the glide to the anchor with it.
+- (void)flashPlateBehind:(SGRKaraokeLineView *)view {
+    CALayer *plate = [CALayer layer];
+    plate.frame = CGRectInset(view.bounds, -kTapPlateOut, -kTapPlateOutY);
+    plate.cornerRadius = kTapPlateRadius;
+    plate.cornerCurve = kCACornerCurveContinuous;
+    plate.backgroundColor = [UIColor colorWithWhite:1 alpha:kTapPlateAlpha].CGColor;
+    plate.opacity = 0;
+    [view.layer insertSublayer:plate atIndex:0];
+    CAKeyframeAnimation *flash = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    NSTimeInterval total = kTapPlateHold + kTapPlateFade;
+    flash.values = @[@1, @1, @0];
+    flash.keyTimes = @[@0, @(kTapPlateHold / total), @1];
+    flash.duration = total;
+    flash.timingFunctions = @[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear],
+                              [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut]];
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{ [plate removeFromSuperlayer]; }];
+    [plate addAnimation:flash forKey:@"flash"];
+    [CATransaction commit];
+}
+
+- (BOOL)touchIsOnLine:(UITouch *)touch {
+    if (_plain || _browsing || !_scroll) return NO;
+    CGPoint inSelf = [touch locationInView:self];
+    if (cornerControlShown(_extrasBox) && CGRectContainsPoint(_extrasBox.frame, inSelf)) return NO;
+    if (cornerControlShown(_sing) && [_sing pointInside:[touch locationInView:_sing] withEvent:nil]) return NO;
+    CGPoint point = [touch locationInView:_scroll];
+    CALayer *shown = _scroll.layer.presentationLayer;
+    if (shown) point.y += shown.bounds.origin.y - _scroll.bounds.origin.y;
+    return [self lineUnder:point] != nil;
 }
 
 // A tap on a line, or VoiceOver activating it.
@@ -2423,7 +2474,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
     [self stir];
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(followSong) object:nil];
     if (!_browsing) {
-        _browseAnchor = self.bounds.size.height * kAnchor;
+        _browseAnchor = [self restingAnchor];
         _browseBreak = _openBreak;
     }
     _browsing = YES;
@@ -2432,9 +2483,14 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
 }
 
 - (void)updateExtrasGlass {
-    UIView *shape = SGRGlassInside(_extrasBox, &kExtrasGlassKey, kExtrasSide);
+    UIView *shape = SGRGlassInside(_extrasBox, &kExtrasGlassKey, _sizePlace == SGRLyricsPlacePlayer ? kPlayerExtrasSide : kExtrasSide);
     SGRGlassBacks(shape, _extras);
     SGRShowGlass(shape, !_extrasHidden);
+}
+
+- (void)refreshGlass {
+    if (_extrasBox && !_extrasHidden) SGRRefreshGlass(objc_getAssociatedObject(_extrasBox, &kExtrasGlassKey));
+    [_sing refreshGlass];
 }
 
 // In the caller's animation: the glass dematerializes by its effect and the glyph fades by its alpha, the
@@ -2458,6 +2514,11 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
     [self showLinesInSight];
 }
 
+// The Music app decides on its controls here, by the flick the finger leaves: toward the lines to come hides them, back toward the ones sung brings them back.
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)target {
+    if (self.browsingFlicked) self.browsingFlicked(velocity.y);
+}
+
 // Plain text has no song to follow back to: it stays where it was scrolled to, as a page of text does.
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (!decelerate && !_plain) [self performSelector:@selector(followSong) withObject:nil afterDelay:kBrowseHold];
@@ -2475,6 +2536,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
                         options:UIViewAnimationOptionAllowUserInteraction
                      animations:^{ self->_scroll.contentOffset = CGPointZero; } completion:nil];
     [self placeLinesAnimated:YES];
+    if (self.browsingEnded) self.browsingEnded();
 }
 
 // A tapped line glides to the anchor at once, and the stack with it: the clock is held at the line until
@@ -2490,6 +2552,7 @@ NSString *SGRLyricsShareText(NSString *line, NSString *title, NSString *artist, 
         [UIView animateWithDuration:0.7 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0
                             options:UIViewAnimationOptionAllowUserInteraction
                          animations:^{ self->_scroll.contentOffset = CGPointZero; } completion:nil];
+        if (self.browsingEnded) self.browsingEnded();
     }
     if (!_tops) return;
     NSUInteger arrangement = _arrangement;
@@ -2701,15 +2764,17 @@ static NSInteger plainRestPosition(SPTPlayerState *state) {
     CGFloat failureHeight = MAX(44, [_loadFailure sizeThatFits:CGSizeMake(failureWidth, CGFLOAT_MAX)].height + 24);
     _loadFailure.frame = CGRectMake(_margin, (self.bounds.size.height - failureHeight) / 2, failureWidth, failureHeight);
     _scroll.contentSize = self.bounds.size;
-    _sing.frame = CGRectMake(self.bounds.size.width - _margin - kExtrasSide, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
+    BOOL player = _sizePlace == SGRLyricsPlacePlayer;
+    CGFloat side = player ? kPlayerExtrasSide : kExtrasSide, bottom = player ? kPlayerExtrasBottom : kExtrasBottom;
+    _sing.frame = CGRectMake(self.bounds.size.width - _margin - side, self.bounds.size.height - side - bottom, side, side);
     if (_extrasBox && !_extrasBox.hidden) {
-        _extrasBox.frame = CGRectMake(_margin, self.bounds.size.height - kExtrasSide - kExtrasBottom, kExtrasSide, kExtrasSide);
+        _extrasBox.frame = CGRectMake(_margin, self.bounds.size.height - side - bottom, side, side);
         [self updateExtrasGlass];
     }
     if (_statusBox) {
-        CGFloat left = _margin + kExtrasSide + 8;
+        CGFloat left = _margin + side + 8;
         CGFloat right = _sing && !_sing.hidden ? CGRectGetMinX(_sing.frame) - 8 : self.bounds.size.width - _margin;
-        _statusBox.frame = CGRectMake(left, self.bounds.size.height - kExtrasSide - kExtrasBottom, MAX(0, right - left), kExtrasSide);
+        _statusBox.frame = CGRectMake(left, self.bounds.size.height - side - bottom, MAX(0, right - left), side);
     }
     [self clearBottomRow];
     if (_lines && self.bounds.size.width != _builtWidth) {
@@ -2730,8 +2795,10 @@ static NSInteger plainRestPosition(SPTPlayerState *state) {
     CGFloat height = self.bounds.size.height;
     if (height <= 0) return;
     CGFloat floor = height;
-    if (cornerControlShown(_sing)) floor = MIN(floor, CGRectGetMinY(_sing.frame) - 8);
-    if (cornerControlShown(_extrasBox)) floor = MIN(floor, CGRectGetMinY(_extrasBox.frame) - 8);
+    // In the player the Music app's lines run on behind its translate and Sing buttons, fading only at the bottom edge.
+    BOOL behind = _sizePlace == SGRLyricsPlacePlayer;
+    if (!behind && cornerControlShown(_sing)) floor = MIN(floor, CGRectGetMinY(_sing.frame) - 8);
+    if (!behind && cornerControlShown(_extrasBox)) floor = MIN(floor, CGRectGetMinY(_extrasBox.frame) - 8);
     CGFloat clear = MAX(0, MIN(1, (height - floor) / height));
     NSArray *locations = @[@0, @(kEdgeFade), @(MAX(kEdgeFade, 1 - clear - kEdgeFade)), @(1 - clear), @1];
     if ([_fade.locations isEqualToArray:locations]) return;
@@ -2874,7 +2941,7 @@ static NSArray<SGKaraokeLine *> *withoutMade(NSArray<SGKaraokeLine *> *lines) {
     _browsing = NO;
     _scroll.contentOffset = CGPointZero;
     _builtWidth = self.bounds.size.width;
-    CGFloat width = _builtWidth - 2 * _margin;
+    CGFloat width = [self lineWidth];
     if (width <= 0) return;
     _font = [UIFont systemFontOfSize:_fontSize weight:UIFontWeightBold];
     SGRKaraokeStyle *style = _style = [self styleNow];
@@ -2924,7 +2991,7 @@ static NSArray<SGKaraokeLine *> *withoutMade(NSArray<SGKaraokeLine *> *lines) {
     }
     SGRKaraokeStyle *style = [self styleNow];
     NSArray<SGKaraokeLine *> *lines = layoutSnapshots(_lines);
-    CGFloat width = _builtWidth - 2 * _margin, gap = _lineGap;
+    CGFloat width = [self lineWidth], gap = _lineGap;
     NSUInteger build = ++_build;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
         NSArray<NSNumber *> *tops = topsOf(lines, width, style, gap);
@@ -3644,7 +3711,7 @@ static char kTranslationCoverContext;
 // and a break can open or close, and a line made for the view then went by the new anchor while the
 // lines beside it kept the old one, the two running into each other.
 - (CGFloat)topOfLine:(NSInteger)index {
-    CGFloat anchor = _browsing ? _browseAnchor : self.bounds.size.height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat top = anchor + _tops[index].doubleValue - _focusTop;
     return openBreak >= 0 && index >= openBreak ? top + [self breakRoom] : top;
@@ -3661,6 +3728,21 @@ static char kTranslationCoverContext;
     return NO;
 }
 
+// Where the sung line rests: anchorTop when set, else kAnchor of the height.
+- (CGFloat)restingAnchor {
+    return _anchorTop > 0 ? _anchorTop : self.bounds.size.height * kAnchor;
+}
+
+- (CGFloat)lineAscent {
+    return _font.ascender;
+}
+
+- (void)setAnchorTop:(CGFloat)anchorTop {
+    if (_anchorTop == anchorTop) return;
+    _anchorTop = anchorTop;
+    [self setNeedsLayout];
+}
+
 // How many lines away from what is sung a line is, which is what dims, shrinks and blurs it: from the
 // nearest line being sung, from an open break as if it were a line of its own, and before the first
 // line from the line before it, as ever.
@@ -3673,13 +3755,29 @@ static char kTranslationCoverContext;
     return nearest;
 }
 
+// The width a line is set in: the page's, less its margins, or kVocalGroupShare of that in a song where a second voice
+// keeps to the far side.
+- (CGFloat)lineWidth {
+    CGFloat width = _builtWidth - 2 * _margin;
+    if (_voicesOf != _lines) {
+        _voicesOf = _lines;
+        _twoVoices = NO;
+        for (SGKaraokeLine *line in _lines) {
+            if (line.align != SGKaraokeAlignTrailing) continue;
+            _twoVoices = YES;
+            break;
+        }
+    }
+    return _twoVoices ? floor(width * kVocalGroupShare) : width;
+}
+
 // The view of a line, made the first time it is asked for and placed where the stack has it.
 - (SGRKaraokeLineView *)viewForLine:(NSInteger)index {
     __block SGRKaraokeLineView *view = _shown[@(index)];
     if (view || _detached || !_tops || index < 0 || index >= (NSInteger)_tops.count) return view;
     // Made where it belongs even inside an animation of the page's (a new height), not flown in from the corner.
     [UIView performWithoutAnimation:^{
-        view = [[SGRKaraokeLineView alloc] initWithLine:self->_lines[index] width:self->_builtWidth - 2 * self->_margin style:self->_style under:nil
+        view = [[SGRKaraokeLineView alloc] initWithLine:self->_lines[index] width:[self lineWidth] style:self->_style under:nil
                                                 blurred:self->_maxBlur > 0 && !self->_plain sweepsEstimates:self->_sweepsEstimates];
         __weak SGRKaraokeView *page = self;
         SGKaraokeLine *line = view.line;
@@ -3788,11 +3886,13 @@ static char kTranslationCoverContext;
 - (void)placeLine:(SGRKaraokeLineView *)view at:(NSInteger)index animated:(BOOL)animated {
     CGFloat height = self.bounds.size.height;
     NSInteger distance = [self distanceOf:index], below = index - _focus;
-    CGRect frame = CGRectMake(_margin, [self topOfLine:index], view.bounds.size.width, view.bounds.size.height);
+    CGFloat left = view.right ? _builtWidth - _margin - view.bounds.size.width : _margin;
+    CGRect frame = CGRectMake(left, [self topOfLine:index], view.bounds.size.width, view.bounds.size.height);
     CGPoint center = CGPointMake(view.right ? CGRectGetMaxX(frame) : _margin, CGRectGetMidY(frame));
     CGFloat scale = distance == 0 ? 1 : kDimScale;
     CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);
-    view.blur = _browsing ? 0 : MIN(_maxBlur, MAX(0, distance - 1) * _blurPerLine);
+    CGFloat steps = distance == 0 ? 0 : distance + (below < 0 ? kBlurBehind : kBlurAhead);
+    view.blur = _browsing ? 0 : MIN(_maxBlur, steps * _blurScale);
     BOOL near = CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), frame)
              || CGRectIntersectsRect(CGRectInset(self.bounds, 0, -height / 2), view.frame);
     if (!animated || !near) {
@@ -3831,7 +3931,7 @@ static char kTranslationCoverContext;
 - (void)updateScrollExtent {
     if (!_tops.count) return;
     CGFloat height = self.bounds.size.height;
-    CGFloat anchor = _browsing ? _browseAnchor : height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat bottom = anchor + _stackEnd - _focusTop + (openBreak >= 0 ? [self breakRoom] : 0);
     if (_credit.text.length) bottom = MAX(bottom, CGRectGetMaxY(_credit.frame));
@@ -3845,7 +3945,7 @@ static char kTranslationCoverContext;
 // song's end or scrolled to, rather than over every line.
 - (void)placeCreditAnimated:(BOOL)animated {
     if (!_tops.count || !_credit.text.length) return;
-    CGFloat anchor = _browsing ? _browseAnchor : self.bounds.size.height * kAnchor;
+    CGFloat anchor = _browsing ? _browseAnchor : [self restingAnchor];
     NSInteger openBreak = _browsing ? _browseBreak : _openBreak;
     CGFloat width = MAX(self.bounds.size.width - 2 * _margin, 0);
     CGSize size = [_credit sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)];

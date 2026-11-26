@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "Core/SGCore.h"
 #import "Shared/Player/PlayerState.h"
+#import "Shared/Player/SleepTimer.h"
 #import "Redesigned/Player/PlayerMix.h"
 #import "Redesigned/Kit/SGRKit.h"
 #import "../harness-fail.h"
@@ -8,6 +9,12 @@
 @implementation SPTPlayerTrack
 @end
 @implementation SPTPlayerState
+@end
+@implementation SGRGlyphView
+- (instancetype)initWithSymbol:(NSString *)symbol pointSize:(CGFloat)size weight:(UIImageSymbolWeight)weight {
+    return [super initWithFrame:CGRectZero];
+}
+- (void)setSymbol:(NSString *)symbol animated:(BOOL)animated {}
 @end
 @interface QueueTrack : SPTPlayerTrack
 @property NSString *UID;
@@ -53,6 +60,8 @@ static UIWindow *window;
 static int checked;
 SPTPlayerState *SGPlayerState(void) { return state; }
 id SGPlayerInstance(void) { return player; }
+id SGPlayer(void) { return player; }
+id SGPlayerAdvanceRepeat(id<SPTPlayer> player, SPTPlayerOptions *options) { return nil; }
 void SGAddPlayerStateObserver(id<SGPlayerStateObserver> observer) {
     if (!observers) observers = [NSHashTable weakObjectsHashTable];
     [observers addObject:observer];
@@ -60,15 +69,31 @@ void SGAddPlayerStateObserver(id<SGPlayerStateObserver> observer) {
 NSString *SGURIString(id uri) { return [uri isKindOfClass:NSURL.class] ? [uri absoluteString] : uri; }
 NSArray *SGPlayerUpcomingTracks(SPTPlayerState *value, NSUInteger limit) { return value.future ?: @[]; }
 NSString *SGL(NSString *key, NSString *english) { return english; }
+BOOL SGRedesignedUI(void) { return YES; }
+BOOL SGFlag(NSString *key, BOOL fallback) { return fallback; }
+NSInteger SGInt(NSString *key, NSInteger fallback) { return fallback; }
+void SGSetEnabled(NSString *key, BOOL on) {}
 void SGPresentDark(UIViewController *controller) { controller.overrideUserInterfaceStyle = UIUserInterfaceStyleDark; }
 UIViewController *SGTopController(void) { return window.rootViewController; }
 UIColor *SGRPrimary(void) { return UIColor.whiteColor; }
 UIColor *SGRSecondary(void) { return UIColor.grayColor; }
 const CGFloat SGRGrid = 8;
+const NSTimeInterval SGRCrossfade = 0;
+BOOL SGRIncreaseContrast(void) { return NO; }
+BOOL SGRReduceMotion(void) { return NO; }
+void SGRAnimate(SGRMotion motion, void (^animations)(void), void (^completion)(BOOL finished)) {
+    if (animations) animations();
+    if (completion) completion(YES);
+}
 UIFont *SGCategoryCappedFont(UIFontTextStyle style, UIFontWeight weight, UIContentSizeCategory largest) {
     return [UIFont preferredFontForTextStyle:style];
 }
 SGTransitionFacts *SGAutoMixCurrentTransition(void) { return nil; }
+BOOL SGAutoMixAccountAllows(void) { return NO; }
+void SGAutoMixApply(BOOL on) {}
+SGSleepTimerMode SGSleepTimerCurrentMode(void) { return SGSleepTimerOff; }
+NSDate *SGSleepTimerEnd(void) { return nil; }
+void SGSetSleepTimer(SGSleepTimerMode mode, NSTimeInterval seconds) {}
 BOOL SGRMixShowsQueue(void) { return NO; }
 BOOL SGRMixTrackIs(SPTPlayerTrack *track, NSString *uri, NSString *uid) { return NO; }
 BOOL SGTransitionSettingsRead(SGTransitionSettings *settings) { return NO; }
@@ -93,6 +118,7 @@ NSProgress *SGRPlayerTrackCover(SPTPlayerTrack *track, BOOL small, void (^done)(
 }
 NSNotificationName const SGAutoMixTransitionDidChangeNotification = @"queue-test.mix";
 NSNotificationName const SGAutoMixPlayerOptionsDidChangeNotification = @"queue-test.options";
+NSNotificationName const SGTransitionSettingsDidChangeNotification = @"queue-test.transition-settings";
 
 static void check(BOOL condition, NSString *message) {
     checked++;

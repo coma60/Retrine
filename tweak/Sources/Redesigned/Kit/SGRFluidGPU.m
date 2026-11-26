@@ -441,11 +441,11 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
     uint64_t _reading;      // the last reading of the music taken in
     MeshUniforms _mesh;
     CADisplayLink *_link;
-    BOOL _ready, _dirty, _drewOnce, _firstPending;
+    BOOL _ready, _dirty, _firstPending;
     BOOL _acquiring;
     BOOL _spectrumWanted;
     CGSize _wantedSize;
-    NSUInteger _pictureRevision, _misses;
+    NSUInteger _pictureRevision, _presentedRevision, _misses;
     BOOL _resigning;
     int _firstFailures;
 }
@@ -510,12 +510,16 @@ static id<MTLTexture> target(NSUInteger width, NSUInteger height) {
         && !SGRPlayerIsTransitioning();
 }
 
+- (BOOL)hasPresentedCover {
+    return _toPicture && _pictureRevision == _presentedRevision;
+}
+
 - (void)setCover:(CGImageRef)cover animated:(BOOL)animated {
-    if (!cover) return;
+    BOOL fade = cover && animated && _toPicture && (_progress < 1 || self.hasPresentedCover) && [self mayDraw];
     _pictureRevision++;
     _firstPending = NO;
-    if (_held) _drewOnce = NO;
-    if (animated && _toPicture && _drewOnce && [self mayDraw]) {
+    _firstFailures = 0;
+    if (fade) {
         // One still coming in is cut short: the new one comes in over the one it was bringing.
         _fromPicture = _toPicture;
         _from = _to;
@@ -875,8 +879,9 @@ static float easeInOut(float x) {
     [shown drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:kMeshCells * kMeshCells * 6];
     [shown endEncoding];
 
-    self.presentsWithTransaction = !_drewOnce;
-    if (!_drewOnce) {
+    BOOL presentsDestination = !self.hasPresentedCover && _progress >= 1;
+    self.presentsWithTransaction = presentsDestination;
+    if (presentsDestination) {
         _firstPending = YES;
         // Uncover this revision in the transaction presenting it, never an old completion.
         NSUInteger revision = _pictureRevision;
@@ -909,15 +914,13 @@ static float easeInOut(float x) {
 }
 
 - (void)firstFrameCompleted:(BOOL)completed {
-    if (_drewOnce) return;
     if (!completed) {
         SGLog(@"redesign kit: Fluid's first frame failed on the GPU (%d), Light stays", ++_firstFailures);
         _dirty = YES;
         [self update];
         return;
     }
-    _drewOnce = YES;
-    SGLog(@"redesign kit: Fluid drew its first frame at %.0fx%.0f", self.drawableSize.width, self.drawableSize.height);
+    _presentedRevision = _pictureRevision;
     void (^drawn)(void) = _drawn;
     if (drawn) drawn();
 }

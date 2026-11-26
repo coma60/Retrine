@@ -237,7 +237,10 @@ void SGMusicSpectrumAddReader(void) {
     });
     atomic_store(&sg_wanted, true);
     sg_registered = sg_fft && SGPlayerSetDemandWatcher(listenTo, YES);
-    if (!sg_registered) SGLog(@"music spectrum: analyzer or output watcher unavailable");
+    if (!sg_registered) {
+        atomic_store(&sg_wanted, false);
+        SGLog(@"music spectrum: analyzer or disposal-safe output watcher unavailable");
+    }
 }
 
 void SGMusicSpectrumRemoveReader(void) {

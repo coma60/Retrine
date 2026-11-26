@@ -243,6 +243,10 @@ static UIImage *blurred(UIImage *image, BOOL contrast, CGFloat radius, CGFloat s
 // The cover upright at 256 px a side, its colors as they are: what the GPU renderer's copies are drawn from.
 static UIImage *upright(UIImage *image) {
     if (!image) return nil;
+#ifdef SGR_FLUID_FRAME_PROBE
+    extern BOOL SGRProbeFailUprightCover(UIImage *);
+    if (SGRProbeFailUprightCover(image)) return nil;
+#endif
     enum { kSide = 256 };
     CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef bitmap = CGBitmapContextCreate(NULL, kSide, kSide, 8, kSide * 4, space,
@@ -421,6 +425,15 @@ NSData *SGRFluidGradeTable(int side) {
 - (void)setHidden:(BOOL)hidden {
     _requestedHidden = hidden;
     if (hidden && _preparing) _awaitingCoveredBlur = YES;
+    if (hidden && _gpu && !_gpu.hasPresentedCover) {
+        // Preparation may already have finished while the old drawable is still showing.
+        // On uncover show the prepared destination, not a fading copy or an old surface.
+        for (int i = 0; i < kCopies; i++) [_copies[i] removeAnimationForKey:@"contents"];
+        if (_gpuShown) {
+            _gpuShown = NO;
+            [self showCopies];
+        }
+    }
     [super setHidden:hidden || _awaitingCoveredBlur];
     _gpu.held = self.hidden;
 }
@@ -518,7 +531,7 @@ NSData *SGRFluidGradeTable(int side) {
                 [layer showCopies];
             }
             layer->_cover = cover;
-            if (cover) [layer->_gpu setCover:cover.CGImage animated:fade];
+            [layer->_gpu setCover:cover.CGImage animated:fade];
             [layer show:blur small:small ?: blur lowerLight:lowerLight animated:fade];
             layer->_awaitingCoveredBlur = NO;
             [layer setHidden:layer->_requestedHidden];

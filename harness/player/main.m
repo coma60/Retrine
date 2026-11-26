@@ -5736,6 +5736,9 @@ static NSUInteger metalLayersIn(CALayer *layer) {
 }
 
 static __weak CAMetalLayer *captureLayer;
+static char failUpright;
+BOOL SGRProbeFailUprightCover(UIImage *cover) { return objc_getAssociatedObject(cover, &failUpright) != nil; }
+extern NSUInteger SGRHarnessSpectrumReaders(void);
 static int presentedPixel[3];
 static NSUInteger capturedWidth;
 
@@ -5948,6 +5951,50 @@ static double bandDiff(NSData *a, NSData *b) {
     step(1, ^{
         [self expect:presentedPixel[0] > MAX(presentedPixel[1], presentedPixel[2]) && [[gpu.superlayer valueForKey:@"canvas"] isHidden]
                 step:@"presented replacement takes over without stale pixels" detail:state()];
+        // Hold the presenter (not the field) so blue finishes preparing while visible
+        // but cannot have presented when we cover and uncover it.
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+        [probe setArtwork:solid(UIColor.blueColor) identity:@"replace-before-cover" animated:YES];
+    });
+    step(1, ^{
+        probe.covered = YES;
+        probe.covered = NO;
+        NSData *surface = fieldBand(probe);
+        const uint8_t *pixel = (const uint8_t *)surface.bytes + 4 * (40 + 28 * 80);
+        [self expect:pixel[2] > MAX(pixel[0], pixel[1]) step:@"replace then cover: blue fallback before first present"
+              detail:[NSString stringWithFormat:@"surface RGB %u,%u,%u", pixel[0], pixel[1], pixel[2]]];
+        captureNextFrame(gpu);
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    });
+    __block NSUInteger otherReaders;
+    step(1, ^{
+        [self expect:presentedPixel[2] > MAX(presentedPixel[0], presentedPixel[1]) && [[gpu.superlayer valueForKey:@"canvas"] isHidden]
+                step:@"replace then cover: presented blue takes over" detail:state()];
+        otherReaders = SGRHarnessSpectrumReaders();
+        probe.motionHeld = NO;
+    });
+    step(1, ^{
+        [self expect:SGRHarnessSpectrumReaders() == otherReaders + 1 step:@"moving probe requests spectrum" detail:state()];
+        UIImage *red = solid(UIColor.redColor);
+        objc_setAssociatedObject(red, &failUpright, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [probe setArtwork:red identity:@"failed-upright" animated:NO];
+    });
+    step(1, ^{
+        NSData *surface = fieldBand(probe);
+        const uint8_t *pixel = (const uint8_t *)surface.bytes + 4 * (40 + 28 * 80);
+        [self expect:pixel[0] > MAX(pixel[1], pixel[2]) && SGRHarnessSpectrumReaders() == otherReaders
+                step:@"failed upright shows the red fallback without spectrum demand" detail:state()];
+        captureNextFrame(gpu);
+    });
+    step(0.3, ^{
+        [self expect:captureLayer == gpu step:@"failed upright does not submit the previous cover underneath" detail:state()];
+        probe.motionHeld = YES;
+        captureNextFrame(gpu);
+        [probe setArtwork:solid(UIColor.greenColor) identity:@"recovered-upright" animated:NO];
+    });
+    step(1, ^{
+        [self expect:presentedPixel[1] > MAX(presentedPixel[0], presentedPixel[2]) && [[gpu.superlayer valueForKey:@"canvas"] isHidden]
+                step:@"successful cover after failed upright takes over from Light" detail:state()];
         // Resize during this probe's acquisition, then suppress ticks. Only an immediate
         // handoff from the old acquisition can submit a drawable of the new size.
         IMP original = class_getMethodImplementation(CAMetalLayer.class, @selector(nextDrawable));

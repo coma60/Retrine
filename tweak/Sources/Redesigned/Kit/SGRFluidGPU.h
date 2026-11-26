@@ -20,8 +20,10 @@ NSData *SGRFluidGradeTable(int side);
 
 @interface SGRFluidGPULayer : CAMetalLayer
 // The cover itself, upright, as it is (the shaders treat it). Animated, the new one comes in over the shown one;
-// otherwise it replaces it at once.
+// otherwise it replaces it at once. NULL discards the cover and its drawing/analysis demand.
 - (void)setCover:(CGImageRef)cover animated:(BOOL)animated;
+// The destination itself has been presented, not an older cover or an unfinished crossfade.
+@property (nonatomic, readonly) BOOL hasPresentedCover;
 // Flowing, or held still where it is. Off to begin with.
 @property (nonatomic) BOOL moving;
 // Hidden by its owner: nothing is drawn, not even a running transition, until it is NO again.
@@ -36,6 +38,6 @@ NSData *SGRFluidGradeTable(int side);
 @property (nonatomic) BOOL contrast;
 // As SGRFluidLayer's: the part on screen, in this layer's coordinates. The whole layer while empty.
 @property (nonatomic) CGRect visibleRect;
-// Called when the first drawable (or a covered replacement) is presented.
+// Called in the transaction that presents the destination cover.
 @property (nonatomic, copy) void (^drawn)(void);
 @end

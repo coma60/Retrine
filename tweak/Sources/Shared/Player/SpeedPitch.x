@@ -136,6 +136,7 @@ static pthread_mutex_t sg_outputsLock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER;
 static dispatch_queue_t sg_outputsQueue;
 static SGPlayerOutputWatcher sg_watchers[kMaxWatchers];
 static BOOL sg_reachable;                    // Spotify's AudioOutputUnitStart could be rebound or hooked
+static BOOL sg_observesDisposal;
 static _Atomic(SGPlayerOutputEffects) sg_outputEffects;
 static _Atomic(SGPlayerOutputProcessor) sg_outputReader;
 // Under sg_outputsLock. Coefficients are made off render for each hardware rate.
@@ -1404,6 +1405,7 @@ static void rebind(void) {
         // a read-only lifecycle slot fails. Non-jailbroken installs keep the original rebind path.
         if (SGJailbroken()) {
             sg_reachable = hookInline();
+            sg_observesDisposal = sg_reachable; // disposal is one of the required lifecycle hooks
             if (!sg_reachable) SGLog(@"audio: the jailbreak's output hooks did not all take, its output cannot be reached");
             else if (!sg_setProperty) SGLog(@"redesign speed: AudioUnitSetProperty could not be hooked, the menu offers pitch only");
             return;
@@ -1418,7 +1420,8 @@ static void rebind(void) {
             return;
         }
         if (!SGRebindImport("AudioOutputUnitStop", stopOutput, (void **)&sg_stopOutput) || !sg_stopOutput) sg_stopOutput = AudioOutputUnitStop;
-        if (!SGRebindImport("AudioComponentInstanceDispose", disposeUnit, (void **)&sg_dispose) || !sg_dispose) {
+        sg_observesDisposal = SGRebindImport("AudioComponentInstanceDispose", disposeUnit, (void **)&sg_dispose) && sg_dispose;
+        if (!sg_observesDisposal) {
             sg_dispose = AudioComponentInstanceDispose;
             SGLog(@"audio: Spotify does not import AudioComponentInstanceDispose, a disposed output is not seen");
         }
@@ -1428,7 +1431,8 @@ static void rebind(void) {
 static BOOL setWatcher(SGPlayerOutputWatcher watcher, BOOL on, BOOL replay) {
     if (!watcher) return NO;
     rebind();
-    if (!sg_reachable) return NO;
+    // A demand watcher retains its unit to detach the render notify later.
+    if (!sg_reachable || (replay && !sg_observesDisposal)) return NO;
     pthread_mutex_lock(&sg_outputsLock);
     int slot = -1;
     for (int i = 0; i < kMaxWatchers; i++) {

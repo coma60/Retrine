@@ -13,8 +13,10 @@
 #import "Shared/Player/SleepTimer.h"
 
 // No Spotify audio unit in the UI mock.
-void SGMusicSpectrumAddReader(void) {}
-void SGMusicSpectrumRemoveReader(void) {}
+static NSUInteger spectrumReaders;
+NSUInteger SGRHarnessSpectrumReaders(void) { return spectrumReaders; }
+void SGMusicSpectrumAddReader(void) { spectrumReaders++; }
+void SGMusicSpectrumRemoveReader(void) { spectrumReaders--; }
 uint64_t SGMusicSpectrumReadings(void) { return 0; }
 BOOL SGMusicSpectrumReading(uint64_t index, float levels[3]) { return NO; }
 

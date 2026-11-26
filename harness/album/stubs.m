@@ -5,7 +5,8 @@
 // No Spotify audio output in the header fixture.
 #if __has_include("Shared/Player/SGMusicSpectrum.h")
 #import "Shared/Player/SGMusicSpectrum.h"
-void SGMusicSpectrumSetWanted(BOOL wanted) {}
+void SGMusicSpectrumAddReader(void) {}
+void SGMusicSpectrumRemoveReader(void) {}
 uint64_t SGMusicSpectrumReadings(void) { return 0; }
 BOOL SGMusicSpectrumReading(uint64_t index, float levels[3]) { return NO; }
 #endif

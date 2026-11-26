@@ -17,12 +17,18 @@
 // Logs PASS or FAIL lines and exits 1 on the first failure (../harness-fail.h).
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
 #import "cover-seams.h"
 #import "Redesigned/Kit/SGRField.h"
 #import "Redesigned/Kit/SGRHeaderInfo.h"
 #import "../harness-fail.h"
 #import "cover-fixtures.h"
+
+// All catalog answers and downloaded files belong to this run, not the Mac's Retrine cache.
+NSURL *SGDataRoot(NSSearchPathDirectory directory) {
+    return [NSURL fileURLWithPath:NSProcessInfo.processInfo.environment[@"SGR_COVER_ROOT"] isDirectory:YES];
+}
 #if __has_include("Redesigned/Kit/SGRCoverRead.h")
 #import "Redesigned/Kit/SGRCoverRead.h"
 #endif
@@ -221,7 +227,7 @@ static void (^rowResult)(NSURL *);
 static void (^identifierResult)(NSURL *, SGMotionIdentifierOutcome);
 #endif
 static NSURL *stillEditionFile;
-static NSString *const fixtureURI = @"spotify:album:FixtureAlbum";
+static NSString *const fixtureURI = @"spotify:album:0000000000000000000021";
 
 @interface SGAlbumQueuePage : NSObject @end
 @implementation SGAlbumQueuePage
@@ -236,6 +242,10 @@ void SGRAlbumTestStillEditionCover(NSString *uri, NSString *artist, NSString *al
 #if !SGR_COVER_BASELINE
 void SGRAlbumTestIdentifierCover(NSString *uri, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *, SGMotionIdentifierOutcome)) {
     HARNESS_CHECK([uri isEqual:fixtureURI] && [album isEqual:@"Fixture Album"]);
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"motion-verified"]) {
+        SGMotionPageIdentifierCover(uri, artist, album, pixels, done);
+        return;
+    }
     identifierResult = [done copy];
 }
 #endif
@@ -335,6 +345,29 @@ static UICollectionViewCell *mountTrack(Page p, MotionRows *rows) {
 }
 
 #if !SGR_COVER_BASELINE
+static void checkVerifiedEdition(void) {
+    NSURL *folder = [SGDataRoot(NSCachesDirectory) URLByAppendingPathComponent:@"Motion"];
+    HARNESS_CHECK([NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSString *address = @"https://fixture.invalid/edition-b.mp4";
+    NSDictionary *answers = @{[@"album\nverified4\n" stringByAppendingString:fixtureURI]: @{@"url":address, @"at":NSDate.date},
+                              @"album\n5\nartist\nfixture album": @{@"url":@"", @"identified":@YES, @"at":NSDate.date}};
+    HARNESS_CHECK([answers writeToURL:[folder URLByAppendingPathComponent:@"album answers.plist"] atomically:YES]);
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+    NSData *bytes = [address dataUsingEncoding:NSUTF8StringEncoding];
+    CC_SHA1(bytes.bytes, (CC_LONG)bytes.length, digest);
+    NSMutableString *name = [NSMutableString string];
+    for (size_t i = 0; i < sizeof digest; i++) [name appendFormat:@"%02x", digest[i]];
+    NSURL *local = [folder URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"mp4"]];
+    HARNESS_CHECK([bytes writeToURL:local atomically:YES]);
+    Page p = makePage(solidDarkCover());
+    __attribute__((objc_precise_lifetime)) UIViewController *owner = [UIViewController new];
+    owner.restorationIdentifier = fixtureURI;
+    owner.view = p.page;
+    [p.hero playMotionForArtist:@"Artist" album:@"Fixture Album"];
+    HARNESS_CHECK(waitUntil(3, ^BOOL { return [[p.hero valueForKeyPath:@"clip.file"] isEqual:local]; }));
+    puts("album motion: verified edition B opens from disk over edition A's cached still");
+}
+
 static void checkMotionIdentifiers(SGMotionIdentifierOutcome outcome, BOOL moves) {
     headerRequests = [NSMutableArray array]; rowRequests = [NSMutableArray array];
     identifierResult = nil; rowResult = nil; headerResult = nil;
@@ -815,6 +848,7 @@ int main(int argc, char *argv[]) {
         if ([mode isEqualToString:@"still-swap"]) { checkStillOwnership(); return 0; }
         if ([mode isEqualToString:@"motion-row"]) { checkMotionRow(); return 0; }
 #if !SGR_COVER_BASELINE
+        if ([mode isEqual:@"motion-verified"]) { checkVerifiedEdition(); return 0; }
         if ([mode isEqual:@"motion-identifiers"]) {
             checkMotionIdentifiers(SGMotionIdentifierMiss, NO);
             checkMotionIdentifiers(SGMotionIdentifierMiss, YES);

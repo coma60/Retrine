@@ -301,7 +301,7 @@
 "settings.artwork.source.canvas.detail" = "The track's own looping video";
 "settings.artwork.source.canvas.name" = "Spotify Canvas";
 "settings.artwork.sources.first.canvas" = "Canvas";
-"settings.artwork.sources.intro" = "Asked top to bottom until one has a clip for the track. Apple Music is asked for the album by name, then by barcode or a track's recording code if needed. It never sees your account.";
+"settings.artwork.sources.intro" = "Sources are tried in order until one has a clip. For a new Apple Music lookup, Retrine checks the album barcode, then the track’s recording code. If neither matches, it searches by name. Apple Music never sees your account.";
 "settings.artwork.sources.row.title" = "Artwork sources";
 "settings.artwork.sources.summary.format" = "%@ +%lu";
 "settings.artwork.sources.title" = "Artwork sources";

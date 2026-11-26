@@ -420,7 +420,7 @@
 "settings.artwork.source.canvas.detail" = "트랙 자체의 반복 동영상";
 "settings.artwork.source.canvas.name" = "Spotify Canvas";
 "settings.artwork.sources.first.canvas" = "Canvas";
-"settings.artwork.sources.intro" = "트랙의 클립을 찾을 때까지 위에서 아래 순서로 요청합니다. Apple Music에서 앨범 이름으로 먼저 찾고, 필요하면 앨범 바코드나 수록곡의 녹음 코드로 찾습니다. 회원님의 계정 정보는 전달되지 않습니다.";
+"settings.artwork.sources.intro" = "클립을 찾을 때까지 위에서부터 차례로 확인합니다. Apple Music에서 새로 찾을 때는 앨범 바코드를 먼저 확인하고, 다음으로 곡의 녹음 코드를 확인합니다. 둘 다 일치하지 않으면 이름으로 검색합니다. Apple Music에는 회원님의 계정 정보가 전달되지 않습니다.";
 "settings.artwork.sources.row.title" = "아트워크 소스";
 "settings.artwork.sources.summary.format" = "%@ +%lu";
 "settings.artwork.sources.title" = "아트워크 소스";

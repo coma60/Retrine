@@ -234,8 +234,7 @@ SGMotionTicket *SGMotionRequestAlbumSongClip(NSString *uri, NSURL *canvas, NSStr
 
 SGModRow *SGMotionSourcesRow(void) {
     SGModRow *row = SGPageRow(SGL(@"settings.artwork.sources.row.title", @"Artwork sources"), ^UIViewController *{
-        return SGSourcesPageMake(SGL(@"settings.artwork.sources.title", @"Artwork sources"), SGL(@"settings.artwork.sources.intro", @"Asked top to bottom until one has a clip for the track. Apple Music is "
-                                                     @"asked for the album by name, then by barcode or a track's recording code if needed. It never sees your account."),
+        return SGSourcesPageMake(SGL(@"settings.artwork.sources.title", @"Artwork sources"), SGL(@"settings.artwork.sources.intro", @"Sources are tried in order until one has a clip. For a new Apple Music lookup, Retrine checks the album barcode, then the track’s recording code. If neither matches, it searches by name. Apple Music never sees your account."),
                                  allSources(), ^NSArray<NSString *> * { return SGMotionSourceOrder(); },
                                  ^(NSArray<NSString *> *keys) { [NSUserDefaults.standardUserDefaults setObject:keys forKey:SGKeyMotionSources]; });
     });

@@ -53,13 +53,15 @@ hero() {
         "$SRC"/Redesigned/Album/AlbumNotes.m "$SRC"/Shared/AnimatedArtwork/SGMotionClip.m "$SRC"/Shared/AdBlock/Protobuf.m \
         "$SRC"/Redesigned/Album/AlbumPlaysPlace.m "$SRC"/Redesigned/Kit/SGRRollingDigits.m "$SRC"/Redesigned/Kit/SGRRefinements.m \
         $FRAMEWORKS -framework Metal -framework Symbols -framework CoreText -framework AVFoundation -framework CoreMedia -framework CoreVideo \
-        "$SRC/Core/SGDataRoot.m" -o "$dir/cover-hero-check"
+        -o "$dir/cover-hero-check"
 }
 
 hero "$OUT/hero"
+export SGR_COVER_ROOT="$OUT/data"
 "$OUT/hero/cover-hero-check" rebuilt
 "$OUT/hero/cover-hero-check" motion-row
 "$OUT/hero/cover-hero-check" motion-identifiers -spotifyglass.redesign.album.adaptiveCover YES
+SGR_COVER_ROOT="$OUT/verified" "$OUT/hero/cover-hero-check" motion-verified
 "$OUT/hero/cover-hero-check" on -spotifyglass.redesign.album.adaptiveCover YES
 "$OUT/hero/cover-hero-check" swap -spotifyglass.redesign.album.adaptiveCover YES
 "$OUT/hero/cover-hero-check" still-swap -spotifyglass.redesign.album.adaptiveCover YES

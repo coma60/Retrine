@@ -768,13 +768,15 @@ Shared:
                   Otherwise a single release must contain the song with its artist credit;
                   trailing features and version tags are simplified on the song, never on the album. A soundtrack's songs
                   share the title search; only a full page with no identified release can be narrowed by artist.
-                  A known title answer is reused without asking Spotify for identifiers. Otherwise, with an album URI,
+                  A downloaded clip verified for the Spotify album URI wins even over a later answer for the same title.
+                  Without one, a known title answer is reused without asking Spotify for identifiers. Otherwise, with an album URI,
                   Spotify's album metadata supplies its UPC. Apple Music gets the barcode as supplied; only albums whose own UPC matches (ignoring
                   leading zeros) qualify. If Apple returns no UPC match, the player's track (on the album page, the first
                   track on the album) supplies a recording code from Spotify. Of the Apple albums containing that ISRC,
                   exactly one distinct non-single must share the edition-stripped album name, whether it has video or not;
                   with none, exactly one "X - Single" whose whole name (less the suffix) is the album's.
                   A confirmed identifier miss permits the title lookup (and, on the album page, matching track rows).
+                  A recording miss applies only to that track; the next track may identify the release.
                   An unanswered request remains retryable; multiple candidate release IDs do not select a clip.
                   For an identified still edition only a title match within one year of Spotify's release year can move;
                   without a year it stays still. Only an identifier-verified clip that downloaded successfully is kept

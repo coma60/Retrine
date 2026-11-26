@@ -224,16 +224,20 @@ static NSURL *songCover(NSString *artist, NSString *album, NSString *song) {
     return result;
 }
 
-static NSURL *coverWithURI(NSString *name, NSString *song, NSString *uri) {
+static NSURL *coverForTrack(NSString *name, NSString *song, NSString *uri, NSString *track) {
     __block BOOL finished = NO;
     __block NSURL *result;
-    SGMotionRequestSongCover(@"Pink Floyd", name, song, uri, @"spotify:track:0000000000000000000002", 720, ^(NSURL *file) {
+    SGMotionRequestSongCover(@"Pink Floyd", name, song, uri, track, 720, ^(NSURL *file) {
         CHECK(NSThread.isMainThread);
         result = file;
         finished = YES;
     });
     waitFor(^BOOL { return finished; });
     return result;
+}
+
+static NSURL *coverWithURI(NSString *name, NSString *song, NSString *uri) {
+    return coverForTrack(name, song, uri, @"spotify:track:0000000000000000000002");
 }
 
 static void checkBarcode(void) {
@@ -266,7 +270,8 @@ static void checkBarcode(void) {
     waitFor(^BOOL { return page; });
     CHECK([coverWithURI(name, song, uri).path isEqual:@"/1665303755/clip.mp4"]);
     CHECK(metadataGets == 1 && barcodeGets == 1);
-    CHECK(!coverWithURI(@"The Dark Side of the Moon", song, uri)); // the identified plain release is still
+    // The notes contain a still plain edition; they cannot override this URI's downloaded anniversary clip.
+    CHECK([coverWithURI(@"The Dark Side of the Moon", song, uri).path isEqual:@"/1665303755/clip.mp4"]);
     CHECK(coverWithURI(coverResults[1][@"attributes"][@"name"], song, uri));
     CHECK(metadataGets == 1 && barcodeGets == 1);
 
@@ -285,6 +290,10 @@ static void checkBarcode(void) {
     spotifyUPC = @"5054197493980"; // observed distributor UPC: neither returned album carries it
     NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:@"fixtures/GBN9Y2200015.json"] options:0 error:nil];
     songsReply = fixture;
+    // The previous track on `other` had no ISRC. Its album's first track has one.
+    expectedTrack = @"spotify:track:0000000000000000000001";
+    CHECK([coverForTrack(name, @"Another recording", other, expectedTrack).path isEqual:@"/1665303755/clip.mp4"]);
+    expectedTrack = @"spotify:track:0000000000000000000002";
     CHECK([coverWithURI(name, song, @"spotify:album:1ipVQZ4voJtfJxCNlR8lg4").path isEqual:@"/1665303755/clip.mp4"]);
 
     expectedTrack = @"spotify:track:0000000000000000000001"; // page uses the album's first GID, not the player
@@ -316,11 +325,15 @@ static void checkBarcode(void) {
     coverResults = @[@{@"attributes": @{@"name": @"Legacy still", @"artistName": @"Compilation", @"isSingle": @NO},
                        @"relationships": @{@"tracks": @{@"data": @[@{@"attributes": @{@"name": @"One", @"artistName": @"Pink Floyd"}}]}}}];
     NSUInteger before = metadataGets;
-    BOOL legacyStill = !coverWithURI(@"Legacy still", @"One", @"spotify:album:0000000000000000000007") && metadataGets == before;
+    BOOL legacyStill = [coverWithURI(@"Legacy still", @"One", @"spotify:album:0000000000000000000007").path isEqual:@"/1665303755/clip.mp4"] && metadataGets == before + 1;
     // A clip kept under the older song key is still that track's clip: no search, no identifier lookup.
     NSUInteger searched = coverSearches.count;
     legacyStill = legacyStill && [coverWithURI(@"Legacy clip", @"One", @"spotify:album:0000000000000000000012").path isEqual:@"/legacy-clip.mp4"]
-        && coverSearches.count == searched && metadataGets == before;
+        && coverSearches.count == searched && metadataGets == before + 1;
+    NSString *upgrade = @"spotify:album:0000000000000000000020";
+    CHECK([coverWithURI(@"Upgrade", @"One", upgrade).path isEqual:@"/song-seven.mp4"]);
+    CHECK(metadataGets == before + 1 && coverSearches.count == searched);
+    CHECK([coverWithURI(@"Upgrade", @"Two", upgrade).path isEqual:@"/1665303755/clip.mp4"]);
 
     coverResults = @[];
     spotifyUPC = nil;
@@ -579,6 +592,8 @@ int main(int argc, char **argv) {
             @"album\n1\nartist\noriginal": @{@"url": @"https://fixture.invalid/wrong-edition.mp4", @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy still\none": @{@"url": @"", @"identified": @NO, @"at": NSDate.date},
             @"album\nsong4\npink floyd\nlegacy clip\none": @{@"url": @"https://fixture.invalid/legacy-clip.mp4", @"at": NSDate.date},
+            @"album\nsong7\npink floyd\nupgrade\none": @{@"url": @"https://fixture.invalid/song-seven.mp4", @"at": NSDate.date},
+            @"album\nidentifiers2\nspotify:album:0000000000000000000020": @{@"url": @"https://fixture.invalid/ambiguous.mp4", @"at": NSDate.date},
             @"album\n4\nartist\nsaved": @{@"url": @"https://fixture.invalid/saved.mp4", @"at": NSDate.date}}
             writeToURL:store atomically:YES]));
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -589,6 +604,14 @@ int main(int argc, char **argv) {
         CHECK([NSURLProtocol registerClass:CatalogProtocol.class]);
         if (argc == 3) {
             BOOL first = [@(argv[1]) isEqual:@"seed"];
+            NSString *name = @"The Dark Side Of The Moon (50th Anniversary) [2023 Remaster]";
+            if (!first) {
+                // Another edition was found by title after this release's clip was downloaded.
+                NSMutableDictionary *answers = [[NSDictionary dictionaryWithContentsOfURL:store] mutableCopy];
+                answers[[@"album\n5\npink floyd\n" stringByAppendingString:name.lowercaseString]] =
+                    @{@"url":@"https://fixture.invalid/another-edition.mp4", @"at":NSDate.date};
+                CHECK([answers writeToURL:store atomically:YES]);
+            }
             coverSearches = [NSMutableArray array];
             coverResults = first ? @[release(@"Ordinary", @"Solo", NO, @[@{@"attributes": @{@"name": @"One", @"artistName": @"Solo"}}])] : @[];
             CHECK(songCover(@"Solo", @"Ordinary", first ? @"One" : @"Two"));
@@ -603,7 +626,7 @@ int main(int argc, char **argv) {
             spotifyUPC = @"5054197493980";
             expectedTrack = first ? @"spotify:track:0000000000000000000002" : nil;
             songsReply = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:@"fixtures/GBN9Y2200015.json"] options:0 error:nil];
-            CHECK([coverWithURI(@"The Dark Side Of The Moon (50th Anniversary) [2023 Remaster]", @"Speak to Me - 2023 Remaster", uri).path isEqual:@"/1665303755/clip.mp4"]);
+            CHECK([coverWithURI(name, @"Speak to Me - 2023 Remaster", uri).path isEqual:@"/1665303755/clip.mp4"]);
             if (first) {
                 CHECK(metadataGets == 1 && barcodeGets == 1 && recordingReads == 1);
                 waitFor(^BOOL {
@@ -611,7 +634,15 @@ int main(int argc, char **argv) {
                         if ([entry[@"url"] hasSuffix:@"/1665303755/clip.mp4"]) return YES;
                     return NO;
                 });
-            } else CHECK(!metadataGets && !barcodeGets && !coverSearches.count && !masterHits && !mediaHits);
+            } else {
+                __block BOOL opened = NO;
+                SGMotionPageIdentifierCover(uri, @"Pink Floyd", name, 720, ^(NSURL *file, SGMotionIdentifierOutcome outcome) {
+                    CHECK(outcome == SGMotionIdentifierClip && [file.path isEqual:@"/1665303755/clip.mp4"]);
+                    opened = YES;
+                });
+                waitFor(^BOOL { return opened; });
+                CHECK(!metadataGets && !barcodeGets && !coverSearches.count && !masterHits && !mediaHits);
+            }
             if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
             CHECK([NSFileManager.defaultManager removeItemAtURL:root error:nil]);
             return 0;

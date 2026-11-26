@@ -38,6 +38,10 @@ on:
         description: "Set by the runner watchdog: how many times this build has moved runner. Leave at 0"
         default: 0
         type: number
+      sha:
+        description: "Set by the runner watchdog to keep building the original commit. Leave empty"
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -49,7 +53,7 @@ jobs:
   # GitHub has no fallback for a runner label that is not acquired: the job waits in the queue (runs 13 to 16 sat
   # there 15 min and were cancelled without a runner). This job watches the build; if it is still queued
   # RUNNER_WAIT_SECONDS after it was created, it dispatches this workflow again with the same inputs on the next
-  # runner in FALLBACK and cancels this run. The last runner has no watchdog, so it never loops.
+  # runner in FALLBACK and cancels this run (or the replacement if the build just started). The last runner has no watchdog.
   #
   # Only runners with the toolchain every build so far used (Xcode 26.6, iOS 26.5 SDK) are in FALLBACK, each its own
   # pool, so a starved pool is left rather than queued on again (runner-images, November 2026):
@@ -74,6 +78,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           REF: ${{ github.ref_name }}
+          BUILD_SHA: ${{ inputs.sha || github.sha }}
           RUNNER_WAIT_SECONDS: "30"
           FALLBACK: "macos-latest=macos-26-intel macos-26-intel=macos-latest"
           MAX_HOPS: "5"
@@ -133,7 +138,6 @@ jobs:
               time.sleep(max(1.0, min(10.0, wait - elapsed)))
               job = build_job()
 
-          print(f"::warning::build waited {elapsed:.0f} s for {current} without a runner; starting again on {after}")
           inputs = {
               "ipa_url": os.environ["IN_IPA_URL"],
               "upload_method": os.environ["IN_UPLOAD_METHOD"] or "artifacts",
@@ -143,19 +147,30 @@ jobs:
               "bundle_id": os.environ["IN_BUNDLE_ID"],
               "runner": after,
               "runner_hops": str(hops + 1),
+              "sha": os.environ["BUILD_SHA"],
           }
-          command = ["gh", "workflow", "run", "build-ipa.yml", "--ref", os.environ["REF"]]
-          for key, value in inputs.items():
-              command += ["-f", f"{key}={value}"]
-          subprocess.run(command, check=True)
+          payload = {"ref": os.environ["REF"], "inputs": inputs, "return_run_details": True}
+          job = build_job()
+          if not job or job["status"] != "queued":
+              print("build is no longer queued; leaving this run alone")
+              raise SystemExit(0)
+          print(f"::warning::build waited {elapsed:.0f} s for {current} without a runner; starting again on {after}")
+          response = subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/actions/workflows/build-ipa.yml/dispatches", "--input", "-",
+               "-H", "X-GitHub-Api-Version: 2022-11-28"], input=json.dumps(payload), text=True)
+          replacement_id = str(json.loads(response)["workflow_run_id"])
           # Dispatched first: cancelling this run also stops this job.
-          subprocess.run(["gh", "run", "cancel", run_id], check=True)
+          job = build_job()
+          cancel_id = run_id if job and job["status"] == "queued" else replacement_id
+          subprocess.run(["gh", "run", "cancel", cancel_id], check=True)
           PY
 
   build:
     runs-on: ${{ inputs.runner || 'macos-latest' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
 
       - uses: levibostian/action-hide-sensitive-inputs@39cfbde19b3251728d2357dd0648172d1202c1ee # v1
 

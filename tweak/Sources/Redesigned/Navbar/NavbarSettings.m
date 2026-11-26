@@ -791,7 +791,8 @@ typedef NS_ENUM(NSInteger, SGRNavbarSection) {
     SGRTabCell *cell = [table dequeueReusableCellWithIdentifier:@"tab"] ?: [[SGRTabCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"tab"];
     NSDictionary *entry = _entries[(NSUInteger)path.row];
     BOOL hidden = [entry[SGRNavbarHidden] boolValue];
-    SGFillCell(cell, entry[SGRNavbarTitle], [splitStockIDs() containsObject:entry[SGRNavbarID]] ? SGL(@"settings.tabbar.placement.apart", @"Apart, on the right") : nil, hidden ? SGGrey() : nil, nil);
+    NSString *title = entry[SGRNavbarURI] ? entry[SGRNavbarTitle] : SGRStockTabTitle(entry[SGRNavbarTitle]);
+    SGFillCell(cell, title, [splitStockIDs() containsObject:entry[SGRNavbarID]] ? SGL(@"settings.tabbar.placement.apart", @"Apart, on the right") : nil, hidden ? SGGrey() : nil, nil);
     UIListContentConfiguration *content = (UIListContentConfiguration *)cell.contentConfiguration;
     content.image = glyphFor(entry, NO);
     content.imageProperties.tintColor = hidden ? SGGrey() : UIColor.whiteColor;

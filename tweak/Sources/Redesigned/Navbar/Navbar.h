@@ -77,6 +77,9 @@ CGRect SGRTabBarGlassRow(UIView *view);
 // A tab's glyph as the glass bar draws it, white, filled when `active` (TabBar.x), Apple symbols' SF Symbol for one of
 // Spotify's while that is on, for the Tab bar page.
 UIImage *SGRNavbarGlyph(NSDictionary *entry, BOOL active);
+// The name the glass bar shows for one of Spotify's tabs labelled `title`: the Music app's "검색" for Spotify's Korean
+// "검색하기", every other label as Spotify gives it (TabBar.x), so the Tab bar page lists what the bar shows.
+NSString *SGRStockTabTitle(NSString *title);
 // Lets a laid out bar's titles shrink a little before UIKit cuts them short (TabBar.x), for the page's preview too.
 void SGRShrinkTabTitles(UIView *bar);
 // The fade under the bars (TabBar.x), for the page's preview too: how far above the glass bar's top it starts, and

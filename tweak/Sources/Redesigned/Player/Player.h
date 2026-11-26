@@ -250,7 +250,8 @@ SGRLyricsHide SGRLyricsHideMode(void);
 // The Lyrics page's choice of it (PlayerSettings.m).
 SGModRow *SGRLyricsHideRow(void);
 // Whether Sing's mic stays while the lyrics are on their own under either Hide the controls choice; off, it goes with
-// the controls, as the Music app's does (it always stays while Sing is on). Off until switched on; applies at once.
+// the controls, as the Music app's does (it always stays while Sing is on). On until switched off, as before the
+// switch existed; applies at once.
 #define SGRKeyLyricsKeepMic @"spotifyglass.redesign.lyrics.keepMic"
 SGModRow *SGRLyricsKeepMicRow(void);
 

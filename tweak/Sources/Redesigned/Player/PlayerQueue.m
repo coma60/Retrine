@@ -1,5 +1,5 @@
-// Spotify owns the queue. History is a read-only list above the current song; Up Next keeps
-// its existing skip-ahead action. Queue editing and History replay are not offered.
+// Spotify owns the queue. In the sheet and the two-column side list History is read-only
+// above the current song; only Up Next offers a skip.
 // History adapted from the GPL-3 jadetheda and michaelmelita1 forks.
 //
 // The Music app's queue (SGRKeyPlayerQueueStyle) is the same list drawn its way, as the page PlayerLyrics.x puts under the
@@ -51,8 +51,14 @@ static UIFont *tightFont(UIFontTextStyle style) {
     return tight ? [UIFont fontWithDescriptor:tight size:0] : font;
 }
 
+static SGRPlayerQueueStyleKind sg_queueStyle;
+__attribute__((constructor)) static void readQueueStyle(void) {
+    if (!SGRedesignedUI()) return;
+    if (SGInt(SGRKeyPlayerQueueStyle, SGRPlayerQueueStyleSpotify) == SGRPlayerQueueStyleMusic) sg_queueStyle = SGRPlayerQueueStyleMusic;
+}
+
 SGRPlayerQueueStyleKind SGRPlayerQueueStyle(void) {
-    return SGInt(SGRKeyPlayerQueueStyle, SGRPlayerQueueStyleSpotify) == SGRPlayerQueueStyleMusic ? SGRPlayerQueueStyleMusic : SGRPlayerQueueStyleSpotify;
+    return sg_queueStyle;
 }
 
 static BOOL metadataSays(SPTPlayerTrack *track, NSString *key) {
@@ -122,16 +128,13 @@ static BOOL queueEditable(id queue) {
         && [player respondsToSelector:NSSelectorFromString(@"setQueue:options:")];
 }
 
-// Hands Spotify `queue` with `next` as its tracks to come; the copy sent, which the next move builds on until Spotify
-// reports the queue again, or nil.
-static id sendQueue(id queue, NSArray *next) {
-    if (!queueEditable(queue)) return nil;
+// Only a reorder sends a queue. Keep its revision; never use the submitted copy as an editable snapshot.
+static void sendMove(id queue, NSArray *next) {
     id copy = [queue copy];
     ((void (*)(id, SEL, NSArray *))objc_msgSend)(copy, NSSelectorFromString(@"setNextTracks:"), next);
     id options = [NSClassFromString(@"SPTCommandOptions") new];
     ((void (*)(id, SEL, BOOL))objc_msgSend)(options, NSSelectorFromString(@"setOverrideRestrictions:"), YES);
     ((id (*)(id, SEL, id, id))objc_msgSend)(SGPlayerInstance(), NSSelectorFromString(@"setQueue:options:"), copy, options);
-    return copy;
 }
 
 static id queueValue(id object, NSString *name) {
@@ -146,50 +149,10 @@ static NSArray *trackIdentity(SPTPlayerTrack *track) {
     return @[uri, uid, track.provider ?: @""];
 }
 
-// The songs History leaves out, by URI and uid: the songs a pick from the list skipped over (the Music app plays the
-// picked song next and drops the ones before it, where Spotify keeps them as played), and what Clear took away. Kept for
-// as long as Spotify runs.
-static NSMutableSet<NSString *> *sg_hiddenHistory;
-
 static NSString *historyKey(SPTPlayerTrack *track) {
     NSString *uri = SGURIString(track.URI), *uid = queueValue(track, @"UID");
     if (!uri.length) return nil;
     return [NSString stringWithFormat:@"%@\t%@", uri, [uid isKindOfClass:NSString.class] ? uid : @""];
-}
-
-static void hideFromHistory(NSArray<SPTPlayerTrack *> *tracks) {
-    if (!sg_hiddenHistory) sg_hiddenHistory = [NSMutableSet set];
-    for (SPTPlayerTrack *track in tracks) {
-        NSString *key = historyKey(track);
-        if (key) [sg_hiddenHistory addObject:key];
-    }
-}
-
-// The songs a replay from History kept in it (replay:): the ones Spotify's going back took off its played list, put
-// after what Spotify reports as played unless it reports them itself. Kept for as long as Spotify runs; Clear empties it.
-static NSMutableArray<SPTPlayerTrack *> *sg_keptHistory;
-// The context playing when they were kept: once another plays, Spotify's own History starts again and they go.
-static NSString *sg_keptContext;
-
-static NSArray *withKeptHistory(NSArray *past, SPTPlayerTrack *current) {
-    if (sg_keptHistory.count && ![(SGURIString(SGPlayerState().contextURI) ?: @"") isEqualToString:(sg_keptContext ?: @"")]) {
-        [sg_keptHistory removeAllObjects];
-    }
-    if (!sg_keptHistory.count) return past;
-    NSMutableArray *all = [NSMutableArray arrayWithArray:[past isKindOfClass:NSArray.class] ? past : @[]];
-    NSMutableSet<NSString *> *listed = [NSMutableSet set];
-    for (id track in all) {
-        NSString *key = [track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")] ? historyKey(track) : nil;
-        if (key) [listed addObject:key];
-    }
-    NSString *playing = historyKey(current);
-    for (SPTPlayerTrack *track in sg_keptHistory) {
-        NSString *key = historyKey(track);
-        if (!key || [listed containsObject:key] || [key isEqualToString:playing ?: @""]) continue;
-        [listed addObject:key];
-        [all addObject:track];
-    }
-    return all;
 }
 
 static NSArray<SPTPlayerTrack *> *queueTracks(NSArray *tracks, NSUInteger limit, BOOL history) {
@@ -198,7 +161,6 @@ static NSArray<SPTPlayerTrack *> *queueTracks(NSArray *tracks, NSUInteger limit,
     for (SPTPlayerTrack *track in tracks) {
         if (![track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")] || !track.trackTitle.length ||
             !SGURIString(track.URI) || (history && ![SGURIString(track.URI) hasPrefix:@"spotify:track:"])) continue;
-        if (history && sg_hiddenHistory.count && [sg_hiddenHistory containsObject:historyKey(track) ?: @""]) continue;
         [songs addObject:track];
         if (songs.count == limit) break;
     }
@@ -467,18 +429,17 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     // The Music app's list opens on the songs to come, History above them: placed so once for the song playing, and
     // again for the next one while nobody is scrolling it.
     NSString *_placedFor;
-    // The queue Spotify last reported, whose tracks the list shows when _fromSnapshot: only then can a song be moved.
+    // Only the Music page holds an editable snapshot, and only until the next state fallback or edit.
     id _snapshot;
-    BOOL _fromSnapshot;
     // A finger is moving a row: the list is not reloaded under it, and the queue Spotify reported meanwhile is shown once
     // it lets go.
     BOOL _reordering;
-    NSUInteger _reorderGeneration;
+    id _dragSnapshot;
+    NSUInteger _dragGeneration;
     // The Music app's snapping between rest and History: where a drag started, and its tick.
     CGFloat _dragStart;
     UIImpactFeedbackGenerator *_feedback;
     BOOL _hapticArmed;
-    id _heldQueue;
     // The heading held under the toggles at the top and the section it was last set for (NSNotFound once the list
     // changed, so it is set again), the section held now (NSNotFound for none), and the line in the list's visible frame
     // above which its rows are out of sight (0 while nothing is held).
@@ -496,10 +457,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     // rises into the room at the top where the player's thumbnail and title stand (risePicked).
     UIView *_pickedSnap;
     CGRect _pickedFrame;
-    // All of History as Spotify reported it (the list shows the last kHistoryRows), for Clear to take all of it.
-    NSArray<SPTPlayerTrack *> *_allHistory;
-    // A song of History played again: what to put back once Spotify has gone back to it (replay:, showQueue:).
-    NSDictionary *_replayFix;
+    NSMutableOrderedSet<NSString *> *_hiddenHistory;
     CFTimeInterval _slideStart;
     // A song of History picked: the list glides back down to rest as the Music app's does at the tap,
     // the thumbnail, the title and the toggles coming
@@ -527,6 +485,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
     if (!(self = [super initWithStyle:UITableViewStyleGrouped])) return nil;
     self.title = SGL(@"settings.player.queue.title", @"Playing Next");
     _musicStyle = YES;
+    _hiddenHistory = [NSMutableOrderedSet orderedSet];
     _embedded = YES;
     _groups = @[];
     _pinnedSection = _heldSection = NSNotFound;
@@ -583,6 +542,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 
 // Only the upcoming section owns the transition from current to next, never History.
 - (void)showBlend {
+    if (_reordering) return;
     NSString *text = blendInto(_tracks.firstObject);
     if (_musicStyle) {
         if (_blendText == text || [_blendText isEqualToString:text]) return;
@@ -644,33 +604,22 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 
 #pragma mark - the player
 
-- (void)takeState:(SPTPlayerState *)state {
-    if (!queueValue(state, @"queueRevision") || ![SGPlayerInstance() respondsToSelector:@selector(fetchQueue:on:)]) {
-        _fromSnapshot = NO;
-        [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
-                   past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
-                current:state.track];
-        return;
-    }
-    NSArray *key = @[queueValue(state, @"playbackId") ?: NSNull.null,
-                     queueValue(state, @"queueRevision") ?: NSNull.null,
-                     trackIdentity(state.track) ?: SGURIString(state.track.URI) ?: @""];
-    if ([_reportedKey isEqual:key]) return;
-    if (_fetching) return;
-    _reportedKey = key;
-    [self refreshQueue];
+static NSArray *reportKey(SPTPlayerState *state) {
+    id revision = queueValue(state, @"queueRevision");
+    if (!revision || ![SGPlayerInstance() respondsToSelector:@selector(fetchQueue:on:)]) return nil;
+    return @[queueValue(state, @"playbackId") ?: NSNull.null, revision,
+             trackIdentity(state.track) ?: SGURIString(state.track.URI) ?: @""];
 }
 
-// The queue Spotify reported: the list shows its very track objects, which a move hands back.
-- (void)showQueue:(id<SGRQueueSnapshot>)queue {
-    if (_reordering) {
-        _heldQueue = queue;
-        return;
-    }
-    queue = [self repairReplay:queue];
-    _snapshot = queue;
-    _fromSnapshot = YES;
-    [self showTracks:queue.nextTracks past:queue.prevTracks current:queue.track];
+- (void)takeState:(SPTPlayerState *)state {
+    NSArray *key = reportKey(state);
+    if ([_reportedKey isEqual:key]) return;
+    _reportedKey = key;
+    _snapshot = nil;
+    [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
+               past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
+            current:state.track];
+    if (key && !_fetching) [self refreshQueue];
 }
 
 // Before the list changes: whether it rests, and when `current` is a song that was to come (a pick, a skip, the song
@@ -736,8 +685,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 }
 
 - (void)showTracks:(NSArray *)next past:(NSArray *)past current:(SPTPlayerTrack *)current {
-    if (_reordering) return;
-    if (_returning) {
+    if (_reordering || _returning) {
         _heldShow = @[next ?: NSNull.null, past ?: NSNull.null, current ?: NSNull.null];
         return;
     }
@@ -748,9 +696,13 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
         [self noteStandingAtRest:&atRest anchorKey:&anchorKey anchorY:&anchorY current:current];
     }
     _tracks = queueTracks(next, kMaxRows, NO);
-    NSArray *history = queueTracks(withKeptHistory(past, current), NSUIntegerMax, YES);
-    _allHistory = history;
+    NSArray *history = queueTracks(past, NSUIntegerMax, YES);
     _history = history.count > kHistoryRows ? [history subarrayWithRange:NSMakeRange(history.count - kHistoryRows, kHistoryRows)] : history;
+    if (_musicStyle && _hiddenHistory.count) {
+        _history = [_history filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(SPTPlayerTrack *track, NSDictionary *bindings) {
+            return ![self->_hiddenHistory containsObject:historyKey(track)];
+        }]];
+    }
     _current = current;
     NSArray *signature = [self signature];
     // Rebuilt every time, so the rows hold the very objects Spotify reported last (a move hands them back).
@@ -784,7 +736,7 @@ static NSArray<NSString *> *signatureOf(NSArray<SPTPlayerTrack *> *tracks) {
 
 - (NSArray *)signature {
     return @[signatureOf(_history), signatureOf(_current ? @[_current] : @[]), signatureOf(_tracks),
-             _musicStyle ? [self sourcesOf:_tracks] : @[], @(_musicStyle && _fromSnapshot && queueEditable(_snapshot))];
+             _musicStyle ? [self sourcesOf:_tracks] : @[], @(_musicStyle && queueEditable(_snapshot))];
 }
 
 // The sheet's three sections: History, Now Playing and Up Next, the last under its own heading.
@@ -884,7 +836,7 @@ static NSString *playingFrom(NSArray<SPTPlayerTrack *> *run) {
 // The Music app's list opens at rest, and goes back to it for each new song while nobody is scrolling it. The rows
 // under the toggles always reach the bottom of the list, so the rest can be scrolled to however few songs are left.
 - (void)placeAtUpcoming {
-    if (!_musicStyle || !self.isViewLoaded) return;
+    if (!_musicStyle || !self.isViewLoaded || _reordering) return;
     UITableView *table = self.tableView;
     if (table.bounds.size.height < 1) return;
     // Gliding back to rest already (returnToRest): a layout pass meanwhile does not jump it there.
@@ -1161,6 +1113,10 @@ static const CGFloat kSnapDistance = 200;
 - (void)endReturning {
     if (!_returning) return;
     _returning = NO;
+    [self applyHeldTracks];
+}
+
+- (void)applyHeldTracks {
     NSArray *held = _heldShow;
     _heldShow = nil;
     if (!held) return;
@@ -1241,7 +1197,7 @@ static const CGFloat kSnapDistance = 200;
 - (void)setHeadHeight:(CGFloat)headHeight {
     if (fabs(headHeight - _headHeight) < 0.5) return;
     _headHeight = headHeight;
-    if (!self.isViewLoaded) return;
+    if (!self.isViewLoaded || _reordering) return;
     [self.tableView reloadData];
     [self placeAtUpcoming];
 }
@@ -1282,14 +1238,10 @@ static const CGFloat kSnapDistance = 200;
 
 - (void)refreshQueue {
     id<SGRQueuePlayer> player = SGPlayerInstance();
-    SPTPlayerState *state = SGPlayerState();
-    // The state's lists until the queue comes: shown, but not Spotify's queue objects, so nothing moves meanwhile.
-    if (!_fromSnapshot || !_snapshot) {
-        [self showTracks:SGPlayerUpcomingTracks(state, kMaxRows)
-                   past:[state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[]
-                current:state.track];
+    if (![player respondsToSelector:@selector(fetchQueue:on:)]) {
+        _reportedKey = nil;
+        return;
     }
-    if (![player respondsToSelector:@selector(fetchQueue:on:)]) return;
     _fetching = YES;
     NSArray *reported = _reportedKey;
     __weak typeof(self) weakSelf = self;
@@ -1297,18 +1249,22 @@ static const CGFloat kSnapDistance = 200;
         typeof(self) self = weakSelf;
         if (!self) return;
         self->_fetching = NO;
+        if (self->_reportedKey != reported) {
+            // A newer state is already on screen. Fetch for that report, not the one that just completed.
+            if (self->_reportedKey) [self refreshQueue];
+            return;
+        }
         if (![queue respondsToSelector:@selector(nextTracks)] || ![queue respondsToSelector:@selector(prevTracks)] ||
             ![queue respondsToSelector:@selector(track)] ||
             (queue.nextTracks && ![queue.nextTracks isKindOfClass:NSArray.class]) ||
-            (queue.prevTracks && ![queue.prevTracks isKindOfClass:NSArray.class])) return;
-        static dispatch_once_t once;
-        dispatch_once(&once, ^{
-            SGLog(@"redesign queue: Spotify's queue is %@, %@", NSStringFromClass([(NSObject *)queue class]),
-                  queueEditable(queue) ? @"songs can be moved" : @"songs stay where they are");
-        });
-        [self showQueue:queue];
-        // A report received while fetching must not be lost.
-        if ([self->_reportedKey isEqual:reported]) [self takeState:SGPlayerState()];
+            (queue.prevTracks && ![queue.prevTracks isKindOfClass:NSArray.class]) ||
+            (queue.track && ![queue.track isKindOfClass:NSClassFromString(@"SPTPlayerTrack")])) {
+            self->_reportedKey = nil; // Keep the state fallback; retry on the next report, even the same revision.
+            return;
+        }
+        if (self->_musicStyle) self->_snapshot = queue;
+        [self showTracks:queue.nextTracks past:queue.prevTracks current:queue.track];
+        [self takeState:SGPlayerState()];
     } on:dispatch_get_main_queue()];
 }
 
@@ -1369,6 +1325,7 @@ static UIImage *coverPlaceholder(void) {
 }
 
 - (void)showCoverOf:(NSString *)uri {
+    if (_reordering) return; // The rows take their cached covers on the post-drop reload.
     NSMutableArray<NSIndexPath *> *rows = [NSMutableArray array];
     for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
         SPTPlayerTrack *track = [self trackAt:path];
@@ -1500,7 +1457,8 @@ static const CGFloat kMusicHistoryGap = 25;
     cell.contentConfiguration = content;
     cell.isAccessibilityElement = YES;
     cell.accessibilityLabel = artist ? [NSString stringWithFormat:@"%@, %@", title, artist] : title;
-    BOOL playable = [self groupAt:path.section].upcoming;
+    SGRQueueGroup *group = [self groupAt:path.section];
+    BOOL playable = group.upcoming || [self canReplay:group];
     cell.accessibilityTraits = playable ? UIAccessibilityTraitButton : UIAccessibilityTraitStaticText;
     cell.selectionStyle = playable ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     return cell;
@@ -1522,7 +1480,7 @@ static const CGFloat kMusicHistoryGap = 25;
 
 - (BOOL)tableView:(UITableView *)table canMoveRowAtIndexPath:(NSIndexPath *)path {
     SGRQueueGroup *group = [self groupAt:path.section];
-    return _musicStyle && group.upcoming && group.tracks.count > 1 && _fromSnapshot && queueEditable(_snapshot);
+    return _musicStyle && !_returning && group.upcoming && group.tracks.count > 1 && queueEditable(_snapshot);
 }
 
 // Only rows that move take the table's editing mode: their grip, no indent and no delete button.
@@ -1550,15 +1508,10 @@ static const CGFloat kMusicHistoryGap = 25;
 // UIKit's own calls around a drag (the ones Spotify's queue screen answers), so a report coming in meanwhile does not
 // reload the list under the finger.
 - (void)tableView:(UITableView *)table willBeginReorderingRowAtIndexPath:(NSIndexPath *)path {
+    _dragGeneration++;
     _reordering = YES;
+    _dragSnapshot = _snapshot;
     if (_musicStyle) [self lift:[table cellForRowAtIndexPath:path]];
-    // These calls are UIKit's own, not in its headers: should the end never come, the list is not held for good.
-    NSUInteger generation = ++_reorderGeneration;
-    __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        typeof(self) self = weakSelf;
-        if (self && self->_reordering && self->_reorderGeneration == generation) [self endReordering];
-    });
 }
 
 - (void)tableView:(UITableView *)table didEndReorderingRowAtIndexPath:(NSIndexPath *)path {
@@ -1585,20 +1538,36 @@ static const CGFloat kMusicHistoryGap = 25;
 }
 
 - (void)endReordering {
-    _lifted.backgroundView = nil;
-    _lifted = nil;
-    _reordering = NO;
-    id held = _heldQueue;
-    _heldQueue = nil;
-    if (held) [self showQueue:held];
+    // Finish outside UIKit's delegate stack, including its moveRow callback. A long hold has no timeout.
+    NSUInteger generation = _dragGeneration;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self->_reordering || self->_dragGeneration != generation) return;
+        self->_reordering = NO;
+        self->_dragSnapshot = nil;
+        self->_lifted.backgroundView = nil;
+        self->_lifted = nil;
+        self->_signature = nil; // UIKit already moved a row visually, even if no command could be sent.
+        [self applyHeldTracks];
+        [self takeState:SGPlayerState()];
+        if (!self->_signature) {
+            self->_signature = [self signature];
+            [self.tableView reloadData];
+            [self placeAtUpcoming];
+            [self showBlend];
+        }
+    });
 }
 
 - (void)tableView:(UITableView *)table moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
-    // A queue Spotify reported during the drag is older than this move: dropped, the move's own report follows.
-    _heldQueue = nil;
-    _reordering = NO;
-    _lifted.backgroundView = nil;
-    _lifted = nil;
+    // The frozen rows belong to the snapshot at lift. A report, a state-only fallback, or a fetch since
+    // then cancels the move; endReordering shows Spotify's authoritative order after UIKit lets go.
+    if (!_reordering) {
+        // No matching lift (e.g. an accessibility move): no known base for this drop.
+        dispatch_async(dispatch_get_main_queue(), ^{ if (!self->_reordering) [table reloadData]; });
+        return;
+    }
+    if (!_dragSnapshot || _snapshot != _dragSnapshot || _heldShow ||
+        ![_reportedKey isEqual:reportKey(SGPlayerState())] || !queueEditable(_snapshot)) return;
     if ([from isEqual:to] || from.section != to.section) return;
     SGRQueueGroup *group = [self groupAt:from.section];
     NSMutableArray<SPTPlayerTrack *> *tracks = [group.tracks mutableCopy];
@@ -1622,35 +1591,27 @@ static const CGFloat kMusicHistoryGap = 25;
             if (place != NSNotFound) place++;
         }
     }
-    if (place == NSNotFound || place > next.count) {
-        SGLog(@"redesign queue: the moved song is not in Spotify's queue any more, the list is read again");
-        _fromSnapshot = NO;
-        [self refreshQueue];
-        return;
-    }
+    if (place == NSNotFound || place > next.count) return;
     [next insertObject:moving atIndex:place];
-    group.tracks = tracks;
-    NSMutableArray<SPTPlayerTrack *> *upcoming = [NSMutableArray array];
-    for (SGRQueueGroup *g in _groups) if (g.upcoming) [upcoming addObjectsFromArray:g.tracks];
-    _tracks = upcoming;
-    _signature = [self signature];
-    id sent = sendQueue(snapshot, next);
-    if (!sent) {
-        SGLog(@"redesign queue: Spotify's queue could not be set, the list is read again");
-        _fromSnapshot = NO;
-        [self refreshQueue];
-        return;
+    _snapshot = nil;
+    _reportedKey = nil;
+    sendMove(snapshot, next);
+}
+
+- (BOOL)canReplay:(SGRQueueGroup *)group {
+    return _musicStyle && group.history &&
+        [SGPlayerInstance() respondsToSelector:NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:")] &&
+        [NSClassFromString(@"SPTSkipPrevOptions") instancesRespondToSelector:NSSelectorFromString(@"setOverrideRestrictions:")];
+}
+
+- (void)hideFromHistory:(NSArray<SPTPlayerTrack *> *)tracks {
+    for (SPTPlayerTrack *track in tracks) {
+        NSString *key = historyKey(track);
+        if (!key) continue;
+        [_hiddenHistory removeObject:key];
+        [_hiddenHistory addObject:key];
     }
-    _snapshot = sent;
-    SGLog(@"redesign queue: moved a song from %ld to %ld of its section (%lu songs to come)", (long)from.row, (long)to.row, (unsigned long)next.count);
-    [self showBlend];
-    // Spotify reports the new queue with a new revision, which fetches it again (takeState). Should no report come, it is
-    // read again here, so the list shows what Spotify kept.
-    __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        typeof(self) self = weakSelf;
-        if (self && !self->_reordering && !self->_fetching) [self refreshQueue];
-    });
+    while (_hiddenHistory.count > kHistoryRows + kMaxRows) [_hiddenHistory removeObjectAtIndex:0];
 }
 
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
@@ -1658,7 +1619,7 @@ static const CGFloat kMusicHistoryGap = 25;
     SPTPlayerTrack *track = [self trackAt:path];
     SGRQueueGroup *group = [self groupAt:path.section];
     if (!track) return;
-    if (_musicStyle && group.history) {
+    if ([self canReplay:group]) {
         [self returnToRest];
         [self replay:track];
         return;
@@ -1670,7 +1631,7 @@ static const CGFloat kMusicHistoryGap = 25;
     // leaves them out.
     if (_musicStyle) {
         NSUInteger at = [_tracks indexOfObjectIdenticalTo:track];
-        if (at != NSNotFound && at > 0) hideFromHistory([_tracks subarrayWithRange:NSMakeRange(0, at)]);
+        if (at != NSNotFound && at > 0) [self hideFromHistory:[_tracks subarrayWithRange:NSMakeRange(0, at)]];
     }
     [player skipToNextTrackWithOptions:nil track:track];
     if (!self.embedded) [self close];
@@ -1683,65 +1644,16 @@ static const CGFloat kMusicHistoryGap = 25;
     id player = SGPlayerInstance();
     SEL skip = NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:");
     Class optionsClass = NSClassFromString(@"SPTSkipPrevOptions");
-    if (![player respondsToSelector:skip] || ![optionsClass instancesRespondToSelector:NSSelectorFromString(@"setOverrideRestrictions:")]) {
-        SGLog(@"redesign queue: no way back to a song of History in this Spotify");
-        return;
-    }
-    // Spotify's going back puts every song played since that one, and the one playing, back among the songs to come:
-    // they left History and came in between the songs queued. The Music app's History is the listening history kept
-    // apart from its queue, so a song played from it changes
-    // neither: what is to come stays, and what was playing joins History. So, once Spotify reports having gone back
-    // (repairReplay:), the songs to come are put back as they were, and the songs it took off History are kept in it.
-    id<SGRQueueSnapshot> snapshot = _snapshot;
-    NSArray *prev = [snapshot.prevTracks isKindOfClass:NSArray.class] ? snapshot.prevTracks : nil;
-    NSString *key = historyKey(track);
-    if (_fromSnapshot && queueEditable(snapshot) && prev && key) {
-        NSUInteger at = NSNotFound;
-        for (NSUInteger i = 0; i < prev.count; i++) {
-            if ([prev[i] isKindOfClass:NSClassFromString(@"SPTPlayerTrack")] && [historyKey(prev[i]) isEqualToString:key]) at = i;
-        }
-        NSMutableArray *kept = [NSMutableArray array];
-        if (at != NSNotFound) [kept addObjectsFromArray:[prev subarrayWithRange:NSMakeRange(at + 1, prev.count - at - 1)]];
-        if (snapshot.track) [kept addObject:snapshot.track];
-        _replayFix = @{@"key": key, @"next": snapshot.nextTracks ?: @[], @"kept": kept, @"until": @(CACurrentMediaTime() + 5)};
-    } else {
-        _replayFix = nil;
-    }
     id options = [optionsClass new];
     ((void (*)(id, SEL, BOOL))objc_msgSend)(options, NSSelectorFromString(@"setOverrideRestrictions:"), YES);
     ((id (*)(id, SEL, id, id))objc_msgSend)(player, skip, options, track);
-    SGLog(@"redesign queue: a song of History played again%@", _replayFix ? @", the songs to come to be put back" : @"");
-}
-
-// The first queue Spotify reports playing the song of History played again (replay:): the songs to come it put back in
-// front are taken off again, leaving the ones there were, and the songs it took off History are kept there
-// (sg_keptHistory). Returns what to show: the queue as sent, or `queue` as it came when there is nothing to put back.
-- (id<SGRQueueSnapshot>)repairReplay:(id<SGRQueueSnapshot>)queue {
-    NSDictionary *fix = _replayFix;
-    if (!fix) return queue;
-    if (CACurrentMediaTime() > [fix[@"until"] doubleValue]) {
-        SGLog(@"redesign queue: Spotify did not report going back to the song of History, nothing put back");
-        _replayFix = nil;
-        return queue;
-    }
-    if (![historyKey(queue.track) isEqualToString:fix[@"key"]]) return queue;
-    _replayFix = nil;
-    if (!sg_keptHistory) sg_keptHistory = [NSMutableArray array];
-    NSString *context = SGURIString(SGPlayerState().contextURI);
-    if (![(context ?: @"") isEqualToString:(sg_keptContext ?: @"")]) [sg_keptHistory removeAllObjects];
-    sg_keptContext = context;
-    [sg_keptHistory addObjectsFromArray:fix[@"kept"]];
-    id sent = sendQueue(queue, fix[@"next"]);
-    SGLog(@"redesign queue: after going back to a song of History, %lu songs kept in History and %lu songs to come put back%@",
-          (unsigned long)[fix[@"kept"] count], (unsigned long)[fix[@"next"] count], sent ? @"" : @" (Spotify's queue could not be set)");
-    return sent ?: queue;
 }
 
 // The Music app asks before History goes (a confirmation with a Clear action, presented
 // from the heading's button).
 - (void)confirmClearHistoryFrom:(UIView *)source {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
-        message:SGL(@"settings.player.queue.clear_history.message", @"Clear all of History?")
+        message:SGL(@"settings.player.queue.clear_history.message", @"Hide the history shown on this page? Your Spotify history and upcoming songs won't change.")
         preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:SGL(@"settings.player.queue.clear", @"Clear") style:UIAlertActionStyleDestructive
@@ -1751,26 +1663,13 @@ static const CGFloat kMusicHistoryGap = 25;
     alert.popoverPresentationController.sourceView = anchor;
     alert.popoverPresentationController.sourceRect = anchor.bounds;
     SGPresentDark(alert);
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
-// Clear on History's heading: its songs go from the list at once, and Spotify is handed its queue with no songs played
-// (setPrevTracks: on a copy, then setQueue:options: as a move sends it), so they stay gone.
+// Filter the displayed history window; do not backfill it with older tracks or submit a queue to Spotify.
 - (void)clearHistory {
-    // All of it, not the kHistoryRows shown: Spotify may keep its played songs (setPrevTracks: is a request), and the
-    // older ones then came up into the list in place of the ones taken, so Clear looked to do nothing.
-    hideFromHistory(_allHistory.count ? _allHistory : _history);
-    [sg_keptHistory removeAllObjects];
-    id<SGRQueueSnapshot> snapshot = _snapshot;
-    SEL setPrev = NSSelectorFromString(@"setPrevTracks:");
-    if (_fromSnapshot && queueEditable(snapshot) && [(id)snapshot respondsToSelector:setPrev]) {
-        id copy = [(id)snapshot copy];
-        ((void (*)(id, SEL, NSArray *))objc_msgSend)(copy, setPrev, @[]);
-        id sent = sendQueue(copy, snapshot.nextTracks ?: @[]);
-        if (sent) _snapshot = sent;
-    }
-    SGLog(@"redesign queue: History cleared (%lu songs)", (unsigned long)_history.count);
-    [self showTracks:_snapshot ? ((id<SGRQueueSnapshot>)_snapshot).nextTracks : _tracks
-                past:_snapshot ? ((id<SGRQueueSnapshot>)_snapshot).prevTracks : _history current:_current];
+    [self hideFromHistory:_history];
+    if (!_heldShow) [self showTracks:_tracks past:@[] current:_current];
 }
 
 @end

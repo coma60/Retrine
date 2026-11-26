@@ -2694,7 +2694,7 @@
 "settings.player.queue.blend.crossfade" = "Crossfade, %ld s";
 "settings.player.queue.blend.spotify" = "Spotify AutoMix";
 "settings.player.queue.clear" = "Clear";
-"settings.player.queue.clear_history.message" = "Clear all of History?";
+"settings.player.queue.clear_history.message" = "Hide the history shown on this page? Your Spotify history and upcoming songs won't change.";
 "settings.player.queue.continue" = "Continue Playing";
 "settings.player.queue.empty" = "Nothing is playing next.";
 "settings.player.queue.empty_music" = "No songs are in the queue.";
@@ -2719,7 +2719,7 @@
 "settings.player.queue_style.music_note" = "The queue opens inside the player under a small cover, with shuffle, repeat, sleep timer and AutoMix above it, as in Apple Music. Drag a song's grip to move it. Tap the button again to bring the cover back.";
 "settings.player.queue_style.spotify" = "Spotify";
 "settings.player.queue_style.spotify_note" = "Spotify's own queue screen opens over the player, where songs can be reordered and removed.";
-"settings.player.queue_style.subtitle" = "How the queue button under the controls shows what plays next.";
+"settings.player.queue_style.subtitle" = "Choose how the queue opens after restart. The two-column iPad player always shows it in the side column.";
 "settings.player.queue_style.title" = "Queue";
 "settings.player.redesigned_header.title" = "Redesigned header";
 "settings.player.rolling_digits.subtitle" = "The digits that change under the progress bar roll into place.";

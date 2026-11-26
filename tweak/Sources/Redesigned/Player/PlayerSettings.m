@@ -1218,15 +1218,14 @@ UIViewController *SGRPlayerSettingsPage(NSArray *more) {
                                                  SGRKeyPlayerMusicIcons), @"playerMusicIcons");
     musicIcons.changed = ^(BOOL on) { SGRPlayerLookChanged(); };
     // Where the footer's queue button shows the queue: Spotify's own screen, or the Music app's page in the player
-    // (PlayerQueue.m, PlayerLyrics.x). The footer reads it on every pass, so the open player follows at once.
+    // (PlayerQueue.m, PlayerLyrics.x). Both choices keep the two-column player's side list.
     SGModRow *queueStyle = SGWithNew(SGChoiceRow(SGL(@"settings.player.queue_style.title", @"Queue"),
-                                                 SGL(@"settings.player.queue_style.subtitle", @"How the queue button under the controls shows what plays next."),
+                                                 SGL(@"settings.player.queue_style.subtitle", @"Choose how the queue opens after restart. The two-column iPad player always shows it in the side column."),
                                                  SGRKeyPlayerQueueStyle,
                                                  @[SGL(@"settings.player.queue_style.spotify", @"Spotify"), SGL(@"settings.player.queue_style.music", @"Apple Music")],
                                                  SGRPlayerQueueStyleSpotify), @"playerQueueStyle");
     queueStyle.choiceNotes = @[SGL(@"settings.player.queue_style.spotify_note", @"Spotify's own queue screen opens over the player, where songs can be reordered and removed."),
                                SGL(@"settings.player.queue_style.music_note", @"The queue opens inside the player under a small cover, with shuffle, repeat, sleep timer and AutoMix above it, as in Apple Music. Drag a song's grip to move it. Tap the button again to bring the cover back.")];
-    queueStyle.chosen = ^(NSInteger index) { SGRPlayerLookChanged(); };
     // On until switched off, as the Music app's header has only the grabber over the cover.
     SGModRow *hideContext = SGSwitchRow(SGL(@"settings.player.hide_context.title", @"Hide where it plays from"),
                                       SGL(@"settings.player.hide_context.subtitle", @"Hide the artist, album or playlist name at the top of the player."),

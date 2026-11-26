@@ -7,7 +7,7 @@
 "settings.player.queue.autoplay" = "자동 재생";
 "settings.player.queue.autoplaying" = "비슷한 음악 자동 재생 중";
 "settings.player.queue.clear" = "지우기";
-"settings.player.queue.clear_history.message" = "기록을 지우시겠습니까?";
+"settings.player.queue.clear_history.message" = "이 페이지에 표시된 재생 기록을 숨길까요? Spotify의 재생 기록과 다음에 재생할 곡은 바뀌지 않습니다.";
 "settings.player.queue.continue" = "계속 재생";
 "settings.player.queue.playing_next" = "다음 재생";
 "settings.player.queue.sleep" = "수면 타이머";
@@ -19,7 +19,7 @@
 "settings.player.queue_style.music_note" = "Apple Music처럼 대기열이 플레이어 안에서 작은 커버 아래에 열리고, 그 위에 셔플, 반복, 수면 타이머, AutoMix가 있습니다. 곡의 손잡이를 끌어 순서를 바꿀 수 있습니다. 버튼을 다시 누르면 커버가 돌아옵니다.";
 "settings.player.queue_style.spotify" = "Spotify";
 "settings.player.queue_style.spotify_note" = "Spotify의 대기열 화면이 플레이어 위에 열리며, 곡의 순서를 바꾸거나 뺄 수 있습니다.";
-"settings.player.queue_style.subtitle" = "컨트롤 아래 대기열 버튼이 다음에 재생할 곡을 보여 주는 방식입니다.";
+"settings.player.queue_style.subtitle" = "다시 시작한 뒤 대기열을 여는 방식을 선택합니다. iPad의 두 열 플레이어에서는 항상 옆 열에 표시됩니다.";
 "settings.player.queue_style.title" = "대기열";
 "settings.sponsorblock.enabled" = "팟캐스트 구간 건너뛰기";
 "settings.sponsorblock.subtitle" = "SponsorBlock 커뮤니티가 표시한 구간을 건너뜁니다. 음악에는 영향을 주지 않습니다.";

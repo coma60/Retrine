@@ -1749,18 +1749,21 @@ Redesigned:
                   the footer has no queue button of Spotify's (a Free account's row), the Music app's queue glyph stands
                   in the trailing slot and opens Playing Next; Spotify's own is kept where it has one. Queue (the
                   Player page's Controls, spotifyglass.redesign.player.queueStyle: 0 Spotify, the default, 1 Apple Music)
-                  puts that glyph in place of Spotify's queue button too: it opens the Music app's queue in the player
+                  is read at launch. In two columns both choices select the existing side list; ⋯ → Playing Next always
+                  opens the original sheet. In one column Apple Music replaces Spotify's queue button too: it opens the queue in the player
                   (PlayerLyrics.x's page with PlayerQueue.m's SGRPlayerQueuePage in its stage, the cover a thumbnail as for
                   the lyrics): shuffle, repeat, sleep timer (in the Music app's Autoplay slot: Spotify's player.autoplay has
                   no Objective-C setter) and AutoMix toggles 16 pt under the thumbnail, then History, Playing Next,
                   Continue Playing and Autoplay sections, 48 pt covers with 4 pt corners. A song's grip moves it within its
                   section the way Spotify's queue screen does (copy of the reported queue, setNextTracks:, setQueue:options:
-                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). As in the Music app, the thumbnail,
+                  with SPTCommandOptions.overrideRestrictions, read from 9.2.0's binary). A newer report during a drag
+                  cancels the move; the list shows Spotify's order after the drop. As in the Music app, the thumbnail,
                   the title row and the toggles ride with the list (the page's stage starts at the thumbnail, its first
                   section the room they stand in, SGRPlayerQueuePageConfigure): pulled down, History shows above them, with
-                  Clear (setPrevTracks: @[] through the same setQueue:options:); pushed up, they leave and the songs to come
+                  Clear (asks before hiding the displayed history on this page only); pushed up, they leave and the songs to come
                   take the room. A History row plays its song again (skipToPreviousTrackWithOptions:track: with
-                  SPTSkipPrevOptions.overrideRestrictions), and songs a pick skipped over stay out of History. Shuffle and
+                  SPTSkipPrevOptions.overrideRestrictions), leaving Spotify in charge of what comes next. Skipped and cleared
+                  rows are hidden by a bounded set of track keys owned by this Music page, never the side list or sheet. Shuffle and
                   repeat dim (UIKit's disabled 0.3) while SPTPlayerState.restrictions disallow toggling them. The footer's lyrics and queue
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, as the Music
                   app's player does), white landing where 0.46 added would. The

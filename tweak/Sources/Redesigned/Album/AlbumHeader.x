@@ -914,7 +914,7 @@ static char kScrollContext;
     // Tall, as the Music app's album page: the hero runs past the title, taller than wide, and a square clip
     // filled into it lost its sides. An album with only a square clip gets that one.
     void (^byTitle)(void) = ^{
-        SGMotionPageAlbumCover(artist, album, pixels, ^(NSURL *file, BOOL identified) {
+        SGMotionPageAlbumCover(artist, album, albumURI, pixels, ^(NSURL *file, BOOL identified) {
             SGRAlbumHero *hero = weakSelf;
             UIView *owner = weakPage;
             if (!hero || hero->_motionGeneration != generation || SGRAlbumPageOf(hero) != owner) return;
@@ -936,7 +936,7 @@ static char kScrollContext;
             };
             BOOL (^startRows)(NSString *, NSString *) = ^BOOL(NSString *credit, NSString *song) {
                 if (!stillCurrent()) return YES;
-                SGMotionAlbumRowMatcher(artist, album, pixels, ^(SGMotionRowMatch match) {
+                SGMotionAlbumRowMatcher(artist, album, albumURI, pixels, ^(SGMotionRowMatch match) {
                     if (!stillCurrent()) return;
                     // Read rows again from the settled list, not strings captured before the search.
                     SGRAlbumWaitForMotionRow(weakPage, YES, match);

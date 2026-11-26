@@ -93,9 +93,9 @@ SGMotionTicket *SGMotionRequestSongCover(NSString *artist, NSString *album, NSSt
 // one returns YES (its file is then requested). A nil `found` file signals no candidate
 // in the title search, not an identified release without video or a transfer failure.
 typedef BOOL (^SGMotionRowMatch)(NSString *artist, NSString *song);
-void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(SGMotionRowMatch match), void (^found)(NSURL *file));
+void SGMotionAlbumRowMatcher(NSString *albumArtist, NSString *album, NSString *albumURI, CGFloat pixels, void (^ready)(SGMotionRowMatch match), void (^found)(NSURL *file));
 // Main queue. A page may use rows only when the header did not identify a release.
-void SGMotionPageAlbumCover(NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
+void SGMotionPageAlbumCover(NSString *artist, NSString *album, NSString *albumURI, CGFloat pixels, void (^done)(NSURL *file, BOOL identified));
 // Only a confirmed miss permits an unrestricted title search. A known still edition permits a year-bound one.
 typedef NS_ENUM(NSInteger, SGMotionIdentifierOutcome) {
     SGMotionIdentifierUnavailable, SGMotionIdentifierMiss, SGMotionIdentifierStill, SGMotionIdentifierClip, SGMotionIdentifierAmbiguous,

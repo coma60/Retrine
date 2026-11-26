@@ -16,11 +16,15 @@ def replace(old, new):
 
 if mode == "seams":
     source = f'#import "{Path(__file__).resolve().with_name("cover-seams.h")}"\n' + source
-    if "SGMotionPageAlbumCover(" in source:
+    if "SGMotionPageAlbumCover(artist, album, pixels," in source:
+        replace("SGMotionPageAlbumCover(artist, album, pixels,", "SGRAlbumTestPageCover(artist, album, nil, pixels,")
+    elif "SGMotionPageAlbumCover(" in source:
         replace("SGMotionPageAlbumCover(", "SGRAlbumTestPageCover(")
     else:
         replace("SGMotionAlbumCover(artist, album, pixels,", "SGRAlbumTestAlbumCover(artist, album, pixels,")
-    if "SGMotionAlbumRowMatcher(" in source:  # earlier BASELINE revisions have no row lookup
+    if "SGMotionAlbumRowMatcher(artist, album, pixels," in source:
+        replace("SGMotionAlbumRowMatcher(artist, album, pixels,", "SGRAlbumTestRowMatcher(artist, album, nil, pixels,")
+    elif "SGMotionAlbumRowMatcher(" in source:  # earlier BASELINE revisions have no row lookup
         replace("SGMotionAlbumRowMatcher(", "SGRAlbumTestRowMatcher(")
     # Only the current hero runs the identifier scenarios. Baselines draw the off hero with their own API.
     if sys.argv[3] == "0":

@@ -225,6 +225,7 @@ static void (^headerResult)(NSURL *);
 static void (^rowResult)(NSURL *);
 #if !SGR_COVER_BASELINE
 static void (^identifierResult)(NSURL *, SGMotionIdentifierOutcome);
+static BOOL holdPageIdentifiers;
 #endif
 static NSURL *stillEditionFile;
 static NSString *const fixtureURI = @"spotify:album:0000000000000000000021";
@@ -242,7 +243,7 @@ void SGRAlbumTestStillEditionCover(NSString *uri, NSString *artist, NSString *al
 #if !SGR_COVER_BASELINE
 void SGRAlbumTestIdentifierCover(NSString *uri, NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *, SGMotionIdentifierOutcome)) {
     HARNESS_CHECK([uri isEqual:fixtureURI] && [album isEqual:@"Fixture Album"]);
-    if ([NSProcessInfo.processInfo.arguments containsObject:@"motion-verified"]) {
+    if (!holdPageIdentifiers && [NSProcessInfo.processInfo.arguments containsObject:@"motion-verified"]) {
         SGMotionPageIdentifierCover(uri, artist, album, pixels, done);
         return;
     }
@@ -291,10 +292,16 @@ void SGRAlbumTestAlbumCover(NSString *artist, NSString *album, CGFloat pixels, v
 }
 
 static NSUInteger rowSearches;
-void SGRAlbumTestPageCover(NSString *artist, NSString *album, CGFloat pixels, void (^done)(NSURL *, BOOL)) {
+void SGRAlbumTestPageCover(NSString *artist, NSString *album, NSString *uri, CGFloat pixels, void (^done)(NSURL *, BOOL)) {
+#if !SGR_COVER_BASELINE
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"motion-verified"]) {
+        SGMotionPageAlbumCover(artist, album, uri, pixels, done);
+        return;
+    }
+#endif
     SGRAlbumTestAlbumCover(artist, album, pixels, ^(NSURL *file) { done(file, file != nil || [album isEqual:@"Known Still"]); });
 }
-void SGRAlbumTestRowMatcher(NSString *albumArtist, NSString *album, CGFloat pixels, void (^ready)(BOOL (^)(NSString *, NSString *)), void (^done)(NSURL *)) {
+void SGRAlbumTestRowMatcher(NSString *albumArtist, NSString *album, NSString *uri, CGFloat pixels, void (^ready)(BOOL (^)(NSString *, NSString *)), void (^done)(NSURL *)) {
     HARNESS_CHECK(rowRequests);
     rowSearches++;
     ready(^BOOL(NSString *artist, NSString *song) {
@@ -359,13 +366,24 @@ static void checkVerifiedEdition(void) {
     for (size_t i = 0; i < sizeof digest; i++) [name appendFormat:@"%02x", digest[i]];
     NSURL *local = [folder URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"mp4"]];
     HARNESS_CHECK([bytes writeToURL:local atomically:YES]);
+    Page waiting = makePage(solidDarkCover());
+    __attribute__((objc_precise_lifetime)) UIViewController *first = [UIViewController new];
+    first.restorationIdentifier = fixtureURI;
+    first.view = waiting.page;
+    holdPageIdentifiers = YES;
+    [waiting.hero playMotionForArtist:@"Artist" album:@"Fixture Album"];
+    HARNESS_CHECK(identifierResult);
+    holdPageIdentifiers = NO;
     Page p = makePage(solidDarkCover());
     __attribute__((objc_precise_lifetime)) UIViewController *owner = [UIViewController new];
     owner.restorationIdentifier = fixtureURI;
     owner.view = p.page;
     [p.hero playMotionForArtist:@"Artist" album:@"Fixture Album"];
     HARNESS_CHECK(waitUntil(3, ^BOOL { return [[p.hero valueForKeyPath:@"clip.file"] isEqual:local]; }));
-    puts("album motion: verified edition B opens from disk over edition A's cached still");
+    // Even a delayed miss from the first page cannot replace the now-known URI with a title.
+    identifierResult(nil, SGMotionIdentifierMiss);
+    HARNESS_CHECK(waitUntil(3, ^BOOL { return [[waiting.hero valueForKeyPath:@"clip.file"] isEqual:local]; }));
+    puts("album motion: both the direct lookup and the delayed title fallback open verified edition B");
 }
 
 static void checkMotionIdentifiers(SGMotionIdentifierOutcome outcome, BOOL moves) {

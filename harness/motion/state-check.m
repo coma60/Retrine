@@ -50,6 +50,8 @@ static NSUInteger metadataGets, barcodeGets;
 static BOOL appleOn = YES;
 static BOOL holdMetadata;
 static dispatch_block_t sendMetadata;
+static NSString *heldRecording;
+static dispatch_block_t sendRecording;
 BOOL SGMotionAppleMusicOn(void) { return appleOn; }
 dispatch_block_t SGSpotifyMetadataRequestAllowConstrained(NSString *path, NSData *body, BOOL allow, SGSpotifyMetadataReply done) {
     if ([path isEqual:SGSpotifyExtendedMetadataPath]) {
@@ -61,7 +63,9 @@ dispatch_block_t SGSpotifyMetadataRequestAllowConstrained(NSString *path, NSData
         NSData *track = SGPBSerialize(songsReply ? @[SGPBBytes(10, external)] : @[SGPBString(2, @"Song")]);
         NSData *any = SGPBSerialize(@[SGPBString(1, @"type.googleapis.com/spotify.metadata.Track"), SGPBBytes(2, track)]);
         NSData *entry = SGPBSerialize(@[SGPBBytes(1, SGPBSerialize(@[SGPBVarint(1, 200)])), SGPBString(2, uri), SGPBBytes(3, any)]);
-        done(SGPBSerialize(@[SGPBBytes(2, SGPBSerialize(@[SGPBBytes(3, entry)]))]), recordingStatus, nil);
+        NSData *reply = SGPBSerialize(@[SGPBBytes(2, SGPBSerialize(@[SGPBBytes(3, entry)]))]);
+        if ([uri isEqual:heldRecording]) sendRecording = ^{ done(reply, recordingStatus, nil); };
+        else done(reply, recordingStatus, nil);
         return ^{};
     }
     CHECK([path hasPrefix:@"/metadata/4/album/"] && !body && !allow && appleOn);
@@ -252,9 +256,9 @@ static void checkBarcode(void) {
     SGMotionTicket *cancelled = SGMotionRequestSongCover(@"Pink Floyd", name, song, uri, @"spotify:track:0000000000000000000002", 720, ^(NSURL *file) { CHECK(NO); });
     waitFor(^BOOL { return sendMetadata != nil; });
     __block BOOL page = NO, pageAsked = NO;
-    SGMotionPageAlbumCover(@"Pink Floyd", name, 720, ^(NSURL *file, BOOL identified) {
+    SGMotionPageAlbumCover(@"Pink Floyd", name, uri, 720, ^(NSURL *file, BOOL identified) {
         CHECK(!file && !identified);
-        SGMotionAlbumRowMatcher(@"Pink Floyd", name, 720, ^(SGMotionRowMatch rows) { CHECK(!rows); }, ^(NSURL *row) {
+        SGMotionAlbumRowMatcher(@"Pink Floyd", name, uri, 720, ^(SGMotionRowMatch rows) { CHECK(!rows); }, ^(NSURL *row) {
             CHECK(!row);
             SGMotionPageIdentifierCover(uri, @"Pink Floyd", name, 720, ^(NSURL *clip, SGMotionIdentifierOutcome outcome) {
                 CHECK([clip.path isEqual:@"/1665303755/clip.mp4"]); page = YES;
@@ -381,6 +385,28 @@ static void checkBarcode(void) {
     BOOL leadSingleKept = !coverWithURI(@"Rich Man - The 6th Mini Album", song, @"spotify:album:0000000000000000000014");
     fprintf(stderr, "motion: recording single %s, lead single not the album %s\n", recordingSingle ? "PASS" : "FAIL", leadSingleKept ? "PASS" : "FAIL");
     CHECK(recordingSingle && leadSingleKept);
+    NSString *raceURI = @"spotify:album:0000000000000000000022", *raceAlbum = @"Concurrent editions";
+    heldRecording = expectedTrack = @"spotify:track:0000000000000000000001";
+    songsReply = nil;  // current track has no ISRC; retain its reply until the next track finishes
+    coverResults = @[clipRelease(raceAlbum, @"Pink Floyd", NO, @[], @"edition-A")];
+    NSUInteger searchesBeforeRace = coverSearches.count;
+    __block BOOL currentDone = NO, pageDone = NO;
+    __block NSURL *currentFile, *pageFile;
+    SGMotionRequestSongCover(@"Pink Floyd", raceAlbum, @"Current", raceURI, heldRecording, 720, ^(NSURL *file) {
+        currentFile = file; currentDone = YES;
+    });
+    waitFor(^BOOL { return sendRecording != nil; });
+    SGMotionPageIdentifierCover(raceURI, @"Pink Floyd", raceAlbum, 720, ^(NSURL *file, SGMotionIdentifierOutcome outcome) {
+        pageFile = file; pageDone = YES;
+    });
+    songsReply = replyWithAlbums(@[named(raceAlbum, NO)]);
+    expectedTrack = @"spotify:track:0000000000000000000002";
+    CHECK([coverForTrack(raceAlbum, @"Next", raceURI, expectedTrack).path isEqual:@"/1665303755/clip.mp4"]);
+    sendRecording(); sendRecording = nil; heldRecording = nil;
+    waitFor(^BOOL { return currentDone && pageDone; });
+    fprintf(stderr, "concurrent editions: current=%s page=%s\n", currentFile.path.UTF8String ?: "none", pageFile.path.UTF8String ?: "none");
+    CHECK([currentFile.path isEqual:@"/1665303755/clip.mp4"] && [pageFile.path isEqual:currentFile.path]);
+    CHECK(coverSearches.count == searchesBeforeRace);
     songsReply = nil;
     expectedTrack = nil;
     coverResults = nil;
@@ -418,7 +444,7 @@ static void checkSoundtrack(void) {
     coverResults = full;
     [coverSearches removeAllObjects];
     __block BOOL rowDone = NO;
-    SGMotionAlbumRowMatcher(@"Spotify soundtrack credit", page, 720, ^(SGMotionRowMatch match) {
+    SGMotionAlbumRowMatcher(@"Spotify soundtrack credit", page, nil, 720, ^(SGMotionRowMatch match) {
         CHECK(sentinelReads == 1); // catalog normalization finished before the first cell
         CHECK(match && !match(@"현지화된 이름", @"Drive"));
         CHECK(match(@"Ed Sheeran", @"Drive"));
@@ -441,7 +467,7 @@ static void checkSoundtrack(void) {
         @[@{@"attributes": @{@"name": @"Rich Man", @"artistName": @"aespa"}}])];
     BOOL epCover = songCover(@"aespa", ep, nil) != nil;
     __block BOOL epRow = NO, epRowClip = NO;
-    SGMotionAlbumRowMatcher(@"aespa", ep, 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+    SGMotionAlbumRowMatcher(@"aespa", ep, nil, 720, ^(SGMotionRowMatch match) { CHECK(!match); },
         ^(NSURL *clip) { epRowClip = clip != nil; epRow = YES; });
     waitFor(^BOOL { return epRow; });
     fprintf(stderr, "motion: EP suffix cover %s, rows %s\n", epCover ? "PASS" : "FAIL", epRowClip ? "PASS" : "FAIL");
@@ -453,13 +479,13 @@ static void checkSoundtrack(void) {
     BOOL singleCover = [songCover(@"MEOVV", @"HANDS UP", nil).path isEqual:@"/single/clip.mp4"];
     BOOL singleSong = [songCover(@"MEOVV", @"HANDS UP", @"HANDS UP").path isEqual:@"/single/clip.mp4"];
     __block BOOL singleRow = NO, singleRowClip = NO;
-    SGMotionAlbumRowMatcher(@"MEOVV", @"HANDS UP", 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+    SGMotionAlbumRowMatcher(@"MEOVV", @"HANDS UP", nil, 720, ^(SGMotionRowMatch match) { CHECK(!match); },
         ^(NSURL *clip) { singleRowClip = [clip.path isEqual:@"/single/clip.mp4"]; singleRow = YES; });
     waitFor(^BOOL { return singleRow; });
     coverResults = @[clipRelease(@"Whiplash - Single", @"aespa", YES, tracks, @"lead"), clipRelease(@"Whiplash", @"aespa", NO, tracks, @"album")];
     BOOL albumOverLead = [songCover(@"aespa", @"Whiplash", nil).path isEqual:@"/album/clip.mp4"];
     __block BOOL leadRow = NO, leadRowClip = NO;
-    SGMotionAlbumRowMatcher(@"aespa", @"Whiplash", 720, ^(SGMotionRowMatch match) { CHECK(!match); },
+    SGMotionAlbumRowMatcher(@"aespa", @"Whiplash", nil, 720, ^(SGMotionRowMatch match) { CHECK(!match); },
         ^(NSURL *clip) { leadRowClip = [clip.path isEqual:@"/album/clip.mp4"]; leadRow = YES; });
     waitFor(^BOOL { return leadRow; });
     coverResults = @[@{@"attributes": @{@"name": @"Still Single - Single", @"artistName": @"Artist", @"isSingle": @YES}}];
@@ -494,7 +520,7 @@ static void checkSoundtrack(void) {
                      release(hits, @"Other Band", NO, @[@{@"attributes": @{@"name": @"Theme", @"artistName": @"Artist"}}])];
     BOOL stayedStill = !songCover(@"Artist", hits, @"Theme");
     __block BOOL exactStill = NO;
-    SGMotionPageAlbumCover(@"Artist", hits, 720, ^(NSURL *file, BOOL identified) { CHECK(!file && identified); exactStill = YES; });
+    SGMotionPageAlbumCover(@"Artist", hits, nil, 720, ^(NSURL *file, BOOL identified) { CHECK(!file && identified); exactStill = YES; });
     waitFor(^BOOL { return exactStill; });
     [coverSearches removeAllObjects];
     coverResults = @[];

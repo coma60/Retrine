@@ -85,13 +85,15 @@ static NSString *const kConnectSymbol = @"airplayaudio", *const kQueueSymbol = @
 static char kConnectKey, kShareKey, kTrimmerKey, kSharedByKey, kQueueKey, kQueueIconKey, kLyricsGlyphKey, kReachKey, kRowKey;
 static char kQueueGlyphKey;
 static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
-// The glyphs at rest are white ADDED to the backdrop in the Music app's footer (measured 0.46 over a dark blue, a dark
-// pink and a white cover: 115 to 122 of 255 above it, saturating at white over a light one). Under Increase Contrast
-// they are drawn plain, at least the secondary color, rising over a lighter backdrop to what SGRInkPlainAlpha works
-// out. Taken again at each new reading of the backdrop (refreshFooterInk).
-static const CGFloat kFooterInkAdd = 0.46;
+// The glyphs at rest are white ADDED to the backdrop in the Music app's footer: its footer buttons' vibrancy modifier
+// (MediaCoreUI 0x1ced994bc) styles them Color.white.opacity(0.45) with .plusLighter, and under Increase Contrast the
+// accent color with .normal (measured 115 to 122 of 255 above a dark blue, a dark pink and a white cover, saturating
+// at white over a light one). Under Increase Contrast they are drawn plain, at least the secondary color, rising over
+// a lighter backdrop to what SGRInkPlainAlpha works out. Taken again at each new reading of the backdrop
+// (refreshFooterInk).
+static const CGFloat kFooterInkAdd = 0.45;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
-// Drawn plain at the alpha that lands where the Music app's 0.46 added would (SGRInkFor: plusL does not reach the
+// Drawn plain at the alpha that lands where the Music app's 0.45 added would (SGRInkFor: plusL does not reach the
 // backdrop in Spotify's player); at least the secondary color under Increase Contrast.
 static UIView *footerInked(UIView *view) {
     return [view isKindOfClass:SGRGlyphButton.class] ? ((SGRGlyphButton *)view).glyph : view;

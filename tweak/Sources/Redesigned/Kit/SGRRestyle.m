@@ -1064,6 +1064,11 @@ static NSString *layerTraits(UIView *view) {
         [traits appendFormat:@" filters=%@", [names componentsJoinedByString:@","]];
     }
     if (layer.compositingFilter) [traits appendFormat:@" comp=%@", layer.compositingFilter];
+    // Either one keeps a sublayer's plusL from the backdrop: a group that does not blend with what is behind it, or a
+    // translucent layer drawn as one group (allowsGroupOpacity).
+    SEL groupBlending = NSSelectorFromString(@"allowsGroupBlending");
+    if ([layer respondsToSelector:groupBlending] && !((BOOL (*)(id, SEL))objc_msgSend)(layer, groupBlending)) [traits appendString:@" groupBlend=NO"];
+    if (layer.allowsGroupOpacity && layer.opacity < 1) [traits appendFormat:@" groupOpacity=%.2f", layer.opacity];
     if (layer.shouldRasterize) [traits appendString:@" raster"];
     if (layer.cornerRadius > 0) [traits appendFormat:@" r=%.0f", layer.cornerRadius];
     if (view.clipsToBounds) [traits appendString:@" clips"];

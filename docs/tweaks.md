@@ -1679,7 +1679,7 @@ Redesigned:
                   ADDED to it (fill 0.44, volume fill 0.55, track 0.175; SGRPlayerBarFillOver, SGRPlayerBarTrackOver over
                   SGRInkPlainAlpha), so a white cover's bar is white and not gray; over a dark one that is the usual 0.6 and
                   0.2. The volume row's speaker glyphs and the footer's glyphs at rest follow the backdrop the same way
-                  (0.46 added; PlayerVolume.m, PlayerFooter.x refreshFooterInk). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
+                  (0.46 and 0.45 added; PlayerVolume.m, PlayerFooter.x refreshFooterInk). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
                   (SGRPlayerBarDragHeight) and lights the fill whole white: the progress bar's as a rail of the mod's own
                   drawn over the slider while it is held — one capsule clipping a rectangular fill to the value, Spotify's
                   track image views hidden under it and given back on release, so the held shape does not depend on how
@@ -1786,7 +1786,7 @@ Redesigned:
                   rows are hidden by a bounded set of track keys owned by this Music page, never the side list or sheet. Shuffle and
                   repeat dim (UIKit's disabled 0.3) while SPTPlayerState.restrictions disallow toggling them. The footer's lyrics and queue
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, as the Music
-                  app's player does), white landing where 0.46 added would. The
+                  app's player does), white landing where 0.45 added would. The
                   timestamps under the slider are metered (SGRMonospacedDigits) and set in the Music app's type (SGRTimeLabelStyle:
                   the system font, semibold, 12 pt (Caption 1) at the default text size, 0.265 white added to the backdrop
                   (plain white at 0.7 alpha with Increase Contrast; see Backdrop ink), a minus sign before the time left) and, with Rolling time digits on (the
@@ -2905,7 +2905,7 @@ light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerFiel
 reader that draws it 16 by 48 pixels four times a second (eight during a cover crossfade, once a second in Low Power Mode).
 It runs only while the player is visible and active and weighs the cells behind each label's text; the field is read through the render server
 (drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. The Music app adds a
-fixed alpha of white to the backdrop (artist 0.48, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.46),
+fixed alpha of white to the backdrop (artist 0.48, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.45),
 so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the
 "ink tree" log lines (SGRRestyle.m) show no mask, rasterized layer or filter between the ink and the field on 9.2.0:
 added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink

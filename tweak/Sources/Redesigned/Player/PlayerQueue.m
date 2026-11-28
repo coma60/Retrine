@@ -533,6 +533,8 @@ static NSArray *reportKey(SPTPlayerState *state) {
     NSArray<SPTPlayerTrack *> *_tracks;
     NSArray *_signature;
     NSArray<SPTPlayerTrack *> *_history;
+    // The History Spotify reported last, oldest first, before the page's own carry and hiding (_history is drawn from it).
+    NSArray *_past;
     BOOL _showsHistory;
     SPTPlayerTrack *_current;
     NSArray *_reportedKey, *_completedKey;
@@ -584,6 +586,23 @@ static NSArray *reportKey(SPTPlayerState *state) {
     CGRect _pickedFrame;
     NSMutableOrderedSet<NSString *> *_hiddenHistory;
     CFTimeInterval _slideStart;
+    // How far the rows still stood below their places when a report reloaded them mid-slide, read off what is on screen
+    // (the slide is a spring, far ahead of a straight line), so the new rows carry on from there rather than jump back.
+    CGFloat _slideRemaining;
+    // The songs to come before the one picked, as they stood a moment ago (pictures and frames in the list's visible
+    // frame): they move up with the rows after them and fade, rather than vanish and leave a gap (carryOffSkipped:).
+    NSArray<UIView *> *_skippedSnaps;
+    NSArray<NSValue *> *_skippedFrames;
+    // A song picked on this page (one to come, or one of History played again). Spotify keeps no record the page can
+    // show for either: a song of History goes back to it by rewinding its History (the songs after it go back to come),
+    // and a song of another context (autoplay's) starts a History of its own. So History as the page showed it, with
+    // the song that was playing, is carried on (_carry) ahead of what Spotify records once the song picked is playing.
+    // _carryTarget is the song picked; _carryPhase 0 until it plays, 1 while it plays (_carryBase follows the newest song
+    // Spotify records meanwhile, all of which the carry already stands for), 2 once it has moved on (Spotify's songs
+    // after _carryBase follow the carry). Let go once Spotify has recorded a whole History's worth since.
+    NSArray<SPTPlayerTrack *> *_carry;
+    SPTPlayerTrack *_carryTarget, *_carryFrom, *_carryBase;
+    NSInteger _carryPhase;
     // A song of History picked: the list glides back down to rest as the Music app's does at the tap,
     // the thumbnail, the title and the toggles coming
     // down with it. _returning while it glides; what Spotify reports meanwhile is held (_heldShow, showTracks:'s three
@@ -793,15 +812,100 @@ static NSArray *reportKey(SPTPlayerState *state) {
 
 #pragma mark - the player
 
+// Two reports of one song: by its queue identity, or by its URI where Spotify gave it a new uid (autoplay's songs take
+// one as they start).
+static BOOL sameSong(SPTPlayerTrack *a, SPTPlayerTrack *b) {
+    if (!a || !b) return NO;
+    NSString *keyA = historyKey(a), *keyB = historyKey(b);
+    if (keyA && [keyA isEqualToString:keyB ?: @""]) return YES;
+    NSString *uriA = SGURIString(a.URI);
+    return uriA.length && [uriA isEqualToString:SGURIString(b.URI) ?: @""];
+}
+
+// The state's History, oldest first (Spotify lists it newest first).
+static NSArray *statePast(SPTPlayerState *state) {
+    return [state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[];
+}
+
+// Where `track` last stands in `tracks`: by identity, or by URI when no identity matches.
+static NSUInteger lastIndexOf(NSArray<SPTPlayerTrack *> *tracks, SPTPlayerTrack *track) {
+    if (!track) return NSNotFound;
+    NSString *key = historyKey(track), *uri = SGURIString(track.URI);
+    NSUInteger byURI = NSNotFound;
+    for (NSUInteger i = tracks.count; i-- > 0;) {
+        if (key && [historyKey(tracks[i]) isEqualToString:key]) return i;
+        if (byURI == NSNotFound && uri.length && [SGURIString(tracks[i].URI) isEqualToString:uri]) byURI = i;
+    }
+    return byURI;
+}
+
 - (void)showPlayerState:(SPTPlayerState *)state key:(NSArray *)key {
     BOOL keepHistory = _musicStyle && key && [historyKey(_current) isEqualToString:historyKey(state.track)];
     if (!keepHistory) _optimisticMove = NO;
-    NSArray *past = _history;
-    if (!keepHistory) past = [state.reverse isKindOfClass:NSArray.class] ? state.reverse.reverseObjectEnumerator.allObjects : @[];
+    NSArray *past = keepHistory ? _past : statePast(state);
     [self showTracks:_optimisticMove ? _tracks : SGPlayerUpcomingTracks(state, kMaxRows) past:past current:state.track];
 }
 
+// The songs Spotify recorded after the carry's base: everything it has when there was none (its History began anew),
+// nothing when the base has left it (Spotify went back past it, from the lock screen or another device: the carry is
+// let go, noteHistory:current:).
+- (NSArray<SPTPlayerTrack *> *)carriedOn:(NSArray<SPTPlayerTrack *> *)history {
+    if (!_carryBase) return history;
+    NSUInteger at = lastIndexOf(history, _carryBase);
+    return at == NSNotFound ? @[] : [history subarrayWithRange:NSMakeRange(at + 1, history.count - at - 1)];
+}
+
+// History as the Music page keeps it, followed on every report (shown or not) so a song played while the page is away
+// still counts: a song playing is no longer hidden as skipped, and the carry follows the song picked (see _carry).
+- (void)noteHistory:(NSArray *)past current:(SPTPlayerTrack *)current {
+    if (!_musicStyle || !current) return;
+    NSString *key = historyKey(current);
+    if (key) [_hiddenHistory removeObject:key];
+    if (!_carry) return;
+    NSArray<SPTPlayerTrack *> *history = queueTracks(past, NSUIntegerMax, YES);
+    if (_carryPhase < 2 && sameSong(current, _carryTarget)) {
+        _carryPhase = 1;
+        _carryBase = history.lastObject;
+        return;
+    }
+    if (_carryPhase == 0) {
+        // Not yet the song picked. Anything but the song that was playing means the pick did not take.
+        if (!sameSong(current, _carryFrom)) [self dropCarry];
+        return;
+    }
+    _carryPhase = 2;
+    // Spotify's History no longer holds the newest song it had while the song picked played: it went back past it
+    // (the lock screen, another device), and what it holds now is History again.
+    BOOL rewound = _carryBase && lastIndexOf(history, _carryBase) == NSNotFound;
+    if (rewound || [self carriedOn:history].count >= kHistoryRows) [self dropCarry];
+}
+
+- (void)dropCarry {
+    _carry = nil;
+    _carryTarget = _carryFrom = _carryBase = nil;
+    _carryPhase = 0;
+}
+
+// A song picked on this page: History as shown, less `replayed`, with the song playing after it, carried on until
+// Spotify has recorded enough of its own (noteHistory:current:).
+- (void)carryHistoryTo:(SPTPlayerTrack *)target replaying:(SPTPlayerTrack *)replayed {
+    if (!_musicStyle || !target) return;
+    NSMutableArray<SPTPlayerTrack *> *carry = [(_history ?: @[]) mutableCopy];
+    if (replayed) {
+        NSUInteger at = [carry indexOfObjectIdenticalTo:replayed];
+        if (at == NSNotFound) at = lastIndexOf(carry, replayed);
+        if (at != NSNotFound) [carry removeObjectAtIndex:at];
+    }
+    [carry addObjectsFromArray:queueTracks(_current ? @[_current] : @[], 1, YES)];
+    _carry = carry;
+    _carryTarget = target;
+    _carryFrom = _current;
+    _carryBase = nil;
+    _carryPhase = 0;
+}
+
 - (void)takeState:(SPTPlayerState *)state {
+    [self noteHistory:statePast(state) current:state.track];
     if (![self queueIsVisible]) {
         [self suspendQueue];
         return;
@@ -827,7 +931,7 @@ static NSArray *reportKey(SPTPlayerState *state) {
 
 - (void)updateHistoryVisibility {
     if (!_heldShow && _showsHistory != SGFlag(SGRKeyPlayerQueueHistory, YES))
-        [self showTracks:_tracks past:_history current:_current];
+        [self showTracks:_tracks past:_past current:_current];
 }
 
 // Before the list changes: whether it rests, and when `current` is a song that was to come (a pick, a skip, the song
@@ -854,6 +958,31 @@ static NSArray *reportKey(SPTPlayerState *state) {
     // The song that began playing is its row by URI when the queue's uid for it is not the one the row carries.
     if (at == NSNotFound) at = byURI;
     _pickedSnap = nil;
+    _skippedSnaps = nil;
+    _skippedFrames = nil;
+    // The songs before it, skipped: pictures of the rows still on screen, carried off with the rows (carryOffSkippedBy:).
+    if (at != NSNotFound && at > 0) {
+        NSMutableArray<UIView *> *snaps = [NSMutableArray array];
+        NSMutableArray<NSValue *> *frames = [NSMutableArray array];
+        for (NSUInteger i = 0; i < at; i++) {
+            NSString *skippedKey = historyKey(_tracks[i]);
+            NSIndexPath *path = skippedKey ? [self pathOfKey:skippedKey] : nil;
+            if (!path || path.section >= table.numberOfSections || path.row >= [table numberOfRowsInSection:path.section]) continue;
+            UITableViewCell *cell = [table cellForRowAtIndexPath:path];
+            if (!cell || cell.hidden || cell.alpha <= 0.01) continue;
+            CGRect frame = cell.frame;
+            frame.origin.y -= table.contentOffset.y;
+            if (CGRectGetMaxY(frame) <= _cut || CGRectGetMinY(frame) >= table.bounds.size.height) continue;
+            UIView *snap = [cell snapshotViewAfterScreenUpdates:NO];
+            if (!snap) continue;
+            [snaps addObject:snap];
+            [frames addObject:[NSValue valueWithCGRect:frame]];
+        }
+        if (snaps.count) {
+            _skippedSnaps = snaps;
+            _skippedFrames = frames;
+        }
+    }
     NSString *pickedKey = at == NSNotFound ? nil : historyKey(_tracks[at]);
     NSIndexPath *picked = pickedKey ? [self pathOfKey:pickedKey] : nil;
     UITableViewCell *pickedCell = picked && picked.section < table.numberOfSections && picked.row < [table numberOfRowsInSection:picked.section]
@@ -911,12 +1040,30 @@ static NSArray *reportKey(SPTPlayerState *state) {
         }
     }
     _tracks = queueTracks(next, kMaxRows, NO);
+    _past = past;
     NSArray *history = queueTracks(past, NSUIntegerMax, YES);
+    // Carried on from a pick (see _carry): what the page showed, then what Spotify has recorded since the song picked
+    // played (nothing before), each song once, at its latest place, never the song playing.
+    BOOL carried = _musicStyle && _carry;
+    if (carried) history = _carryPhase < 2 ? @[] : [self carriedOn:history];
     _history = history.count > kHistoryRows ? [history subarrayWithRange:NSMakeRange(history.count - kHistoryRows, kHistoryRows)] : history;
     if (_musicStyle && _hiddenHistory.count) {
         _history = [_history filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(SPTPlayerTrack *track, NSDictionary *bindings) {
             return ![self->_hiddenHistory containsObject:historyKey(track)];
         }]];
+    }
+    if (carried) {
+        NSMutableArray<SPTPlayerTrack *> *kept = [NSMutableArray array];
+        NSMutableSet<NSString *> *seen = [NSMutableSet set];
+        NSArray<SPTPlayerTrack *> *all = [_carry arrayByAddingObjectsFromArray:_history];
+        for (SPTPlayerTrack *track in all.reverseObjectEnumerator) {
+            NSString *key = historyKey(track);
+            if ((key && [seen containsObject:key]) || sameSong(track, current)) continue;
+            if (key) [seen addObject:key];
+            [kept insertObject:track atIndex:0];
+            if (kept.count == kHistoryRows) break;
+        }
+        _history = kept;
     }
     _current = current;
     _showsHistory = SGFlag(SGRKeyPlayerQueueHistory, YES);
@@ -944,8 +1091,12 @@ static NSArray *reportKey(SPTPlayerState *state) {
                 _anchorY = anchorY;
             }
         }
+        if (_musicStyle) _slideRemaining = [self slideOnScreen];
         [self.tableView reloadData];
         [self placeAtUpcomingForcingLayout:YES];
+        // Taken by a slide placing started, or left unused where placing stopped early (not at rest, a finger on the
+        // list, gliding back): never left for a later placing to slide by.
+        _slideRemaining = 0;
         if (preserveOffset) {
             UITableView *table = self.tableView;
             CGFloat maxY = table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.size.height;
@@ -1087,6 +1238,8 @@ static NSString *playingFrom(NSArray<SPTPlayerTrack *> *run) {
         }
         _anchorKey = nil;
         _pickedSnap = nil;
+        _skippedSnaps = nil;
+        _skippedFrames = nil;
         [self reportScroll];
         return;
     }
@@ -1105,7 +1258,45 @@ static NSString *playingFrom(NSArray<SPTPlayerTrack *> *run) {
     table.contentOffset = CGPointMake(0, rest);
     [self reportScroll];
     [self slideRowsBy:slide forcingLayout:forceLayout];
+    [self carryOffSkippedBy:slide];
     [self risePicked];
+}
+
+// The songs skipped by a pick, gone from the list once the song picked plays: their rows' pictures move up with the
+// rows after them (by `slide`, the rows' own slide) and fade, cut off where the songs to come begin, as rows scrolled
+// under it would be. Without it they vanished at once and the rows after them came up through an empty space.
+// Not under Reduce Motion.
+- (void)carryOffSkippedBy:(CGFloat)slide {
+    NSArray<UIView *> *snaps = _skippedSnaps;
+    NSArray<NSValue *> *frames = _skippedFrames;
+    _skippedSnaps = nil;
+    _skippedFrames = nil;
+    UITableView *table = self.tableView;
+    if (!snaps.count || snaps.count != frames.count || !table.window || SGRReduceMotion()) return;
+    CGFloat offset = table.contentOffset.y, top = CGFLOAT_MAX;
+    for (NSValue *frame in frames) top = MIN(top, CGRectGetMinY(frame.CGRectValue));
+    top = MAX(top, _cut);
+    UIView *clip = [[UIView alloc] initWithFrame:CGRectMake(0, offset + top, table.bounds.size.width, MAX(0, table.bounds.size.height - top))];
+    clip.clipsToBounds = YES;
+    clip.userInteractionEnabled = NO;
+    // With the song picked rising (risePicked): over the rows, under what is held at the top.
+    clip.layer.zPosition = 50;
+    [table addSubview:clip];
+    for (NSUInteger i = 0; i < snaps.count; i++) {
+        UIView *snap = snaps[i];
+        snap.userInteractionEnabled = NO;
+        snap.frame = CGRectOffset(frames[i].CGRectValue, 0, -top);
+        [clip addSubview:snap];
+    }
+    CGFloat rise = slide > 0.5 && slide <= table.bounds.size.height ? slide : 0;
+    SGRAnimate(SGRMotionLayout, ^{
+        for (UIView *snap in snaps) {
+            snap.transform = CGAffineTransformMakeTranslation(0, -rise);
+            snap.alpha = 0;
+        }
+    }, ^(BOOL finished) {
+        [clip removeFromSuperview];
+    });
 }
 
 // The new song's row, gone from the list once it plays, carried on from where it stood up into the room at the top where
@@ -1139,11 +1330,15 @@ static const CFTimeInterval kSlideDuration = 0.45;
 // The rows and headings shown, drawn `delta` lower than they are and moved up to where they are: a new song's following
 // ones rising to the top of the list. Only transforms, so the list's offset stays at rest. The player's state and its
 // queue report one after the other and each reloads the rows: one that comes while the slide is on its way, with nothing
-// new to slide, takes the rest of the distance up from the rows it replaces. Not under Reduce Motion.
+// new to slide, takes the rest of the distance up from where the rows it replaces stood on screen (_slideRemaining, read
+// before the reload; the spring is far ahead of a straight line, which drew the rows back down and slid them up twice).
+// Not under Reduce Motion.
 - (void)slideRowsBy:(CGFloat)delta forcingLayout:(BOOL)forceLayout {
     UITableView *table = self.tableView;
-    CFTimeInterval now = CACurrentMediaTime(), elapsed = now - _slideStart;
-    if (delta < 0.5 && _slideDelta > 0 && elapsed < kSlideDuration) delta = _slideDelta * (1 - elapsed / kSlideDuration);
+    CFTimeInterval now = CACurrentMediaTime();
+    CGFloat remaining = _slideRemaining;
+    _slideRemaining = 0;
+    if (delta < 0.5 && remaining > 0.5) delta = remaining;
     _slideDelta = 0;
     if (delta < 0.5 || delta > table.bounds.size.height || !table.window || SGRReduceMotion()) return;
     _slideDelta = delta;
@@ -1166,6 +1361,17 @@ static const CFTimeInterval kSlideDuration = 0.45;
     SGRAnimate(SGRMotionLayout, ^{
         for (UIView *view in moving) view.transform = CGAffineTransformIdentity;
     }, nil);
+}
+
+// How far below their places the rows of a slide on its way stand on screen now (their presentation), 0 with none.
+- (CGFloat)slideOnScreen {
+    if (_slideDelta <= 0 || CACurrentMediaTime() - _slideStart > kSlideDuration) return 0;
+    CGFloat most = 0;
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        CALayer *shown = cell.layer.presentationLayer;
+        if (shown) most = MAX(most, (CGFloat)shown.transform.m42);
+    }
+    return most;
 }
 
 - (void)goToRest {
@@ -1534,6 +1740,7 @@ static const CGFloat kSnapDistance = 200;
             self->_submittedKey = nil;
             self->_optimisticMove = NO;
         }
+        [self noteHistory:queue.prevTracks current:queue.track];
         [self showTracks:queue.nextTracks past:queue.prevTracks current:queue.track];
         [self takeState:SGPlayerState()];
     } on:dispatch_get_main_queue()];
@@ -1733,7 +1940,7 @@ static const CGFloat kMusicHistoryGap = 25;
     cell.isAccessibilityElement = YES;
     cell.accessibilityLabel = artist ? [NSString stringWithFormat:@"%@, %@", title, artist] : title;
     SGRQueueGroup *group = [self groupAt:path.section];
-    BOOL playable = group.upcoming || [self canReplay:group];
+    BOOL playable = group.upcoming || ([self canReplay:group] && [self replayable:track back:NULL]);
     cell.accessibilityTraits = playable ? UIAccessibilityTraitButton : UIAccessibilityTraitStaticText;
     cell.selectionStyle = playable ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     return cell;
@@ -1844,7 +2051,7 @@ static const CGFloat kMusicHistoryGap = 25;
     }
     [self applyHeldTracks];
     [self takeState:SGPlayerState()];
-    if (!_signature) [self showTracks:_tracks past:_history current:_current];
+    if (!_signature) [self showTracks:_tracks past:_past current:_current];
     if (_coversChangedDuringReorder) {
         _coversChangedDuringReorder = NO;
         for (NSIndexPath *path in self.tableView.indexPathsForVisibleRows) {
@@ -1917,6 +2124,29 @@ static const CGFloat kMusicHistoryGap = 25;
         [NSClassFromString(@"SPTSkipPrevOptions") instancesRespondToSelector:NSSelectorFromString(@"setOverrideRestrictions:")];
 }
 
+// What Spotify can play for a row of History, as Spotify reported it: the song in its own History, gone back to
+// (`back`), or, for a row only the page keeps (a carry, see _carry), the song among those to come, skipped ahead to.
+// Nil when Spotify has the song in neither: the row then plays nothing.
+- (SPTPlayerTrack *)replayable:(SPTPlayerTrack *)track back:(BOOL *)back {
+    if (back) *back = NO;
+    if (!track) return nil;
+    NSArray<SPTPlayerTrack *> *past = queueTracks(_past, NSUIntegerMax, YES);
+    NSUInteger at = [past indexOfObjectIdenticalTo:track];
+    if (at == NSNotFound) at = lastIndexOf(past, track);
+    if (at != NSNotFound) {
+        if (back) *back = YES;
+        return past[at];
+    }
+    if (![SGPlayerInstance() respondsToSelector:@selector(skipToNextTrackWithOptions:track:)]) return nil;
+    NSString *key = historyKey(track), *uri = SGURIString(track.URI);
+    NSUInteger byURI = NSNotFound;
+    for (NSUInteger i = 0; i < _tracks.count; i++) {
+        if (_tracks[i] == track || (key && [historyKey(_tracks[i]) isEqualToString:key])) return _tracks[i];
+        if (byURI == NSNotFound && uri.length && [SGURIString(_tracks[i].URI) isEqualToString:uri]) byURI = i;
+    }
+    return byURI == NSNotFound ? nil : _tracks[byURI];
+}
+
 - (void)hideFromHistory:(NSArray<SPTPlayerTrack *> *)tracks {
     for (SPTPlayerTrack *track in tracks) {
         NSString *key = historyKey(track);
@@ -1933,8 +2163,20 @@ static const CGFloat kMusicHistoryGap = 25;
     SGRQueueGroup *group = [self groupAt:path.section];
     if (!track) return;
     if ([self canReplay:group]) {
+        BOOL back = NO;
+        SPTPlayerTrack *spotify = [self replayable:track back:&back];
+        if (!spotify) return;
+        [self carryHistoryTo:spotify replaying:track];
         [self returnToRest];
-        [self replay:track];
+        if (back) {
+            [self replay:spotify];
+        } else {
+            // Kept by the page only, the song is among the songs to come (gone back there when Spotify rewound): played
+            // as a pick of it, the songs before it left out of History.
+            NSUInteger at = [_tracks indexOfObjectIdenticalTo:spotify];
+            if (at != NSNotFound && at > 0) [self hideFromHistory:[_tracks subarrayWithRange:NSMakeRange(0, at)]];
+            [SGPlayerInstance() skipToNextTrackWithOptions:nil track:spotify];
+        }
         return;
     }
     if (!group.upcoming) return;
@@ -1945,6 +2187,11 @@ static const CGFloat kMusicHistoryGap = 25;
     if (_musicStyle) {
         NSUInteger at = [_tracks indexOfObjectIdenticalTo:track];
         if (at != NSNotFound && at > 0) [self hideFromHistory:[_tracks subarrayWithRange:NSMakeRange(0, at)]];
+        [self carryHistoryTo:track replaying:nil];
+        // Picked with History pulled down: the list glides back to rest at the tap, as for a song of History, and the
+        // change is shown from there (the rows sliding up, the song picked rising) rather than the thumbnail and the
+        // title jumping to the top.
+        if (self.tableView.contentOffset.y < [self restOffset] - 1.5) [self returnToRest];
     }
     [player skipToNextTrackWithOptions:nil track:track];
     if (!self.embedded) [self close];
@@ -1953,6 +2200,8 @@ static const CGFloat kMusicHistoryGap = 25;
 // A song of History played again, the way Spotify's previous button goes back to one (-[SPTEsperantoPlayer
 // skipToPreviousTrackWithOptions:track:], 9.2.0): with its restrictions overridden, as Spotify's own skip to a song in
 // the queue sends them (skipToNextTrackWithOptions:track:loggingParams: sets overrideRestrictions), and no seek.
+// Spotify rewinds its History to the song, the songs after it going back to come; the page's History keeps them
+// (carryHistoryTo:replaying:).
 - (void)replay:(SPTPlayerTrack *)track {
     id player = SGPlayerInstance();
     SEL skip = NSSelectorFromString(@"skipToPreviousTrackWithOptions:track:");
@@ -1982,6 +2231,8 @@ static const CGFloat kMusicHistoryGap = 25;
 // Filter the displayed history window; do not backfill it with older tracks or submit a queue to Spotify.
 - (void)clearHistory {
     [self hideFromHistory:_history];
+    // Before the song picked plays, the song still playing has not reached History yet: it is kept for when it does.
+    if (_carry) _carry = _carryPhase == 0 ? queueTracks(_carryFrom ? @[_carryFrom] : @[], 1, YES) : @[];
     if (!_heldShow) [self showTracks:_tracks past:@[] current:_current];
 }
 

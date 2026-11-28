@@ -784,8 +784,12 @@ Shared:
                   A confirmed identifier miss permits the title lookup (and, on the album page, matching track rows).
                   A recording miss applies only to that track; the next track may identify the release.
                   An unanswered request remains retryable. If a complete UPC or ISRC reply has multiple qualifying
-                  release IDs, the track gets a clip only if every candidate selects the same video URL. That agreement
-                  does not verify the release or store the clip for other songs on the album.
+                  release IDs, ISRC candidates narrow first to full-title matches and then to credited artists within
+                  Spotify's album artists (skipping either step if it would empty the set), and the track gets a clip
+                  only if every remaining candidate selects the same video URL. That agreement does not verify the
+                  release or store the clip for other songs on the album. When a title search finds multiple releases
+                  with the same title and artist, Spotify's album track count breaks the tie if exactly one release
+                  matches, cached under a track-count-qualified key so editions with different counts never mix.
                   For an identified still edition only a title match within one year of Spotify's release year can move;
                   without a year it stays still. Only an identifier-verified clip that downloaded successfully is kept
                   for all songs by Spotify album URI. Header and track share the
@@ -1685,11 +1689,11 @@ Redesigned:
                   SGRInkPlainAlpha), so a white cover's bar is white and not gray; over a dark one that is the usual 0.6 and
                   0.2. The volume row's speaker glyphs and the footer's glyphs at rest follow the backdrop the same way
                   (0.46 added; PlayerVolume.m, PlayerFooter.x refreshFooterInk). A finger dragging either thickens its track 1.75 times, to 12 pt, about its middle
-                  (SGRPlayerBarDragHeight) and lights the fill whole white: the progress bar's as a rail of the mod's own
-                  drawn over the slider while it is held — one capsule clipping a rectangular fill to the value, Spotify's
-                  track image views hidden under it and given back on release, so the held shape does not depend on how
-                  UIKit stretches a track image (issue #30: a disc drawn across the whole bar as a lens); checked by
-                  harness/player/scrub-capsule.inc — the volume's through taller images (PlayerVolume.m). The volume's slider tracks a drag from its fill's
+                  (SGRPlayerBarDragHeight) and lights the fill whole white: both the progress bar and the volume row's
+                  sliders draw a rail of the mod's own over the slider while it is held — one capsule clipping a
+                  rectangular fill to the value at the resting track's vertical center, the slider's track image views
+                  hidden under it and given back on release, so the held shape never clips or shifts vertically during a
+                  drag (issues #30, #82; checked by harness/player/scrub-capsule.inc and `volumebar`). The volume's slider tracks a drag from its fill's
                   end; a sideways drag starting anywhere else on its row moves the volume by the finger's distance, as
                   iOS 26's thumbless slider did, and a tap there moves nothing. Its ⋯, beside the title and artist where the add button was
                   (PlayerMenu.m), opens the system
@@ -1786,9 +1790,14 @@ Redesigned:
                   the title row and the toggles ride with the list (the page's stage starts at the thumbnail, its first
                   section the room they stand in, SGRPlayerQueuePageConfigure): pulled down, History shows above them, with
                   Clear (asks before hiding the displayed history on this page only); pushed up, they leave and the songs to come
-                  take the room. A History row plays its song again (skipToPreviousTrackWithOptions:track: with
-                  SPTSkipPrevOptions.overrideRestrictions), leaving Spotify in charge of what comes next. Skipped and cleared
-                  rows are hidden by a bounded set of track keys owned by this Music page, never the side list or sheet. Shuffle and
+                  take the room. A History row replays from Spotify's history (`skipToPreviousTrackWithOptions:track:`
+                  with `SPTSkipPrevOptions.overrideRestrictions`), falls back to `skipToNextTrackWithOptions:track:` if
+                  it only remains in Spotify's upcoming list, and is non-interactive otherwise. Picks and replays carry
+                  the displayed History window across Spotify's autoplay resets and rewinds (dropping the carry on
+                  external rewinds or after 10 new Spotify history entries, and never showing the playing track in
+                  History), while skipped rows slide up smoothly with the continuing rows and follow the live spring
+                  position across consecutive reloads (harness/queue-history/check.sh). Skipped and cleared
+                  rows are hidden by a bounded set of track keys owned by this Music page (unhidden if played again), never the side list or sheet. Shuffle and
                   repeat dim (UIKit's disabled 0.3) while SPTPlayerState.restrictions disallow toggling them. The footer's lyrics and queue
                   glyphs, while their page shows, sit on a 38 pt disc with the glyph cut out of it (markActive, as the Music
                   app's player does), white landing where 0.46 added would. The

@@ -93,8 +93,6 @@
 #import "Shared/Player/PlayerSettings.h"
 #import "Shared/Player/PlayerState.h"
 #import "Shared/Player/AudioQuality.h"
-// AudioQuality.x: the redesign's reading of the backdrop behind the badge, which picks the glass of its details.
-void SGAudioQualitySetRedesignedBackdrop(UIView *unit, CGFloat lightness);
 #import "Shared/Player/SGLastTrack.h"
 #import "Redesigned/Kit/SGRRefinements.h"
 #import "Redesigned/Kit/SGRRestyle.h"
@@ -5130,6 +5128,14 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
     exit(wrong ? 1 : 0);
 }
 
+// The glass styles asked for since the details last opened (+[UIGlassEffect effectWithStyle:], recorded from timerow on).
+static NSMutableArray<NSNumber *> *sg_glassStylesAsked;
+static IMP sg_glassEffectWithStyle;
+static id recordGlassStyle(id self, SEL _cmd, NSInteger style) {
+    [sg_glassStylesAsked addObject:@(style)];
+    return ((id (*)(id, SEL, NSInteger))sg_glassEffectWithStyle)(self, _cmd, style);
+}
+
 - (void)runTimeRowChecks {
     UIViewController *durationUnit = _units[2];
     UIView *unit = durationUnit.view;
@@ -5234,6 +5240,57 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
         return;
     }
 
+    // The redesign's details on iOS 26 (issues #82, #83): a background view of the mod's, clear glass not interactive,
+    // tinted black by how light the backdrop is (0.48 over a light one, 0.22 otherwise), no shadow behind it to show
+    // through as a smudge, and with no arrow standing off the badge. Below 26 or with Reduce Transparency, the system's.
+    static const CGFloat kTintDark = 0.22, kTintLight = 0.48;
+    __block UIView *native = nil;
+    BOOL clearGlass = NSClassFromString(@"UIGlassEffect") && !UIAccessibilityIsReduceTransparencyEnabled();
+    if (clearGlass && !sg_glassEffectWithStyle) {
+        Method method = class_getClassMethod(NSClassFromString(@"UIGlassEffect"), @selector(effectWithStyle:));
+        if (method) sg_glassEffectWithStyle = method_setImplementation(method, (IMP)recordGlassStyle);
+    }
+    sg_glassStylesAsked = [NSMutableArray array];
+    void (^expectGlass)(UIViewController *, CGFloat, NSString *) = ^(UIViewController *panel, CGFloat tint, NSString *when) {
+        UIView *popover = panel.viewIfLoaded;
+        while (popover && ![NSStringFromClass(popover.class) isEqualToString:@"_UIPopoverView"]) popover = popover.superview;
+        UIView *background = nil;
+        NSMutableArray<NSString *> *shadows = [NSMutableArray array];
+        for (UIView *sub in popover.subviews) {
+            if ([NSStringFromClass(sub.class) isEqualToString:@"SGAudioQualityGlassBackground"]) background = sub;
+            else if ([NSStringFromClass(sub.class) containsString:@"Shadow"] && sub.alpha > 0) [shadows addObject:NSStringFromClass(sub.class)];
+        }
+        Class backgroundClass = panel.popoverPresentationController.popoverBackgroundViewClass;
+        if (!clearGlass) {
+            [self expect:!backgroundClass && !background step:[NSString stringWithFormat:@"%@, the system's popover (no clear glass here)", when]
+                  detail:NSStringFromClass(backgroundClass) ?: @"system's"];
+            return;
+        }
+        UIVisualEffectView *glass = nil;
+        for (UIView *sub in background.subviews) if ([sub isKindOfClass:UIVisualEffectView.class]) glass = (UIVisualEffectView *)sub;
+        id effect = glass.effect;
+        BOOL isGlass = [effect isKindOfClass:NSClassFromString(@"UIGlassEffect")];
+        // The effect a view hands back has lost its style (UIGlassEffectStyleRegular whatever was given), so the style is the one asked for.
+        BOOL clearAsked = NO;
+        if (@available(iOS 26.0, *)) clearAsked = [sg_glassStylesAsked containsObject:@(UIGlassEffectStyleClear)];
+        sg_glassStylesAsked = [NSMutableArray array];
+        BOOL interactive = isGlass && [[effect valueForKey:@"interactive"] boolValue];
+        CGFloat white = 1, alpha = 0;
+        [(UIColor *)(isGlass ? [effect valueForKey:@"tintColor"] : nil) getWhite:&white alpha:&alpha];
+        CGRect badgeFrame = [badge convertRect:badge.bounds toView:nil], popoverFrame = [popover convertRect:popover.bounds toView:nil];
+        CGFloat gap = fmax(CGRectGetMinY(badgeFrame) - CGRectGetMaxY(popoverFrame), CGRectGetMinY(popoverFrame) - CGRectGetMaxY(badgeFrame));
+        [self expect:backgroundClass == NSClassFromString(@"SGAudioQualityGlassBackground") && background && glass
+                     && clearAsked && !interactive && white < 0.01 && fabs(alpha - tint) < 0.005
+                     && background.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+                     && background.layer.shadowOpacity == 0 && !shadows.count && gap >= 4
+                step:[NSString stringWithFormat:@"%@, clear glass tinted %.2f", when, tint]
+              detail:[NSString stringWithFormat:@"background %@, effect %@%@%@, tint white %.2f alpha %.2f, style %ld, shadow %.2f%@, %.1f pt off the badge",
+                      NSStringFromClass(backgroundClass), NSStringFromClass([effect class]), clearAsked ? @" clear" : @" (no clear glass asked for)",
+                      interactive ? @" interactive" : @"", white, alpha,
+                      (long)background.traitCollection.userInterfaceStyle, background.layer.shadowOpacity,
+                      shadows.count ? [@" showing " stringByAppendingString:[shadows componentsJoinedByString:@","]] : @"", gap]];
+    };
+
     // A finger scrubbing: the fill lit whole and the times a step lower; the badge stays where it is.
 #include "scrub-capsule.inc"
     CGFloat badgeAt = CGRectGetMinY(badge.frame);
@@ -5264,9 +5321,11 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
         [self expect:[seen isEqualToArray:want] step:@"the details" detail:[seen componentsJoinedByString:@" | "]];
         [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark step:@"the details in dark glass with no reading of the backdrop"
               detail:[NSString stringWithFormat:@"style %ld", (long)panel.traitCollection.userInterfaceStyle]];
+        expectGlass(panel, kTintDark, @"with no reading of the backdrop");
         [panel dismissViewControllerAnimated:NO completion:nil];
     }],
-    // Issue #82: over a light cover dark glass is a flat gray slab; the details come up in light glass there.
+    // Issues #82 and #83: the system's dark glass over a light cover was a flat gray slab, and its light glass an
+    // opaque white card. The details stay dark, on clear glass tinted darker over a light backdrop.
     @[PLAYER_GATE(!self.window.rootViewController.presentedViewController), ^{
         SGAudioQualitySetRedesignedBackdrop(unit, 0.8);
         [badge accessibilityActivate];
@@ -5275,13 +5334,14 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
         UIViewController *panel = self.window.rootViewController.presentedViewController;
         UIView *stack = panel.viewIfLoaded;
         UILabel *title = [stack isKindOfClass:UIStackView.class] && ((UIStackView *)stack).arrangedSubviews.count > 1 ? ((UIStackView *)stack).arrangedSubviews[1] : nil;
-        CGFloat white = 1;
+        CGFloat white = 0;
         [[title.textColor resolvedColorWithTraitCollection:title.traitCollection] getWhite:&white alpha:NULL];
-        [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight && panel.presentationController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight
-                     && [title isKindOfClass:UILabel.class] && white < 0.3
-                step:@"over a light backdrop, the details in light glass with dark text"
+        [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark && panel.presentationController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+                     && [title isKindOfClass:UILabel.class] && white > 0.9
+                step:@"over a light backdrop, the details still dark with white text"
               detail:[NSString stringWithFormat:@"style %ld, presentation %ld, title white %.2f", (long)panel.traitCollection.userInterfaceStyle,
                       (long)panel.presentationController.traitCollection.userInterfaceStyle, white]];
+        expectGlass(panel, kTintLight, @"over a light backdrop");
         [panel dismissViewControllerAnimated:NO completion:nil];
     }],
     @[PLAYER_GATE(!self.window.rootViewController.presentedViewController), ^{
@@ -5292,6 +5352,7 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
         UIViewController *panel = self.window.rootViewController.presentedViewController;
         [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark && panel.presentationController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
                 step:@"over a dark backdrop, the details in dark glass" detail:[NSString stringWithFormat:@"style %ld", (long)panel.traitCollection.userInterfaceStyle]];
+        expectGlass(panel, kTintDark, @"over a dark backdrop");
         [panel dismissViewControllerAnimated:NO completion:nil];
         SGAudioQualitySetRedesignedBackdrop(unit, -1);
     }],
@@ -5317,7 +5378,7 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
               detail:[NSString stringWithFormat:@"badge %.2f, elapsed %.2f (was %.2f)", badgeBaseline(), larger, baseline]];
 
         // The native look's badge, on a unit of its own: Spotify's word, centered on the times' middle, nothing lowered.
-        UIView *native = [[UIView alloc] initWithFrame:CGRectMake(0, 0, unit.bounds.size.width, 41.33)];
+        native = [[UIView alloc] initWithFrame:CGRectMake(0, 0, unit.bounds.size.width, 41.33)];
         [unit.superview addSubview:native];
         NSArray<UILabel *> *nativeLabels;
         spotifyBar(native, &nativeLabels);
@@ -5328,6 +5389,21 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
                      && fabs(CGRectGetMidY(nativeBadge.frame) - CGRectGetMidY(time.frame)) <= 0.5
                 step:@"the native look's badge as it was" detail:[NSString stringWithFormat:@"%@, %@, times at %@", nativeBadge.accessibilityLabel,
                                                                   NSStringFromCGRect(nativeBadge.frame), NSStringFromCGRect(time.frame)]];
+        [nativeBadge accessibilityActivate];
+    }],
+    // The native look's details keep the system's popover, over any backdrop.
+    @[PLAYER_GATE(self.window.rootViewController.presentedViewController.view.window), ^{
+        UIViewController *panel = self.window.rootViewController.presentedViewController;
+        UIView *popover = panel.viewIfLoaded;
+        while (popover && ![NSStringFromClass(popover.class) isEqualToString:@"_UIPopoverView"]) popover = popover.superview;
+        BOOL ours = NO;
+        for (UIView *sub in popover.subviews) ours |= [NSStringFromClass(sub.class) isEqualToString:@"SGAudioQualityGlassBackground"];
+        Class backgroundClass = panel.popoverPresentationController.popoverBackgroundViewClass;
+        [self expect:popover != nil && !backgroundClass && !ours && panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+                step:@"the native look's details in the system's dark popover"
+              detail:[NSString stringWithFormat:@"background %@%@, style %ld", NSStringFromClass(backgroundClass) ?: @"system's",
+                      ours ? @" (the redesign's glass)" : @"", (long)panel.traitCollection.userInterfaceStyle]];
+        [panel dismissViewControllerAnimated:NO completion:nil];
         [native removeFromSuperview];
         [NSUserDefaults.standardUserDefaults removeObjectForKey:SGKeyPlayerAudioQuality];
         NSLog(@"[harness] timerow checks: %lu of %lu right -- %@", (unsigned long)(self->_checks - self->_failures), (unsigned long)self->_checks,

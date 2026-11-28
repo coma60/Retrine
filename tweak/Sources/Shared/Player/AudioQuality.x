@@ -22,8 +22,16 @@ static const CGFloat kPanelWidth = 280, kPanelMargin = 16, kPanelRowGap = 10;
 // The redesign's summary: the glyph over the tier, its rate under it, then the sentence and the footnote.
 static const CGFloat kSummaryGlyphSize = 28, kSummaryMarginX = 20, kSummaryMarginY = 18;
 static const CGFloat kSummaryGlyphGap = 8, kSummaryRateGap = 2, kSummaryTextGap = 12, kSummaryFootGap = 10;
-// How light the redesign's backdrop behind the badge is (0 black, 1 white) from which its details come up in light glass.
+// The redesign's details on iOS 26 sit on clear Liquid Glass of their own, tinted black so their white text reads
+// (issues #82, #83): more over a backdrop this light or lighter (0 black, 1 white), more again under Increase Contrast.
+// The system's popover glass, tried light over a light cover, came out an opaque white card. Over a white wall (0.92)
+// clear glass alone lifts it to 255 of 255 and 0.48 brings it to about 145, under which the bold white title keeps
+// 3:1 and the wall still shows; over a dark one 0.22 (iOS 26.5 simulator).
 static const CGFloat kPanelLightBackdrop = 0.6;
+static const CGFloat kPanelTintDark = 0.22, kPanelTintLight = 0.48, kPanelTintContrast = 0.55;
+static const CGFloat kPanelCorner = 26;
+// With no arrow the details stand this far off the badge.
+static const CGFloat kPanelSourceGap = 6;
 
 // What the badge shows for the song playing, all zero while it shows nothing.
 typedef struct {
@@ -147,6 +155,83 @@ void SGAudioQualitySettingChanged(void) {
 static NSString *yesNo(BOOL yes) {
     return yes ? SGL(@"player.audio_quality.yes", @"Yes") : SGL(@"player.audio_quality.no", @"No");
 }
+
+// How dark the clear glass under the redesign's details is tinted for a backdrop `lightness` light (-1 unread).
+static CGFloat panelTint(CGFloat lightness, BOOL contrast) {
+    if (contrast) return kPanelTintContrast;
+    return lightness >= kPanelLightBackdrop ? kPanelTintLight : kPanelTintDark;
+}
+
+// The tint for the details being presented: the popover makes its background view itself, so it is handed over here.
+static CGFloat sg_panelTint = kPanelTintDark;
+
+// The redesign's details on clear Liquid Glass, rounded and with no arrow, dark whatever the system's style. The
+// system's popover draws its chrome as a SwiftUI host (_UIPopoverGlassBackground) a background view of the
+// mod's replaces. The popover's shadows, which clear glass would show as a black smudge across its middle, are taken
+// off (iOS 26.5 simulator).
+@interface SGAudioQualityGlassBackground : UIPopoverBackgroundView
+@property (class, nonatomic, readonly) BOOL available;
+@end
+
+@implementation SGAudioQualityGlassBackground {
+    UIVisualEffectView *_glass;
+    CGFloat _arrowOffset;
+    UIPopoverArrowDirection _arrowDirection;
+}
+
++ (BOOL)available {
+    if (@available(iOS 26.0, *)) return NSClassFromString(@"UIGlassEffect") != nil;
+    return NO;
+}
+
++ (CGFloat)arrowBase { return 0; }
++ (CGFloat)arrowHeight { return 0; }
++ (UIEdgeInsets)contentViewInsets { return UIEdgeInsetsZero; }
++ (BOOL)wantsDefaultContentAppearance { return NO; }
+- (CGFloat)arrowOffset { return _arrowOffset; }
+- (void)setArrowOffset:(CGFloat)arrowOffset { _arrowOffset = arrowOffset; }
+- (UIPopoverArrowDirection)arrowDirection { return _arrowDirection; }
+- (void)setArrowDirection:(UIPopoverArrowDirection)arrowDirection { _arrowDirection = arrowDirection; }
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.backgroundColor = UIColor.clearColor;
+    UIVisualEffect *effect = nil;
+    if (@available(iOS 26.0, *)) {
+        UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleClear];
+        glass.interactive = NO;
+        glass.tintColor = [UIColor colorWithWhite:0 alpha:sg_panelTint];
+        effect = glass;
+    }
+    _glass = [[UIVisualEffectView alloc] initWithEffect:effect];
+    _glass.userInteractionEnabled = NO;
+    _glass.frame = self.bounds;
+    _glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    SGShapeGlass(_glass, kPanelCorner, NO);
+    [self addSubview:_glass];
+    return self;
+}
+
+// The popover gives this view a shadow of its own as it presents and lays a rounded one beside it, both of which
+// would darken the glass from behind: they are taken off on every layout.
+- (void)fadeShadow {
+    self.layer.shadowOpacity = 0;
+    for (UIView *sibling in self.superview.subviews) {
+        if (sibling != self && [NSStringFromClass(sibling.class) containsString:@"Shadow"]) sibling.alpha = 0;
+    }
+}
+
+- (void)didMoveToSuperview {
+    [super didMoveToSuperview];
+    [self fadeShadow];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self fadeShadow];
+}
+@end
 
 // The details follow the song they were opened for while it plays (a rate Spotify reports late fills in) and are
 // dismissed once they no longer describe it (SGAudioQualityDetailsStay).
@@ -503,13 +588,14 @@ static void checkDetails(void) {
     SGAudioQualityPanel *panel = [[SGAudioQualityPanel alloc] initWithTrack:sg_shownTrack badge:self redesigned:_redesigned];
     sg_panel = panel;
     SGPresentPopover(panel, self);
-    // The popover's glass is dark (SGPresentDark), which over a light cover is a flat gray slab with nothing of the
-    // cover showing (issue #82). Over a light backdrop the redesign's details come up in light glass with dark text
-    // instead, as the system's glass turns light over light content; over a dark one, or with no reading, they stay
-    // dark whatever the system's style. The popover is presented on the next turn, so this is in time for it.
-    if (_redesigned && _backdropLightness >= kPanelLightBackdrop) {
-        panel.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
-        panel.presentationController.overrideTraitCollection = [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleLight];
+    // The popover is dark (SGPresentDark) and presented on the next turn, so this is in time for it. The system's
+    // dark glass over a light cover is a flat gray slab (issue #82), its light one an opaque white card (issue #83):
+    // the redesign's details sit on clear glass of their own instead, unless Reduce Transparency asks for none.
+    if (_redesigned && SGAudioQualityGlassBackground.available && !UIAccessibilityIsReduceTransparencyEnabled()) {
+        sg_panelTint = panelTint(_backdropLightness, UIAccessibilityDarkerSystemColorsEnabled());
+        UIPopoverPresentationController *popover = panel.popoverPresentationController;
+        popover.popoverBackgroundViewClass = SGAudioQualityGlassBackground.class;
+        popover.sourceRect = CGRectInset(self.bounds, 0, -kPanelSourceGap);
     }
 }
 @end

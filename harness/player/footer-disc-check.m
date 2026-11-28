@@ -80,10 +80,24 @@ void SGRPlayerShowQueue(UIView *from) {}
 + (id)queue { return @"queue"; }
 @end
 
+// How many times the footer drew a picture of Spotify's glyph (glyphShape renders its layer).
+static int sg_encoreRenders;
+@interface HarnessEncoreLayer : CALayer
+@end
+@implementation HarnessEncoreLayer
+- (void)renderInContext:(CGContextRef)context {
+    sg_encoreRenders++;
+    [super renderInContext:context];
+}
+@end
+
 @implementation SPTEncoreIconView {
     CAShapeLayer *_shape;
     NSString *_icon;
     BOOL _active;
+}
++ (Class)layerClass {
+    return HarnessEncoreLayer.class;
 }
 - (instancetype)initWithIcon:(id)icon {
     if (!(self = [super initWithFrame:CGRectZero])) return nil;
@@ -462,9 +476,17 @@ static void runChecks(UIWindow *window) {
     CGPoint tallHole = holeMiddle(tall, NULL, encoreMiddle);
     holeShowsBackdrop(root, encore, disc, tallHole, blue, @"encore, blue");
     holeShowsBackdrop(root, encore, disc, tallHole, gray, @"encore, gray");
-    // A new icon in the same view: the new shape is the hole, the old one's place filled with the disc.
+    // New readings of the backdrop change only the disc's fill: Spotify's glyph is not drawn again each time.
+    sg_encoreRenders = 0;
+    for (int i = 0; i < 5; i++) newReading();
+    check(sg_encoreRenders == 0 && disc.layer.mask.contents != nil,
+          [NSString stringWithFormat:@"encore, new readings: Spotify's glyph is drawn %d times for 5 readings, its mask kept", sg_encoreRenders]);
+    // A new icon in the same view, taken at the next lyrics change: the new shape is the hole, the old one's place
+    // filled with the disc.
     [encore harnessSetIcon:@"queue"];
-    newReading();
+    sg_encoreRenders = 0;
+    SGRPlayerLyricsChanged();
+    check(sg_encoreRenders > 0, @"encore, new icon: the lyrics change draws Spotify's glyph again");
     Pixels wide = shapeOf(encore, root);
     CGPoint wideHole = holeMiddle(wide, &tall, CGPointMake(encoreMiddle.x + 7, encoreMiddle.y));
     {
@@ -511,8 +533,10 @@ static void runChecks(UIWindow *window) {
         free(p.bytes);
     }
     sg_contrast = NO;
+    sg_encoreRenders = 0;
     newReading();
-    check([encore.foregroundColor isEqual:UIColor.clearColor] && disc.layer.mask.contents != nil, @"encore contrast off: Spotify's glyph clear, the cut mask back");
+    check([encore.foregroundColor isEqual:UIColor.clearColor] && disc.layer.mask.contents != nil && sg_encoreRenders > 0,
+          @"encore contrast off: a new reading draws Spotify's glyph again, clear, the cut mask back");
     pixelIs(root, wideHole, blueBg, 3, @"encore contrast off: the hole is the backdrop");
 
     // Music app icons on and off again with the lyrics up: each glyph's own hole, the other's place the disc.
@@ -546,6 +570,22 @@ static void runChecks(UIWindow *window) {
     sg_lyricsOpen = NO;
     SGRPlayerLyricsChanged();
     check(disc.alpha == 0 && [encore.foregroundColor isEqual:rest], @"encore off again: the disc gone, Spotify's glyph in the rest ink");
+
+    // A button made with the lyrics up gets its disc before it has ever been laid out: in its middle, not at the
+    // corner its glyph stands in until the button's first layout.
+    sg_musicIcons = YES;
+    sg_lyricsOpen = YES;
+    UIView *fresh = [[UIView alloc] initWithFrame:root.bounds];
+    [root addSubview:fresh];
+    SGRGlyphButton *made = SGRPlayerLyricsGlyphIn(fresh);
+    SGRPlayerLyricsChanged();
+    UIView *madeDisc = discOf(made);
+    CGPoint madeMiddle = CGPointMake(CGRectGetMidX(made.bounds), CGRectGetMidY(made.bounds));
+    check(madeDisc && madeDisc.alpha == 1 && CGPointEqualToPoint(madeDisc.center, madeMiddle) &&
+          CGPointEqualToPoint(made.glyph.center, madeMiddle),
+          [NSString stringWithFormat:@"new button: the disc %@ stands in the button's middle %@ before any layout of the footer",
+                                     NSStringFromCGPoint(madeDisc.center), NSStringFromCGPoint(madeMiddle)]);
+    [fresh removeFromSuperview];
 
     [root removeFromSuperview];
     printf("%d checks, %d failed\n", checked, failed);

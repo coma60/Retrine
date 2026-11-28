@@ -171,7 +171,8 @@ static void paintEncore(SGRGlyphButton *button) {
 }
 
 static void markQueueGlyph(BOOL animated);
-static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated);
+static void markQueueGlyphInk(BOOL animated, BOOL inkOnly);
+static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated, BOOL inkOnly);
 static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated);
 
 // The rest color again on every glyph that wears it: Lyrics while it is off, Queue while it is not shown, the stand-ins.
@@ -181,9 +182,9 @@ static void refreshFooterInk(void) {
     if (lyrics) {
         BOOL open = [lyrics.glyph.symbol isEqualToString:kLyricsSymbolOpen];
         tintFooterGlyph(lyrics, open, NO);
-        markActive(lyrics, SGRPlayerFooterGlyph(lyrics, kLyricsEncore), open, NO);
+        markActive(lyrics, SGRPlayerFooterGlyph(lyrics, kLyricsEncore), open, NO, YES);
     }
-    markQueueGlyph(NO);
+    markQueueGlyphInk(NO, YES);
     for (SGRGlyphView *glyph in sg_standIns.allObjects) {
         UIColor *ink = footerRest(glyph);
         if (![glyph.tintColor isEqual:ink]) glyph.tintColor = ink;
@@ -230,7 +231,7 @@ static const CGFloat kActiveDisc = 38;
 // while a finger is on it, at once, with no platter and no sink. The label is what is taken out of the disc, so with the
 // disc up the hole fills back to 0.4 of it: the disc's pressed mask cuts the glyph at this alpha (footerPress).
 static const CGFloat kFooterPressedAlpha = 0.6;
-static char kDiscKey, kDiscDrawnKey, kDiscMasksKey;
+static char kDiscKey, kDiscDrawnKey, kDiscMasksKey, kDiscDrawnViewKey;
 
 // `drawn`'s shape in opaque black and where it lies in `drawn`'s bounds, as it is drawn now.
 static UIImage *glyphShape(UIView *drawn, CGRect *rect) {
@@ -326,9 +327,15 @@ static void pressDisc(SGRGlyphButton *button, BOOL pressed) {
 }
 
 // The disc behind `button`'s glyph while `on`; gone again while off. Called on every change of the glyph's state and of
-// the backdrop's reading; the masks are drawn again only when the glyph, its traits or the contrast changed.
-static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated) {
+// the backdrop's reading; the masks are drawn again only when the glyph, its traits or the contrast changed. `inkOnly`
+// for a new reading of the backdrop, which changes only the disc's fill: Spotify's glyph, whose shape is known only by
+// drawing it, is not drawn again while the view, its place, its traits and the contrast are those its masks were made
+// for (a reading comes several times a second). Everything else that may change the glyph passes NO.
+static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated, BOOL inkOnly) {
     if (!button || !drawn) return;
+    // A button made a moment ago has not laid its glyph out yet (it stands at the button's corner): the disc and its cut
+    // are placed by where the glyph is drawn, in the button's middle.
+    [button layoutIfNeeded];
     UIView *disc = objc_getAssociatedObject(button, &kDiscKey);
     if (!disc && !on) return;
     if (!disc) {
@@ -352,14 +359,27 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
         if (![disc.backgroundColor isEqual:fill]) disc.backgroundColor = fill;
         CALayer *mask = disc.layer.mask;
         if (mask && CGAffineTransformIsIdentity(drawn.transform)) {
-            CGRect rect = CGRectZero;
-            UIImage *shape = contrast ? nil : glyphShape(drawn, &rect);
-            NSArray *key = @[contrast || !shape ? @"" : shapeIdentity(drawn, shape), @(contrast), @(drawn.traitCollection.displayScale),
-                             @(drawn.traitCollection.legibilityWeight), NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];
             NSArray *drawnKey = objc_getAssociatedObject(disc, &kDiscDrawnKey);
             NSArray<UIImage *> *masks = objc_getAssociatedObject(disc, &kDiscMasksKey);
+            UIView *(^maskedFor)(void) = objc_getAssociatedObject(disc, &kDiscDrawnViewKey);
+            NSArray *(^keyFor)(id) = ^NSArray *(id identity) {
+                return @[identity, @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight),
+                         NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];
+            };
+            CGRect rect = CGRectZero;
+            UIImage *shape = nil;
+            NSArray *key;
+            if (inkOnly && !contrast && [drawn isKindOfClass:%c(SPTEncoreIconView)] && maskedFor && maskedFor() == drawn &&
+                drawnKey.count == 5 && masks.count == 2 && [drawnKey isEqual:keyFor(drawnKey.firstObject)]) {
+                key = drawnKey;
+            } else {
+                shape = contrast ? nil : glyphShape(drawn, &rect);
+                key = keyFor(contrast || !shape ? @"" : shapeIdentity(drawn, shape));
+            }
             BOOL stale = ![drawnKey isEqual:key] || (!contrast && masks.count != 2);
             if (stale) {
+                __weak UIView *weakDrawn = drawn;
+                objc_setAssociatedObject(disc, &kDiscDrawnViewKey, ^UIView *{ return weakDrawn; }, OBJC_ASSOCIATION_COPY_NONATOMIC);
                 masks = shape ? @[discMask(drawn, disc, shape, rect, 1), discMask(drawn, disc, shape, rect, kFooterPressedAlpha)] : nil;
                 objc_setAssociatedObject(disc, &kDiscMasksKey, masks, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
                 objc_setAssociatedObject(disc, &kDiscDrawnKey, key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -437,13 +457,18 @@ static void footerPress(SGRGlyphButton *button) {
 // The queue glyph of the redesign's own, on while the player shows the queue (the two columns' side column, the one
 // column's queue page), the way Lyrics is on while it shows the lines; never on where it opens a sheet.
 static void markQueueGlyph(BOOL animated) {
+    markQueueGlyphInk(animated, NO);
+}
+
+// `inkOnly` for a new reading of the backdrop (markActive).
+static void markQueueGlyphInk(BOOL animated, BOOL inkOnly) {
     SGRGlyphButton *queue = sg_queueGlyph;
     if (!queue) return;
     BOOL shown = SGRPlayerQueueShown();
     animated = animated && queue.window && !SGRPlayerIsTransitioning();
     tintFooterGlyph(queue, shown, animated);
     queue.accessibilityTraits = UIAccessibilityTraitButton | (shown ? UIAccessibilityTraitSelected : 0);
-    markActive(queue, SGRPlayerFooterGlyph(queue, @"queue"), shown, animated);
+    markActive(queue, SGRPlayerFooterGlyph(queue, @"queue"), shown, animated, inkOnly);
 }
 
 void SGRPlayerLyricsChanged(void) {
@@ -455,7 +480,11 @@ void SGRPlayerLyricsChanged(void) {
     if (!glyph) return;
     BOOL enabled = SGRPlayerLyricsAvailable() || SGRPlayerLyricsOpen(), open = SGRPlayerLyricsOpen();
     BOOL wasOpen = [glyph.glyph.symbol isEqualToString:kLyricsSymbolOpen];
-    if (glyph.enabled == enabled && wasOpen == open) return;
+    if (glyph.enabled == enabled && wasOpen == open) {
+        // Nothing to animate, but the glyph may be another (a new reading of the backdrop does not look, markActive).
+        markActive(glyph, SGRPlayerFooterGlyph(glyph, kLyricsEncore), open, NO, NO);
+        return;
+    }
     // Lyrics turn up once the player has fetched them, well after the footer laid out: a fade, not a pop.
     // While the player opens or closes the glyph and the lyrics come and go together, so nothing animates.
     BOOL animated = glyph.window && !SGRPlayerIsTransitioning();
@@ -463,7 +492,7 @@ void SGRPlayerLyricsChanged(void) {
     if (animated) SGRAnimate(SGRMotionFade, ^{ glyph.enabled = enabled; }, nil);
     else glyph.enabled = enabled;
     tintFooterGlyph(glyph, open, animated);
-    markActive(glyph, SGRPlayerFooterGlyph(glyph, kLyricsEncore), open, animated);
+    markActive(glyph, SGRPlayerFooterGlyph(glyph, kLyricsEncore), open, animated, NO);
 }
 
 SGRGlyphButton *SGRPlayerLyricsGlyphIn(UIView *host) {

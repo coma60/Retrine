@@ -22,6 +22,8 @@ static const CGFloat kPanelWidth = 280, kPanelMargin = 16, kPanelRowGap = 10;
 // The redesign's summary: the glyph over the tier, its rate under it, then the sentence and the footnote.
 static const CGFloat kSummaryGlyphSize = 28, kSummaryMarginX = 20, kSummaryMarginY = 18;
 static const CGFloat kSummaryGlyphGap = 8, kSummaryRateGap = 2, kSummaryTextGap = 12, kSummaryFootGap = 10;
+// How light the redesign's backdrop behind the badge is (0 black, 1 white) from which its details come up in light glass.
+static const CGFloat kPanelLightBackdrop = 0.6;
 
 // What the badge shows for the song playing, all zero while it shows nothing.
 typedef struct {
@@ -321,6 +323,8 @@ static void checkDetails(void) {
 // (SGAudioQualitySetRedesignedInk); until then the standard ones.
 @property (nonatomic) CGFloat inkAlpha, fillAlpha;
 @property (nonatomic) BOOL plain;
+// The redesign's reading of the backdrop behind the badge, 0 (black) to 1 (white); -1 with none.
+@property (nonatomic) CGFloat backdropLightness;
 // Placed, faded in and fitting between the times.
 @property (nonatomic) BOOL shown;
 @property (nonatomic, strong) SGAudioQualityTap *tap;
@@ -346,6 +350,7 @@ static void checkDetails(void) {
     self.backgroundColor = UIColor.clearColor;
     self.contentMode = UIViewContentModeRedraw;
     self.userInteractionEnabled = NO;
+    _backdropLightness = -1;
     // The player is dark under either look, whatever the system's style.
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.accessibilityTraits = UIAccessibilityTraitButton;
@@ -498,6 +503,14 @@ static void checkDetails(void) {
     SGAudioQualityPanel *panel = [[SGAudioQualityPanel alloc] initWithTrack:sg_shownTrack badge:self redesigned:_redesigned];
     sg_panel = panel;
     SGPresentPopover(panel, self);
+    // The popover's glass is dark (SGPresentDark), which over a light cover is a flat gray slab with nothing of the
+    // cover showing (issue #82). Over a light backdrop the redesign's details come up in light glass with dark text
+    // instead, as the system's glass turns light over light content; over a dark one, or with no reading, they stay
+    // dark whatever the system's style. The popover is presented on the next turn, so this is in time for it.
+    if (_redesigned && _backdropLightness >= kPanelLightBackdrop) {
+        panel.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+        panel.presentationController.overrideTraitCollection = [UITraitCollection traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleLight];
+    }
 }
 @end
 
@@ -635,6 +648,11 @@ void SGAudioQualityPlaceRedesignedBadge(UIView *unit, CGFloat timesDrop) {
 
 void SGAudioQualitySetRedesignedInk(UIView *unit, CGFloat ink, CGFloat fill, BOOL plusL) {
     [(SGAudioQualityBadge *)objc_getAssociatedObject(unit, &kBadgeKey) setInk:ink fill:fill plain:!plusL];
+}
+
+// Redesigned/Player/PlayerControls.x, with each reading of the backdrop behind the badge (SGRBackdropLightnessBehind).
+void SGAudioQualitySetRedesignedBackdrop(UIView *unit, CGFloat lightness) {
+    ((SGAudioQualityBadge *)objc_getAssociatedObject(unit, &kBadgeKey)).backdropLightness = lightness;
 }
 
 CGFloat SGAudioQualityStandardInk(void) {

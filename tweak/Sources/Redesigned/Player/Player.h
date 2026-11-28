@@ -290,6 +290,10 @@ UIColor *SGRPlayerBarTrackOver(UIView *view);
 static const CGFloat SGRPlayerBarHeight = 7;
 UIImage *SGRPlayerBarImage(UIColor *color, CGFloat height);
 CGFloat SGRPlayerBarDragHeight(CGFloat height);
+// The progress bar's held capsule rail reused by PlayerVolume.m while a volume slider is dragged.
+void SGRPlayerHoldVolumeBar(UISlider *slider, BOOL held);
+void SGRPlayerHeldVolumeBarMoved(UISlider *slider);
+void SGRPlayerDropVolumeBar(UISlider *slider);
 // YES when the row shows; NO when it is off, has no controls to sit under or no room between them and the footer.
 BOOL SGRPlayerPlaceVolume(UIView *stack, UIView *controls, UIView *row, CGFloat margin, BOOL rhythm);
 
@@ -373,6 +377,8 @@ void SGRPlayerMotionLyricsChanged(void);
 void SGRPlayerMotionFieldLaidOut(void);
 // The player's field is on screen and its controller has not disappeared. Main-thread changes only.
 BOOL SGRPlayerIsVisible(void);
+// An interactive close has begun (viewWillDisappear) and has not finished yet, while the field is still in its window.
+BOOL SGRPlayerClosePending(void);
 // The settled field in window coordinates, or CGRectNull. Coverage requires didAppear and a finished
 // opening morph, and ends at willDisappear. Moving or resizing a settled field also notifies.
 CGRect SGRSettledPlayerRect(UIWindow *window);

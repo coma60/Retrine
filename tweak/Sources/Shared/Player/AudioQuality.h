@@ -39,6 +39,8 @@ void SGAudioQualityPlaceRedesignedBadge(UIView *unitView, CGFloat timesDrop);
 // The redesign's ink and fill alphas for the badge's text, glyph and capsule, and whether plusL carries them (NO: they
 // are plain whites already worked out for what is behind). Redrawn when they change; no badge, no effect.
 void SGAudioQualitySetRedesignedInk(UIView *unitView, CGFloat ink, CGFloat fill, BOOL plusL);
+// How light the backdrop behind the redesign's badge is, which picks the glass of its details popover.
+void SGAudioQualitySetRedesignedBackdrop(UIView *unitView, CGFloat lightness);
 // The ink and fill the redesign's badge has over a dark backdrop, which a light one raises.
 CGFloat SGAudioQualityStandardInk(void);
 CGFloat SGAudioQualityStandardFill(void);

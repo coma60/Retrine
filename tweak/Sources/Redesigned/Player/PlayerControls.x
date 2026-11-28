@@ -783,6 +783,11 @@ static void invalidateColor(UISlider *slider) {
     }
 }
 static CGFloat sg_scrubHeight;
+// Where the scrubbed track's middle stands, from the middle of the slider's bounds: the resting track's, taken before
+// the scrub begins. Spotify places the track of its highlighted state elsewhere, and a finger dragged up or down past
+// the slider's touch area and back takes the highlight off and on: the held bar, which followed the track's middle,
+// went up and down a few points with it (issue #82).
+static CGFloat sg_scrubMiddle;
 
 // The sibling escapes the slider's highlighted opacity. Only the two native track images give
 // way: PlayerMix's bands are still behind the translucent rail, in their original slider.
@@ -791,6 +796,10 @@ static CGFloat sg_scrubHeight;
 @property (nonatomic, strong) CALayer *fill, *remaining;
 @property (nonatomic, strong) NSHashTable<UIImageView *> *tracks;
 @property (nonatomic) CGFloat restHeight, heldHeight;
+// The middle of the rail from the middle of the slider's bounds, kept from when it was made.
+@property (nonatomic) CGFloat middle;
+// The volume row's (PlayerVolume.m), whose fill at rest is its own, brighter one.
+@property (nonatomic) BOOL volume;
 @property (nonatomic) NSUInteger generation;
 @end
 @implementation SGRHeldBar
@@ -799,13 +808,15 @@ static CGFloat sg_scrubHeight;
 static void updateHeldBar(UISlider *slider) {
     SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
     if (!bar) return;
-    CGRect rect = [slider trackRectForBounds:slider.bounds];
+    CGRect bounds = slider.bounds, rect = [slider trackRectForBounds:bounds];
     BOOL rtl = thumbCentre(slider, slider.minimumValue) > thumbCentre(slider, slider.maximumValue);
     CGFloat range = slider.maximumValue - slider.minimumValue;
     CGFloat share = range > 0 ? (slider.value - slider.minimumValue) / range : 0;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    rect = [slider convertRect:rect toView:slider.superview];
+    // Across, the track's ends; up and down, the place kept when the rail was made, whatever the track's is now.
+    rect = [slider convertRect:CGRectMake(rect.origin.x, CGRectGetMidY(bounds) + bar.middle - bar.heldHeight/2, rect.size.width, bar.heldHeight)
+                        toView:slider.superview];
     bar.frame = CGRectMake(rect.origin.x, CGRectGetMidY(rect)-bar.heldHeight/2, rect.size.width, bar.heldHeight);
     CGFloat width = rect.size.width * share, remaining = rect.size.width-width;
     bar.fill.frame = CGRectMake(rtl ? remaining : 0, 0, width, bar.heldHeight);
@@ -835,16 +846,18 @@ static void removeHeldBar(UISlider *slider) {
     objc_setAssociatedObject(slider, &kHeldKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-static void setHeldBar(UISlider *slider, BOOL on) {
+static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
     SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
     if (!bar) {
-        if (!on) return;
+        if (!on || !slider.superview) return;
         bar = [SGRHeldBar new];
         bar.userInteractionEnabled = NO;
         bar.accessibilityElementsHidden = YES;
         bar.tracks = [NSHashTable weakObjectsHashTable];
+        bar.volume = volume;
         bar.restHeight = [slider maximumTrackImageForState:UIControlStateNormal].size.height ?: SGRPlayerBarHeight;
-        bar.heldHeight = sg_scrubHeight;
+        bar.heldHeight = volume ? SGRPlayerBarDragHeight(bar.restHeight) : sg_scrubHeight;
+        bar.middle = CGRectGetMidY([slider trackRectForBounds:slider.bounds]) - CGRectGetMidY(slider.bounds);
         bar.rail = [UIView new];
         bar.rail.clipsToBounds = YES;
         bar.rail.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -860,7 +873,7 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         updateHeldBar(slider);
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-bar.restHeight)/2);
         bar.rail.layer.cornerRadius = bar.restHeight/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, NO, NO).CGColor);
+        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, NO, volume).CGColor);
         hideTrackImages(slider, bar);
     }
     NSUInteger generation = ++bar.generation;
@@ -868,7 +881,7 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         CGFloat height = on ? bar.heldHeight : bar.restHeight;
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-height)/2);
         bar.rail.layer.cornerRadius = height/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, on, NO).CGColor);
+        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, on, bar.volume).CGColor);
     };
     SGRAnimateLayout(bar, ^{
         // The transition snapshots the rail. Don't also interpolate its bounds during the dissolve.
@@ -878,6 +891,25 @@ static void setHeldBar(UISlider *slider, BOOL on) {
         if (!on && generation == bar.generation && bar == objc_getAssociatedObject(slider, &kHeldKey))
             removeHeldBar(slider);
     });
+}
+
+// The volume row's sliders (PlayerVolume.m) held the same way: a drag of either draws this rail over it rather than
+// taller track images, which UIKit lays out in containers of their own: a container clipped its image while the two
+// grew at different paces, and the round ends came out cut flat (issue #82).
+void SGRPlayerHoldVolumeBar(UISlider *slider, BOOL held) {
+    setHeldBar(slider, held, YES);
+}
+
+void SGRPlayerHeldVolumeBarMoved(UISlider *slider) {
+    SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
+    if (!bar) return;
+    bar.hidden = slider.hidden;
+    updateHeldBar(slider);
+    hideTrackImages(slider, bar);
+}
+
+void SGRPlayerDropVolumeBar(UISlider *slider) {
+    removeHeldBar(slider);
 }
 
 // What a track of the bar shows: Spotify's image (`spotify`), the one drawn from it (`drawn`) and its color.
@@ -948,7 +980,7 @@ static void scrubLook(UISlider *slider, BOOL on) {
         if (sg_scrubSlider != slider) return;
         sg_scrubSlider = nil;
     }
-    if (!on || objc_getAssociatedObject(slider, &kBarKey)) setHeldBar(slider, on);
+    if (!on || objc_getAssociatedObject(slider, &kBarKey)) setHeldBar(slider, on, NO);
     invalidateColor(slider);
     SGRAnimateLayout(slider, ^{
         [slider setNeedsLayout];
@@ -1057,7 +1089,7 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
     CGRect track = %orig;
     if ((UISlider *)self != sg_scrubSlider || track.size.height <= 0) return track;
     CGFloat height = sg_scrubHeight;
-    return CGRectMake(track.origin.x, CGRectGetMidY(track) - height / 2, track.size.width, height);
+    return CGRectMake(track.origin.x, CGRectGetMidY(bounds) + sg_scrubMiddle - height / 2, track.size.width, height);
 }
 
 // PlayerScroll.x and Shared/Haptics/ControlHaptics.x hook the same tracking; all call through.
@@ -1065,10 +1097,12 @@ static BOOL sameBarPixel(UISlider *slider, float value) {
     cancelSeek();
     UISlider *slider = (UISlider *)self;
     // Spotify can select a taller image on touch down. Grow from the normal track, not from that image.
-    CGFloat rest = [slider maximumTrackImageForState:UIControlStateNormal].size.height ?: [slider trackRectForBounds:slider.bounds].size.height;
+    CGRect bounds = slider.bounds, track = [slider trackRectForBounds:bounds];
+    CGFloat rest = [slider maximumTrackImageForState:UIControlStateNormal].size.height ?: track.size.height;
     BOOL tracking = %orig;
     if (tracking) {
         sg_scrubHeight = SGRPlayerBarDragHeight(rest);
+        sg_scrubMiddle = CGRectGetMidY(track) - CGRectGetMidY(bounds);
         SGRProgressRailChanged(slider, YES);
         scrubLook(slider, YES);
     }
@@ -1169,6 +1203,7 @@ static void inkBadge(UIView *host) {
     CGFloat ink = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL).CGColor);
     CGFloat fill = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardFill(), 0, &plusL).CGColor);
     SGAudioQualitySetRedesignedInk(host, ink, fill, plusL);
+    SGAudioQualitySetRedesignedBackdrop(host, SGRBackdropLightnessBehind(badge));
 }
 
 // The badge placed between the times and inked for what is behind it.

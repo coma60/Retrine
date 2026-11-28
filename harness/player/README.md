@@ -323,8 +323,11 @@ come late, out of order, or not at all.
   and a more opaque fill under Increase Contrast, the bar's fill and track
   translucent (opacity 0.5–0.7 and 0.15–0.25), the fill lit whole and the times a step lower while a finger scrubs
   (the badge staying put) and back after, the details (glyph, tier, About 160 kbps, a sentence, the footnote naming
-  Spotify's High), and the native look's badge as it was (Spotify's word, centered on the times). The log ends with
-  `timerow checks: n of 13 right -- PASS` or `FAIL`; on the sources before the time row's change it read 3 of 10.
+  Spotify's High) in dark glass with no reading of the backdrop, in light glass with dark text over a light backdrop
+  (0.8) and in dark glass over a dark one (0.3) (issue #82: dark glass over a light cover was a flat gray slab), and
+  the native look's badge as it was (Spotify's word, centered on the times). The log ends with
+  `timerow checks: n of 32 right -- PASS` or `FAIL`; on the sources before the time row's change it read 3 of 10, and
+  before issue #82's 31 of 32.
 
 - `sponsorblock` is SponsorBlock's marks on the `timerow` mock of Spotify's bar as the redesign draws it
   (`PlayerControls.x`, `Shared/SponsorBlock/SponsorBlockMarkers.m`), run by `../sponsorblock/markers-check.m`: the
@@ -341,14 +344,19 @@ come late, out of order, or not at all.
   MPVolumeView's) it checks the track 7pt as the progress bar's, the same fill and track colors, the fill's end square
   (its last columns as tall as its middle, drawn at 2x) inside round track ends, left to right and right to left, and
   a finger held on the fill's end (`../tabbar/touch.m`) thickening the track to 12pt with the fill lit, as a scrub does
-  the progress bar's, and back after; MPVolumeView must hold the same track images and an empty thumb. Drags
+  the progress bar's: the progress bar's held rail drawn over the slider, a whole capsule (its corner radius half its
+  height) at every frame of the growth with the track images hidden under it, and back after with the images shown
+  (issue #82: taller track images came out cut flat while UIKit's containers grew); MPVolumeView must hold the same
+  track images and an empty thumb. Before that, a finger scrubbing the progress bar is dragged 140pt down, off its
+  touch area (the highlight goes), and back (the mock places its highlighted track 3pt lower, as Spotify's): the held
+  bar and the track's middle stay put (issue #82; before the fix the bar went 3pt up and down with the highlight). Drags
   (`../tabbar/touch.m`) from the track's far end, left to right and right to left, move the volume by the finger's
-  distance over the track (half to a quarter, and back), thickening it too; a tap there moves nothing, and a drag of
+  distance over the track (half to a quarter, and back), thickening it too with the held fill at the value; a tap there moves nothing, and a drag of
   the fill's end moves it once, with the finger. Halfway through a drag, a level from elsewhere (the Connect device's
   report; a hardware button's, on a stand-in for MPVolumeView's slider) stays, the drag going on from it, while a late
   report of the drag's own starting level changes nothing; and the Connect device going mid-drag leaves this iPhone's
-  volume where it was and ends the drag's look. Run it with `python3 harness/player/ui-check.py volumebar`; the log ends
-  with `volumebar checks: n of 17 right -- PASS` or `FAIL`.
+  volume where it was and ends the drag's look, no held rail left over either slider. Run it with
+  `python3 harness/player/ui-check.py volumebar`; the log ends with `volumebar checks: n of 20 right -- PASS` or `FAIL`.
 
 - `seek` is the tap around the progress bar (`PlayerControls.x`): a mock slider with Spotify's identifier and
   the two times beside it. It checks that a tap counts below the bar and up to 12 pt past its ends, not on the

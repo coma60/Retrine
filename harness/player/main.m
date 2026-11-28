@@ -93,6 +93,8 @@
 #import "Shared/Player/PlayerSettings.h"
 #import "Shared/Player/PlayerState.h"
 #import "Shared/Player/AudioQuality.h"
+// AudioQuality.x: the redesign's reading of the backdrop behind the badge, which picks the glass of its details.
+void SGAudioQualitySetRedesignedBackdrop(UIView *unit, CGFloat lightness);
 #import "Shared/Player/SGLastTrack.h"
 #import "Redesigned/Kit/SGRRefinements.h"
 #import "Redesigned/Kit/SGRRestyle.h"
@@ -474,6 +476,12 @@ static BOOL testCoverDrag;
 @interface _TtCO17NowPlaying_ECMKit11ProgressBar6Slider : UISlider @end
 @implementation _TtCO17NowPlaying_ECMKit11ProgressBar6Slider
 static NSUInteger sliderIdentifierReads;
+// Spotify places its highlighted track elsewhere than its resting one (issue #82): this far lower while highlighted.
+static CGFloat sliderHighlightShift;
+- (CGRect)trackRectForBounds:(CGRect)bounds {
+    CGRect track = [super trackRectForBounds:bounds];
+    return self.highlighted ? CGRectOffset(track, 0, sliderHighlightShift) : track;
+}
 - (NSString *)accessibilityIdentifier { sliderIdentifierReads++; return super.accessibilityIdentifier; }
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event { return YES; }
 - (void)endTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {}
@@ -5254,7 +5262,40 @@ static UISlider *spotifyBar(UIView *unit, NSArray<UILabel *> **labels) {
         }
         NSArray<NSString *> *want = @[@"(glyph)", @"High Quality", @"About 160 kbps", @"A higher bitrate that brings out more of the detail.", @"Playing now · Spotify High"];
         [self expect:[seen isEqualToArray:want] step:@"the details" detail:[seen componentsJoinedByString:@" | "]];
+        [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark step:@"the details in dark glass with no reading of the backdrop"
+              detail:[NSString stringWithFormat:@"style %ld", (long)panel.traitCollection.userInterfaceStyle]];
         [panel dismissViewControllerAnimated:NO completion:nil];
+    }],
+    // Issue #82: over a light cover dark glass is a flat gray slab; the details come up in light glass there.
+    @[PLAYER_GATE(!self.window.rootViewController.presentedViewController), ^{
+        SGAudioQualitySetRedesignedBackdrop(unit, 0.8);
+        [badge accessibilityActivate];
+    }],
+    @[PLAYER_GATE(self.window.rootViewController.presentedViewController.view.window), ^{
+        UIViewController *panel = self.window.rootViewController.presentedViewController;
+        UIView *stack = panel.viewIfLoaded;
+        UILabel *title = [stack isKindOfClass:UIStackView.class] && ((UIStackView *)stack).arrangedSubviews.count > 1 ? ((UIStackView *)stack).arrangedSubviews[1] : nil;
+        CGFloat white = 1;
+        [[title.textColor resolvedColorWithTraitCollection:title.traitCollection] getWhite:&white alpha:NULL];
+        [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight && panel.presentationController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight
+                     && [title isKindOfClass:UILabel.class] && white < 0.3
+                step:@"over a light backdrop, the details in light glass with dark text"
+              detail:[NSString stringWithFormat:@"style %ld, presentation %ld, title white %.2f", (long)panel.traitCollection.userInterfaceStyle,
+                      (long)panel.presentationController.traitCollection.userInterfaceStyle, white]];
+        [panel dismissViewControllerAnimated:NO completion:nil];
+    }],
+    @[PLAYER_GATE(!self.window.rootViewController.presentedViewController), ^{
+        SGAudioQualitySetRedesignedBackdrop(unit, 0.3);
+        [badge accessibilityActivate];
+    }],
+    @[PLAYER_GATE(self.window.rootViewController.presentedViewController.view.window), ^{
+        UIViewController *panel = self.window.rootViewController.presentedViewController;
+        [self expect:panel.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark && panel.presentationController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+                step:@"over a dark backdrop, the details in dark glass" detail:[NSString stringWithFormat:@"style %ld", (long)panel.traitCollection.userInterfaceStyle]];
+        [panel dismissViewControllerAnimated:NO completion:nil];
+        SGAudioQualitySetRedesignedBackdrop(unit, -1);
+    }],
+    @[PLAYER_GATE(!self.window.rootViewController.presentedViewController), ^{
 
         // A larger text size (9.2.0 at Accessibility Medium: 21pt digits in 25pt labels): Spotify gives the times
         // their new font and size and does not lay the unit out again; the badge follows onto the new baseline.
@@ -5350,6 +5391,25 @@ static void moveVolumeFinger(UITouch *finger, CGPoint to, dispatch_block_t arriv
     [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 
+// The held rail (PlayerControls.x's SGRHeldBar) drawn over `slider` while a finger holds it; nil at rest.
+static UIView *heldRail(UISlider *slider) {
+    for (UIView *view in slider.superview.subviews) {
+        if ([view isKindOfClass:NSClassFromString(@"SGRHeldBar")] && CGRectIntersectsRect(view.frame, slider.frame)) return view;
+    }
+    return nil;
+}
+
+// Whether every track image view of `slider` is hidden (under a held rail) or shown (at rest).
+static BOOL trackImagesHidden(UISlider *slider, BOOL hidden) {
+    __block NSUInteger seen = 0, wrong = 0;
+    SGForEachView(slider, ^(UIView *view) {
+        if (![view isKindOfClass:UIImageView.class] || view.bounds.size.width <= 12) return;
+        seen++;
+        if (view.hidden != hidden) wrong++;
+    });
+    return (seen || !hidden) && !wrong;
+}
+
 // The volume row (PlayerVolume.m) beside the progress bar as the redesign draws it (a mock of Spotify's, as timerow's),
 // the Music app's two bars alike: the same track, 7pt as Spotify's images, the same colors, the fill's end square at
 // the value inside round track ends, also right to left, and a drag thickening it to 12pt (7 x 1.75) with the fill
@@ -5429,24 +5489,91 @@ static void moveVolumeFinger(UITouch *finger, CGPoint to, dispatch_block_t arriv
     [bar layoutIfNeeded];
     CGFloat barScrub = [bar trackRectForBounds:bar.bounds].size.height;
     [bar endTrackingWithTouch:[UITouch new] withEvent:nil];
-    CGRect thumbRect = [remote thumbRectForBounds:remote.bounds trackRect:[remote trackRectForBounds:remote.bounds] value:remote.value];
-    CGPoint thumbPoint = [remote convertPoint:CGPointMake(CGRectGetMidX(thumbRect), CGRectGetMidY(remote.bounds)) toView:self.window];
-    __block UITouch *finger = SGHarnessTouchDown(self.window, thumbPoint);
     NSMutableArray *script = [NSMutableArray array];
     void (^when)(NSArray *, dispatch_block_t) = ^(NSArray *gate, dispatch_block_t block) { [script addObject:@[gate, block]]; };
-    when(PLAYER_GATE(remote.tracking), ^{
-        CGFloat grown = [remote trackRectForBounds:remote.bounds].size.height;
-        CGFloat litFill = middleAlpha([remote minimumTrackImageForState:UIControlStateNormal]);
-        [self expect:remote.tracking && grown == 12 && barScrub == 12 && litFill > 0.95 step:@"a drag thickens it and lights the fill as a scrub does"
-              detail:[NSString stringWithFormat:@"tracking %d, volume %.1f pt, progress bar scrubbing %.1f pt (want 12), fill %.2f", remote.tracking, grown, barScrub, litFill]];
-        SGHarnessTouchUp(finger, thumbPoint);
+
+    // Issue #82: a finger scrubbing the progress bar and dragged up or down past its touch area and back takes the
+    // highlight off and on, and Spotify places its highlighted track lower: the held bar stays where it is.
+    __block UITouch *finger;
+    __block CGPoint scrubAt;
+    __block CGRect heldAt;
+    __block BOOL arrived = NO;
+    CGFloat (^trackMiddle)(void) = ^CGFloat { return CGRectGetMidY([bar trackRectForBounds:bar.bounds]); };
+    __block CGFloat middleAt;
+    when(PLAYER_GATE(!heldRail(bar)), ^{
+        sliderHighlightShift = 3;
+        CGRect thumb = [bar thumbRectForBounds:bar.bounds trackRect:[bar trackRectForBounds:bar.bounds] value:bar.value];
+        scrubAt = [bar convertPoint:CGPointMake(CGRectGetMidX(thumb), CGRectGetMidY(bar.bounds)) toView:self.window];
+        finger = SGHarnessTouchDown(self.window, scrubAt);
     });
-    when(PLAYER_GATE(!remote.tracking), ^{
+    when(PLAYER_GATE(bar.tracking && bar.highlighted && heldRail(bar)), ^{
+        heldAt = heldRail(bar).frame;
+        middleAt = trackMiddle();
+        moveVolumeFinger(finger, CGPointMake(scrubAt.x, scrubAt.y + 140), ^{ arrived = YES; });
+    });
+    when(PLAYER_GATE(arrived), ^{
+        arrived = NO;
+        [bar layoutIfNeeded];
+        CGRect held = heldRail(bar).frame;
+        [self expect:bar.tracking && !bar.highlighted && CGRectGetMinY(held) == CGRectGetMinY(heldAt) && trackMiddle() == middleAt
+                step:@"a scrub dragged down off the bar: the held bar stays put"
+              detail:[NSString stringWithFormat:@"highlighted %d, held bar at %.2f (was %.2f), track middle %.2f (was %.2f)", bar.highlighted,
+                      CGRectGetMinY(held), CGRectGetMinY(heldAt), trackMiddle(), middleAt]];
+        moveVolumeFinger(finger, scrubAt, ^{ arrived = YES; });
+    });
+    when(PLAYER_GATE(arrived), ^{
+        arrived = NO;
+        [bar layoutIfNeeded];
+        CGRect held = heldRail(bar).frame;
+        [self expect:bar.tracking && bar.highlighted && CGRectGetMinY(held) == CGRectGetMinY(heldAt) && trackMiddle() == middleAt
+                step:@"and back onto it: still put"
+              detail:[NSString stringWithFormat:@"highlighted %d, held bar at %.2f (was %.2f), track middle %.2f (was %.2f)", bar.highlighted,
+                      CGRectGetMinY(held), CGRectGetMinY(heldAt), trackMiddle(), middleAt]];
+        SGHarnessTouchUp(finger, scrubAt);
+    });
+    when(PLAYER_GATE(!bar.tracking && !heldRail(bar)), ^{
+        sliderHighlightShift = 0;
+        [bar layoutIfNeeded];
+        CGRect thumbRect = [remote thumbRectForBounds:remote.bounds trackRect:[remote trackRectForBounds:remote.bounds] value:remote.value];
+        scrubAt = [remote convertPoint:CGPointMake(CGRectGetMidX(thumbRect), CGRectGetMidY(remote.bounds)) toView:self.window];
+        finger = SGHarnessTouchDown(self.window, scrubAt);
+    });
+    // The rail grows from the track's 7pt to 12 on the layout spring, a whole capsule (its corner radius half its height)
+    // at every frame, the track's images hidden under it: taller track images cut flat by UIKit's own clip there (#82).
+    __block BOOL grown = NO, capsule = YES, between = NO;
+    when(PLAYER_GATE(remote.tracking && heldRail(remote)), ^{
+        UIView *rail = [heldRail(remote) valueForKey:@"rail"];
+        SGRHarnessFrameCheck *watch = [SGRHarnessFrameCheck new];
+        watch.check = ^BOOL {
+            CALayer *shown = rail.layer.presentationLayer ?: rail.layer;
+            CGFloat height = shown.bounds.size.height;
+            if (fabs(shown.cornerRadius - height / 2) > 0.25) capsule = NO;
+            if (height > 7.25 && height < 11.75) between = YES;
+            if (!rail.layer.animationKeys.count) { grown = YES; return YES; }
+            return NO;
+        };
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:watch selector:@selector(frame:)];
+        [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    });
+    when(PLAYER_GATE(grown), ^{
+        UIView *held = heldRail(remote);
+        UIView *rail = [held valueForKey:@"rail"];
+        CALayer *fill = [held valueForKey:@"fill"];
+        [self expect:remote.tracking && rail.bounds.size.height == 12 && rail.layer.cornerRadius == 6 && fill.opacity > 0.95 && barScrub == 12
+                     && capsule && between && trackImagesHidden(remote, YES)
+                step:@"a drag thickens it and lights the fill as a scrub does, a capsule all the way"
+              detail:[NSString stringWithFormat:@"tracking %d, rail %.1f pt, radius %.1f, progress bar scrubbing %.1f pt (want 12), fill %.2f, capsule %d, grew %d, images hidden %d",
+                      remote.tracking, rail.bounds.size.height, rail.layer.cornerRadius, barScrub, fill.opacity, capsule, between, trackImagesHidden(remote, YES)]];
+        SGHarnessTouchUp(finger, scrubAt);
+    });
+    when(PLAYER_GATE(!remote.tracking && !heldRail(remote)), ^{
         CGFloat back = [remote trackRectForBounds:remote.bounds].size.height;
         CGFloat backFill = middleAlpha([remote minimumTrackImageForState:UIControlStateNormal]);
         // The finger lifted where it went down: the value where it was, to the hold's fraction of a point.
-        [self expect:back == 7 && backFill == barFill && fabs(remote.value - 0.5) < 0.005 step:@"the drag over"
-              detail:[NSString stringWithFormat:@"%.1f pt, fill %.2f, value %.2f", back, backFill, remote.value]];
+        // The fill at rest for the backdrop as it reads now (a reading may have come since the colors were compared).
+        CGFloat restFill = CGColorGetAlpha(SGRPlayerBarFillOver(row, NO, YES).CGColor);
+        [self expect:back == 7 && fabs(backFill - restFill) < 0.01 && restFill < 0.9 && trackImagesHidden(remote, NO) && fabs(remote.value - 0.5) < 0.005 step:@"the drag over"
+              detail:[NSString stringWithFormat:@"%.1f pt, fill %.3f (want %.3f), images shown %d, value %.4f", back, backFill, restFill, trackImagesHidden(remote, NO), remote.value]];
     });
 
     // Drags that start away from the fill's end move the volume by the finger's distance over the track, never to the
@@ -5459,20 +5586,25 @@ static void moveVolumeFinger(UITouch *finger, CGPoint to, dispatch_block_t arriv
     };
     CGPoint (^by)(CGPoint, CGFloat) = ^CGPoint(CGPoint point, CGFloat dx) { return CGPointMake(point.x + dx, point.y); };
     __block float tapped = 0;
-    __block BOOL arrived = NO;
     when(PLAYER_GATE(remote.window), ^{
+        arrived = NO;
         finger = SGHarnessTouchDown(self.window, edge(YES));
         moveVolumeFinger(finger, by(edge(YES), -quarter / 2), ^{ arrived = YES; });
     });
     when(PLAYER_GATE(arrived), ^{
-        CGFloat grown = [remote trackRectForBounds:remote.bounds].size.height;
-        [self expect:grown == 12 && middleAlpha([remote minimumTrackImageForState:UIControlStateNormal]) > 0.95 step:@"a drag from the far end thickens it too"
-              detail:[NSString stringWithFormat:@"%.1f pt (want 12)", grown]];
+        // The held fill follows the value the drag writes.
+        UIView *held = heldRail(remote);
+        CGFloat railHeight = [[held valueForKey:@"rail"] bounds].size.height;
+        CALayer *fill = [held valueForKey:@"fill"];
+        CGFloat want = held.bounds.size.width * remote.value;
+        [self expect:railHeight == 12 && fill.opacity > 0.95 && fabs(fill.frame.size.width - want) < 1 && trackImagesHidden(remote, YES)
+                step:@"a drag from the far end thickens it too, the fill at the value"
+              detail:[NSString stringWithFormat:@"%.1f pt (want 12), fill %.1f pt wide (want %.1f)", railHeight, fill.frame.size.width, want]];
         arrived = NO;
         CGPoint target = by(edge(YES), -quarter);
         moveVolumeFinger(finger, target, ^{ SGHarnessTouchUp(finger, target); arrived = YES; });
     });
-    when(PLAYER_GATE(arrived && [remote trackRectForBounds:remote.bounds].size.height == 7), ^{
+    when(PLAYER_GATE(arrived && !heldRail(remote)), ^{
         [self expect:fabs(remote.value - 0.25) < 0.02 && fabs(SGRHarnessConnectLevel - remote.value) < 0.001
                      && [remote trackRectForBounds:remote.bounds].size.height == 7
                 step:@"a drag from the far end a quarter left moves half to a quarter, the device too"
@@ -5489,7 +5621,7 @@ static void moveVolumeFinger(UITouch *finger, CGPoint to, dispatch_block_t arriv
         CGPoint target = by(edge(NO), -quarter);
         moveVolumeFinger(finger, target, ^{ SGHarnessTouchUp(finger, target); arrived = YES; });
     });
-    when(PLAYER_GATE(arrived && [remote trackRectForBounds:remote.bounds].size.height == 7), ^{
+    when(PLAYER_GATE(arrived && !heldRail(remote)), ^{
         [self expect:fabs(remote.value - 0.5) < 0.02 step:@"right to left, a drag a quarter left from the far end turns it up a quarter"
               detail:[NSString stringWithFormat:@"value %.3f (want 0.5)", remote.value]];
         remote.semanticContentAttribute = UISemanticContentAttributeUnspecified;
@@ -5595,8 +5727,13 @@ static void moveVolumeFinger(UITouch *finger, CGPoint to, dispatch_block_t arriv
                 step:@"the Connect device gone during a drag: this iPhone's volume untouched, the drag over"
               detail:[NSString stringWithFormat:@"Connect %.3f when it went, this iPhone %.3f (want 0.100), Connect slider's track %.1f pt (want 7)",
                       before, local.value, look]];
-        [self finishVolumeBar];
     });
+    // The cancelled drag's rail goes as a released one does, and no rail is left over either slider.
+    [script addObject:@[PLAYER_GATE(!heldRail(remote) && !heldRail(local)), ^{
+        [self expect:trackImagesHidden(remote, NO) && trackImagesHidden(local, NO) step:@"no held rail left, the tracks shown"
+              detail:[NSString stringWithFormat:@"Connect shown %d, this iPhone's shown %d", trackImagesHidden(remote, NO), trackImagesHidden(local, NO)]];
+        [self finishVolumeBar];
+    }]];
     runScript(script, 0);
 }
 

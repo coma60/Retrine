@@ -25,7 +25,8 @@ static const CGFloat kGlyphsHalf = 14;
 
 // The slider is drawn as the progress bar above is (Player.h, SGRPlayerBarImage) on every iOS, the Music app's look:
 // the fill ends square inside the round track, and a drag thickens the track and lights the fill as a scrub does the
-// progress bar's. Such a slider tracks only a touch on its thumb, the fill's end; a sideways drag that starts anywhere
+// progress bar's, with the progress bar's held rail drawn over the slider while it is held. Such a slider tracks only
+// a touch on its thumb, the fill's end; a sideways drag that starts anywhere
 // else on the row moves the volume by the distance the finger goes, as iOS 26's thumbless slider and the Music app's
 // do, and a tap there moves nothing. MPVolumeView keeps the images it is given for every slider it makes; it makes one
 // when it lays out and may make another later, so each new one gets the drag's feedback after each of its layouts.
@@ -58,7 +59,7 @@ static const CGFloat kGlyphsHalf = 14;
     CGFloat _panAt;                     // where the finger was at the drag's last write
     float _panStart;                    // the level the finger's distance from _panFrom applies to
     NSMutableSet<NSNumber *> *_panOwn;  // the levels the drag wrote, with the one it began at
-    BOOL _dragging;                     // the bar is painted for a finger's drag
+    NSHashTable<UISlider *> *_held;     // the sliders a finger's drag holds, drawn with the held rail
     BOOL _inkObserved;
 }
 
@@ -93,7 +94,8 @@ static UIImageView *glyph(NSString *symbol) {
     [self addSubview:_loud];
     _remote = [UISlider new];
     [_remote setThumbImage:[UIImage new] forState:UIControlStateNormal];
-    [self paintDragging:NO];
+    _held = [NSHashTable weakObjectsHashTable];
+    [self paint];
     _remote.accessibilityLabel = SGL(@"player.volume", @"Volume");
     SGInstallVolumeFeedback(_remote);
     [self followDrags:_remote];
@@ -115,6 +117,7 @@ static UIImageView *glyph(NSString *symbol) {
     _volume.hidden = remote;
     // A level the Connect device reports during a drag of the row shows too: the drag goes on from it (panned:).
     if (remote && !_remote.tracking) _remote.value = value;
+    SGRPlayerHeldVolumeBarMoved(_remote);
     // The other slider now shows: the drag ends without touching it.
     if (_panSlider && _panSlider != [self shownSlider]) [self cancelDrag];
 }
@@ -205,11 +208,10 @@ static UIImageView *glyph(NSString *symbol) {
     if (!SGRConnectSetVolume(slider.value)) [self refreshVolume];
 }
 
-// Both sliders' tracks, of which one shows: the bar's, thickened with the fill lit while a finger drags one.
-- (void)paintDragging:(BOOL)dragging {
-    CGFloat height = dragging ? SGRPlayerBarDragHeight(SGRPlayerBarHeight) : SGRPlayerBarHeight;
-    _dragging = dragging;
-    UIImage *fill = SGRPlayerBarImage(SGRPlayerBarFillOver(self, dragging, YES), height), *track = SGRPlayerBarImage(SGRPlayerBarTrackOver(self), height);
+// Both sliders' tracks, of which one shows: the bar's at rest. A finger's drag draws the held rail over them.
+- (void)paint {
+    CGFloat height = SGRPlayerBarHeight;
+    UIImage *fill = SGRPlayerBarImage(SGRPlayerBarFillOver(self, NO, YES), height), *track = SGRPlayerBarImage(SGRPlayerBarTrackOver(self), height);
     // The speaker glyphs stand where the bar's fill does (measured: 0.46 added), so they follow the backdrop the same way.
     UIColor *ink = [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(self, kGlyphInkAlpha, kGlyphInkAdd)];
     _quiet.tintColor = ink;
@@ -226,6 +228,7 @@ static UIImageView *glyph(NSString *symbol) {
     if ([slider actionsForTarget:self forControlEvent:UIControlEventTouchDown].count) return;
     [slider addTarget:self action:@selector(dragBegan:) forControlEvents:UIControlEventTouchDown];
     [slider addTarget:self action:@selector(dragEnded:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+    [slider addTarget:self action:@selector(dragMoved:) forControlEvents:UIControlEventValueChanged];
 }
 
 - (void)dragBegan:(UISlider *)slider {
@@ -236,13 +239,15 @@ static UIImageView *glyph(NSString *symbol) {
     [self showDrag:NO on:slider];
 }
 
-// The new track is laid out on the layout spring, as the progress bar's is; under Reduce Motion the slider crossfades.
+- (void)dragMoved:(UISlider *)slider {
+    SGRPlayerHeldVolumeBarMoved(slider);
+}
+
+// The held rail grows on the layout spring and back, as the progress bar's does; under Reduce Motion it crossfades.
 - (void)showDrag:(BOOL)dragging on:(UISlider *)slider {
-    SGRAnimateLayout(slider, ^{
-        [self paintDragging:dragging];
-        [slider setNeedsLayout];
-        [slider layoutIfNeeded];
-    }, nil);
+    if (dragging) [_held addObject:slider];
+    else [_held removeObject:slider];
+    SGRPlayerHoldVolumeBar(slider, dragging);
 }
 
 - (void)didMoveToWindow {
@@ -252,10 +257,9 @@ static UIImageView *glyph(NSString *symbol) {
     // Painted again at each new reading of the backdrop, in whichever state the bar is.
     __weak SGRVolumeRow *weak = self;
     SGRBackdropInkObserve(self, ^{
-        SGRVolumeRow *row = weak;
-        if (row) [row paintDragging:row->_dragging];
+        [weak paint];
     });
-    [self paintDragging:_dragging];
+    [self paint];
 }
 
 - (void)layoutSubviews {
@@ -275,6 +279,15 @@ static UIImageView *glyph(NSString *symbol) {
         if (![slider isKindOfClass:UISlider.class]) continue;
         glyphs = CGRectGetMidY([_volume convertRect:slider.frame toView:self]);
         [self followDrags:slider];
+    }
+    // A held rail follows its slider; one whose slider MPVolumeView has let go (it makes a new one) goes with it.
+    for (UISlider *slider in _held.allObjects) {
+        if (slider.superview == _volume || slider == _remote) {
+            SGRPlayerHeldVolumeBarMoved(slider);
+        } else {
+            [_held removeObject:slider];
+            SGRPlayerDropVolumeBar(slider);
+        }
     }
     _quiet.frame = CGRectMake(0, glyphs - side / 2, side / 2 + kGlyphSize / 2, side);
     _loud.frame = CGRectMake(CGRectGetMaxX(bounds) - side / 2 - kGlyphSize, glyphs - side / 2, side / 2 + kGlyphSize, side);

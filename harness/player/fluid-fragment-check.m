@@ -24,7 +24,20 @@ int main(void) {
                 [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)];
             if (![textures isEqual:expected]) HARNESS_FAIL(@"%@ reads cover slots %@", name, textures);
         }
-        puts("PASS: settled pass reads only the destination; the fade reads both covers");
+        MTLRenderPipelineDescriptor *show = [MTLRenderPipelineDescriptor new];
+        show.vertexFunction = [library newFunctionWithName:@"showVertex"];
+        show.fragmentFunction = [library newFunctionWithName:@"showFragment"];
+        show.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+        MTLRenderPipelineReflection *showRefl;
+        if (![device newRenderPipelineStateWithDescriptor:show options:MTLPipelineOptionBindingInfo reflection:&showRefl error:&error])
+            HARNESS_FAIL(@"pipeline show: %@", error);
+        NSUInteger showUniformSize = 0;
+        for (id<MTLBinding> binding in showRefl.fragmentBindings) {
+            if (binding.type == MTLBindingTypeBuffer && binding.index == 0)
+                showUniformSize = ((id<MTLBufferBinding>)binding).bufferDataSize;
+        }
+        if (showUniformSize != 64) HARNESS_FAIL(@"ShowU buffer size %lu, expected 64", (unsigned long)showUniformSize);
+        puts("PASS: settled pass reads only the destination; fade reads both; show pipeline links with 64-byte ShowU");
     }
     return 0;
 }

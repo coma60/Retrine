@@ -19,12 +19,23 @@
 //   3. Shown through a mesh: held still, flat and a quarter larger; flowing, bent by one of two 6 x 6 grids and
 //      breathing from the one to the other once in 2 pi * 3.5 s of its clock; going from held to flowing eased in and
 //      out (kSettleClock).
-//      Each pixel is mixed toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable).
+//      Each pixel is mixed toward white by 0.1 and passed through a 32 x 32 x 32 color table (Retrine's own grade, SGRFluidGradeTable),
+//      then darkened toward the visible rect's foot (kShadeFrom, kShadeEase, kShadePeak).
 // The grids are Retrine's own, made at random per layer, 6 x 6 points: the inner points well off the even grid,
 // the edge points sliding along their side, the corners in place, and the second grid the first with two to eight
 // inner points moved, so the breathing stirs a few places only. They never fold (makeMesh).
 static const float kCopyScrim = 0.5f, kCopyScrimStep = 0.0075f, kWhite = 0.1f;
 static const float kCopySaturation = 2.4f;
+// Each copy is clamped to 0 to 1 before the blur, as the Music app's 8-bit picture holds it. Kept past 0 through the
+// blur, a saturated cover's lowest channel went to 0 on screen and the backdrop turned neon: beside the Music app over
+// Man in The Moon its green stood at 9 to 12 of 255 where the Music app's stands at 32, over Celestial its red at 0 to
+// 30 where the Music app's stands at 26 to 112. Clamped, the lowest channel lands within 2 of the Music app's.
+// The Music app's backdrop also darkens toward the foot, under the controls (Celestial's teal goes from 125 at the top
+// to 68 at the foot, Man in The Moon's from 146 to 104): none down to kShadeFrom of the visible rect, then along
+// x^kShadeEase to kShadePeak at its foot, on encoded values as the Light copies' shade is (SGRFluid.m). Simulated over
+// both covers at the moments of the turn that matched best, the two took Retrine from 26.2 and 18.3 of 255 off the
+// Music app's screenshots to 13.7 and 6.4 (16.6 and 12.1 to 8.2 and 5.3 from the Music app's own covers).
+static const float kShadeFrom = 0.2f, kShadeEase = 1.9f, kShadePeak = 0.4f;
 static const float kBlurPoints = 160;
 // The music, heard as the Music app's backdrop seems to (SGMusicSpectrum.h): the bands' levels, averaged over the last four
 // readings by these weights (oldest first), held at their peak and let down by these shares of themselves each of its
@@ -80,6 +91,7 @@ typedef struct {
     float cap;             // the most linear luminance (Increase Contrast), 0 for none
     float grain;           // the noise's spread in eight-bit steps
     float zoom;
+    float shadeFrom, shadeEase, shadePeak;   // the foot's shade (kShade*)
 } ShowUniforms;
 
 // Two grids' shifts off the even 6 x 6 grid, row by row from the visible rect's top left, in shares of its size.
@@ -186,9 +198,12 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct CopyU { float2 center; float2 scale; float halfSide; float angle; float scrim; float saturation; float contrast; float progress; };\n"
 "struct BlurU { float2 step; float sigma; int radius; };\n"
-"struct ShowU { float4 visible; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom; };\n"
+"struct ShowU { float4 visible; float playing; float breath; float warp; float white; float gain; float cap; float grain; float zoom;\n"
+"               float shadeFrom; float shadeEase; float shadePeak; };\n"
 "struct CV { float4 position [[position]]; float2 uv; uint copy [[flat]]; };\n"
 "struct V { float4 position [[position]]; float2 uv; };\n"
+// The show pass's point also carries how far down the visible rect it is drawn (0 at its top, 1 at its foot).
+"struct SV { float4 position [[position]]; float2 uv; float down; };\n"
 // A copy: a square turned about its own center, clockwise (y up), placed and scaled into clip space.
 "vertex CV copyVertex(uint vid [[vertex_id]], uint iid [[instance_id]], constant CopyU *u [[buffer(0)]]) {\n"
 "    CopyU c = u[iid];\n"
@@ -206,7 +221,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    rgb = mix(rgb, float3(0.0), c.scrim);\n"
 "    rgb = (rgb - 0.5) * c.contrast + 0.5;\n"
 "    float l = dot(rgb, float3(0.2126, 0.7152, 0.0722));\n"
-"    return float4(l + c.saturation * (rgb - l), 1.0);\n"
+"    return float4(saturate(l + c.saturation * (rgb - l)), 1.0);\n"
 "}\n"
 "fragment float4 copyFragment(CV in [[stage_in]], constant CopyU *u [[buffer(0)]],\n"
 "                             texture2d<float> to [[texture(1)]], sampler s [[sampler(0)]]) {\n"
@@ -245,7 +260,7 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    return mix(mix(grid[k], grid[k + 1], f.x), mix(grid[k + 6], grid[k + 7], f.x), f.y);\n"
 "}\n"
 // The mesh: each point of the picture (uv) drawn where the held zoom or the breathing grids put it.
-"vertex V showVertex(uint vid [[vertex_id]], constant ShowU &u [[buffer(0)]], constant MeshU &m [[buffer(1)]]) {\n"
+"vertex SV showVertex(uint vid [[vertex_id]], constant ShowU &u [[buffer(0)]], constant MeshU &m [[buffer(1)]]) {\n"
 "    const uint n = 24u;\n"
 "    uint cell = vid / 6u, k = vid % 6u;\n"
 "    uint cx = cell % n, cy = cell / n;\n"
@@ -257,16 +272,17 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "    float2 q = (uv - u.visible.xy) / u.visible.zw;\n"
 "    float2 bent = uv + u.warp * mix(shiftAt(m.first, q), shiftAt(m.second, q), u.breath) * u.visible.zw;\n"
 "    float2 p = mix(held, bent, u.playing);\n"
-"    V v;\n"
+"    SV v;\n"
 "    v.position = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);\n"
 // Upside down: the Music app's display mesh gives each point the picture's texel at the same grid place, with the grid's
 // y running up the screen and the picture's down, so its backdrop shows the cover's foot at the top.
 "    v.uv = float2(uv.x, 2.0 * middle.y - uv.y);\n"
+"    v.down = (p.y - u.visible.y) / u.visible.w;\n"
 "    return v;\n"
 "}\n"
 "static float3 decodeSRGB(float3 c) { return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045); }\n"
 "static float3 encodeSRGB(float3 c) { return select(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, c <= 0.0031308); }\n"
-"fragment float4 showFragment(V in [[stage_in]], constant ShowU &u [[buffer(0)]], texture2d<float> picture [[texture(0)]],\n"
+"fragment float4 showFragment(SV in [[stage_in]], constant ShowU &u [[buffer(0)]], texture2d<float> picture [[texture(0)]],\n"
 "                             texture3d<float> table [[texture(1)]], sampler s [[sampler(0)]]) {\n"
 "    float3 c = picture.sample(s, in.uv).rgb;\n"
 "    c = mix(c, float3(1.0), u.white);\n"
@@ -278,6 +294,8 @@ static NSString *const kShader = @"#include <metal_stdlib>\n"
 "        if (u.cap > 0.0 && light > u.cap) lin *= u.cap / light;\n"
 "        c = encodeSRGB(saturate(lin));\n"
 "    }\n"
+"    float foot = saturate((in.down - u.shadeFrom) / (1.0 - u.shadeFrom));\n"
+"    c *= 1.0 - u.shadePeak * pow(foot, u.shadeEase);\n"
 "    uint2 ip = uint2(in.position.xy);\n"
 "    uint h = ip.x * 1973u + ip.y * 9277u;\n"
 "    h = (h ^ (h >> 13)) * 1274126177u;\n"
@@ -315,8 +333,8 @@ static void finish(NSError *error) {
     });
 }
 
-// The pictures between the copies and the screen are half floats: what the saturation pushes below 0 or above 1 is kept through the blur, which
-// leaves a strong color deeper than an 8-bit picture, clamped first, would.
+// The pictures between the copies and the screen are half floats, so the blur does not band; the copies are clamped to
+// 0 to 1 before it (kShade*'s note), as the Music app's 8-bit picture is.
 static const MTLPixelFormat kPictureFormat = MTLPixelFormatRGBA16Float;
 
 static id<MTLRenderPipelineState> pipeline(id<MTLLibrary> library, NSString *vertex, NSString *fragment, MTLPixelFormat format, NSError **error) {
@@ -862,6 +880,9 @@ static float easeInOut(float x) {
         .cap = _contrast ? 0.04f : 0,
         .grain = grainSteps(_grain),
         .zoom = kHeldZoom,
+        .shadeFrom = kShadeFrom,
+        .shadeEase = kShadeEase,
+        .shadePeak = kShadePeak,
     };
     MTLRenderPassDescriptor *showPass = [MTLRenderPassDescriptor renderPassDescriptor];
     showPass.colorAttachments[0].texture = output.texture;

@@ -73,8 +73,10 @@ static const CGFloat kBackdropBlack = 0.526, kBackdropSaturation = 2.52, kBackdr
 // Beside the Music app's player, at the moments of the turn that matched it best over four covers, the brightest
 // channel stood where its does and the lowest higher: an orange's blue 5 to 17 of 255 over (Fuel, November Rain), a
 // teal's red 7 over. Taking the lowest down by this share of the spread brought the four from 6.4 of 255 off on
-// average to 5.3 (simulated), matching its look rather than any stage of it.
-static const CGFloat kBackdropDepth = 0.20;
+// average to 5.3 (simulated), matching its look rather than any stage of it. Over a cover more saturated than those
+// (Man in The Moon's magenta and red) the same share took the lowest channel well under the Music app's, the neon look
+// of issue #82 (27.4 of 255 off its screenshot, simulated, against 19.5 without it, and 24 at half), so it is halved.
+static const CGFloat kBackdropDepth = 0.10;
 static const CGFloat kBackdropLoudness = 0.06, kBackdropContrastPerLoudness = 0.076, kBackdropSaturationPerLoudness = 0.166;
 
 // Retrine's grade for the backdrop, on an encoded color `e` (0 to 1), made to look like the Music app's. What its color
@@ -431,7 +433,7 @@ NSData *SGRFluidGradeTable(int side) {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _canvas.hidden = _gpuShown;
-    // The Music app has no shade over its backdrop; the GPU renderer is drawn as its is.
+    // The GPU renderer draws its own shade (SGRFluidGPU.m's kShade*).
     _shade.hidden = _gpuShown;
     [CATransaction commit];
     [self updateCopies];

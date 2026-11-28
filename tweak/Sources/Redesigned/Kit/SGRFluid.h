@@ -1,7 +1,8 @@
 // Fluid artwork: the cover itself, blurred and slowly turning behind the player, drawn as the Music app draws its
 // backdrop: on the GPU (SGRFluidGPU.h), three turning copies of the cover in a quarter-size picture, mixed toward
-// black and saturated, blurred, and shown through a breathing mesh, mixed toward white and color-graded. Where Metal
-// cannot draw (or until its first frame) Core Animation copies stand in (Light), with a shade over the bottom.
+// black and saturated (clamped as an 8-bit picture), blurred, and shown through a breathing mesh, mixed toward white,
+// color-graded and darkened toward its foot. Where Metal cannot draw (or until its first frame) Core Animation copies
+// stand in (Light), with a shade over the bottom.
 //
 // The Player page tunes it with six sliders (Redesigned/Player/PlayerSettings.m), stored as whole numbers under
 // spotifyglass.redesign.fluid.<speed|warp|blur|saturation|brightness|grain>. Every layer follows a change at once.

@@ -1333,7 +1333,7 @@ static SGRPlayerMotionView *sg_coverClip;   // a square clip, in the cover rathe
 static NSString *sg_track;   // the track playing
 static NSString *sg_shown;   // the track sg_motion is the clip of
 static NSUInteger sg_begun;   // counts the walks begun, so a poster read for an earlier one is dropped
-static NSString *sg_noClip;   // the track whose walk found no clip, until another walk begins
+static NSString *sg_noClip;   // the track whose walk found no clip, until another track's walk begins or its own finds one
 
 BOOL SGRPlayerTrackHasNoClip(void) {
     return sg_noClip && [sg_noClip isEqualToString:SGURIString(SGPlayerState().track.URI)];
@@ -1800,8 +1800,11 @@ static BOOL beginTrack(NSString *track) {
     sg_track = track;
     sg_begun++;
     BOOL wanted = consumerVisible() && clipWanted();
-    // Restarting while hidden or hot does not start a lookup or invalidate this track's answer.
-    if (sg_noClip && (wanted || ![sg_noClip isEqualToString:track])) {
+    // The same track walked again (Notification Center, the player seen again, a setting) keeps its answer until the
+    // walk gives a new one (`found`), so Still or Colors, the full-screen cover or the Visualizer stay up instead of
+    // Fluid showing and the blur and palette being read again in between. Another track has no answer yet, and the
+    // field is Fluid until its walk says.
+    if (sg_noClip && ![sg_noClip isEqualToString:track]) {
         sg_noClip = nil;
         SGRPlayerHoldField();
     }
@@ -1934,6 +1937,8 @@ static void lifecycleChanged(NSNotificationName name) {
         sg_noClip = file ? nil : uri;
         SGRPlayerHoldField();
         if (file) {
+            // A track walked again that now has a clip (its Canvas came late) loses the Visualizer standing in for it.
+            SGRPlayerVisualiserUpdate();
             show(uri, file);
             return;
         }

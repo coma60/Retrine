@@ -511,9 +511,12 @@ static CGRect mixRect(CGRect a, CGRect b, CGFloat t) {
     return SGRPlayerBackground() == SGRPlayerBackgroundAnimated;
 }
 
-// What the demo shows: the choice, or the cover art where motion is not allowed.
+// What the demo shows: the choice, or the field held still where motion is not allowed. The field is what
+// SGRPlayerConfigureField draws for a song without a clip: Fluid under the full-screen cover or the Visualizer, whatever
+// Still or Colors was stored before them.
 - (SGRNoClip)demoShows {
-    return noClipMotionAllowed() ? noClipStored() : (SGRNoClip)SGRPlayerNoClipBackground();
+    if (noClipMotionAllowed()) return noClipStored();
+    return SGRPlayerStillOn() || SGRPlayerAnimatedVisualiserOn() ? SGRNoClipFluid : (SGRNoClip)SGRPlayerNoClipBackground();
 }
 
 - (void)toggleDemo {

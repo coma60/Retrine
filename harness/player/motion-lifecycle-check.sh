@@ -1,7 +1,8 @@
 #!/bin/sh
 # The player clip's lifecycle (issue #82), compiled from the production sources: PlayerField.x's visibility and
-# close-pending state with its appearance hook bodies and transition-end observer, and PlayerMotion.x's
-# consumerVisible, brieflyUnseen, alreadyShowing, show and lifecycleChanged with the %ctor's observer loop.
+# close-pending state with its appearance hook bodies, transition-end observer and SGRPlayerConfigureField, and
+# PlayerMotion.x's consumerVisible, brieflyUnseen, alreadyShowing, show, lifecycleChanged, beginTrack and the
+# follower's found block with the %ctor's observer loop.
 # Runs as a Mac Catalyst process with doubles for the clip's view, the follower and the poster; no simulator.
 #   sh harness/player/motion-lifecycle-check.sh        (from the repository root; SRC=<tweak/Sources> for another tree)
 set -eu
@@ -46,7 +47,13 @@ for name in ("viewWillAppear", "viewDidAppear", "viewWillDisappear", "viewDidDis
 ended = one(r"^    \[NSNotificationCenter\.defaultCenter addObserverForName:SGPlayerTransitionEndedNotification .*?^    \}\];\n",
             field, "transition-end observer")
 hooks.append("static void field_observe(void) {\n" + ended + "}\n")
-(out / "field.inc").write_text((region + "\n" + "\n".join(hooks)).replace(STATE, "harnessAppState"))
+# What the field draws for a song without a clip, and the background kinds it is drawn from (Player.h).
+configure = one(r"^static SGRPlayerBackgroundKind noClipFieldKind\(void\) \{\n.*?^\}\n\nvoid SGRPlayerConfigureField\(.*?^\}\n",
+                field, "noClipFieldKind and SGRPlayerConfigureField")
+header = pathlib.Path(sys.argv[1]).with_name("Player.h").read_text()
+kinds = one(r"^typedef NS_ENUM\(NSInteger, SGRPlayerBackgroundKind\) \{\n.*?^\};\n", header, "SGRPlayerBackgroundKind")
+(out / "kinds.inc").write_text(kinds)
+(out / "field.inc").write_text((region + "\n" + "\n".join(hooks) + "\n" + configure).replace(STATE, "harnessAppState"))
 
 parts = []
 for pattern, what in (
@@ -54,15 +61,21 @@ for pattern, what in (
         (r"^static BOOL brieflyUnseen\(NSNotificationName name\) \{\n.*?^\}\n", "brieflyUnseen"),
         (r"^static BOOL alreadyShowing\(NSString \*track, NSURL \*file\) \{\n.*?^\}\n", "alreadyShowing"),
         (r"^static void show\(NSString \*track, NSURL \*file\) \{\n.*?^\}\n", "show"),
-        (r"^static void lifecycleChanged\(NSNotificationName name\) \{\n.*?^\}\n", "lifecycleChanged")):
+        (r"^static void lifecycleChanged\(NSNotificationName name\) \{\n.*?^\}\n", "lifecycleChanged"),
+        (r"^BOOL SGRPlayerTrackHasNoClip\(void\) \{\n.*?^\}\n", "SGRPlayerTrackHasNoClip"),
+        (r"^static BOOL beginTrack\(NSString \*track\) \{\n.*?^\}\n", "beginTrack")):
     parts.append(one(pattern, motion, what))
+# The follower's answer for a walk, as a function.
+found = one(r"^    \} found:\^\(NSString \*uri, NSURL \*file\) \{\n(.*?)^    \}\];\n", motion, "the follower's found block")
+parts.append("static void motion_found(NSString *uri, NSURL *file) {\n" + found + "}\n")
 loop = one(r"^    for \(NSNotificationName name in @\[UIApplicationWillResignActiveNotification.*?^    \}\n", motion, "lifecycle observer loop")
 for name in ("UIApplicationWillResignActiveNotification", "UIApplicationDidBecomeActiveNotification",
              "UIApplicationDidEnterBackgroundNotification", "SGRPlayerVisibilityDidChangeNotification", "lifecycleChanged(note.name)"):
     if name not in loop:
         raise SystemExit(f"PlayerMotion.x: the lifecycle observers lack {name}")
 parts.append("static void motion_observe(void) {\n" + loop + "}\n")
-(out / "motion.inc").write_text("\n".join(parts).replace(STATE, "harnessAppState"))
+(out / "motion.inc").write_text("\n".join(parts).replace(STATE, "harnessAppState")
+                               .replace("SGURIString(SGPlayerState().track.URI)", "harnessPlayingURI"))
 PY
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 xcrun clang -target "$(uname -m)-apple-ios17.0-macabi" -isysroot "$SDK" \

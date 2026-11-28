@@ -1,7 +1,9 @@
 // The player clip's lifecycle (issue #82), with production code from PlayerField.x and PlayerMotion.x pasted in by
 // motion-lifecycle-check.sh. A drag that closes the player a little and is let go back, and Notification Center
 // pulled over the player, keep the clip on screen (no clear, no walk, no copy faded in); the background, a close
-// that ends and a player that is really gone still let it go at once. Fails through harness-fail.h.
+// that ends and a player that is really gone still let it go at once. The field goes on drawing through a close that
+// is dragged; a song without a clip keeps its Still or Colors field while it is walked again; and the field is Fluid
+// under the Visualizer and the full-screen cover, whatever was stored before them. Fails through harness-fail.h.
 #import <UIKit/UIKit.h>
 #import "Redesigned/Kit/SGRRestyle.h"
 #import "harness-fail.h"
@@ -10,16 +12,34 @@ NSString *const SGPlayerTransitionEndedNotification = @"spotifyglass.playerTrans
 static UIApplicationState harnessAppState = UIApplicationStateActive;
 static void SGRBackdropInkSetSource(UIView *source) {}
 static BOOL SGRPlayerLandscapeCovers(UIWindow *window) { return NO; }
+#include "kinds.inc"
+static SGRPlayerBackgroundKind storedNoClip = SGRPlayerBackgroundColours;
+static BOOL stillOn, visualiserOn;
+static SGRPlayerBackgroundKind SGRPlayerArtworkBackground(void) { return SGRPlayerBackgroundAnimated; }
+static SGRPlayerBackgroundKind SGRPlayerNoClipBackground(void) { return storedNoClip; }
+static BOOL SGRPlayerStillOn(void) { return stillOn; }
+static BOOL SGRPlayerAnimatedVisualiserOn(void) { return visualiserOn; }
 
 // The field in the player: the overlay above it is what Spotify's animator fades to its end alpha.
 static UIView *screen;
 static BOOL inScreen;   // set once the hierarchy is built: UIKit's own addSubview: asks the real window
+// Each change of what the field draws (flows, fluid) is counted: one is a blur or palette read again.
+static int redraws;
 @interface SGRArtworkField : UIView
 @property (nonatomic) BOOL offscreen;
+@property (nonatomic) BOOL flows, fluid;
 @end
 @implementation SGRArtworkField
 - (UIWindow *)window { return inScreen ? (UIWindow *)screen : nil; }
 - (CGRect)convertRect:(CGRect)rect toView:(UIView *)view { return screen.bounds; }
+- (void)setFlows:(BOOL)flows {
+    if (flows != _flows) redraws++;
+    _flows = flows;
+}
+- (void)setFluid:(BOOL)fluid {
+    if (fluid != _fluid) redraws++;
+    _fluid = fluid;
+}
 @end
 
 #include "field.inc"
@@ -31,17 +51,27 @@ static const CGFloat kSquareAspect = 1.05;
 
 @interface SGRPlayerMotionView : NSObject
 - (void)playFile:(NSURL *)file poster:(UIImage *)poster;
+- (void)handover;
 @end
 @implementation SGRPlayerMotionView
 - (void)playFile:(NSURL *)file poster:(UIImage *)poster {}
+- (void)handover {}
 @end
+
+// The track Spotify reports playing, and whether the follower walks it on a restart, as SGMotionFollower does.
+static NSString *harnessPlayingURI;
+static BOOL beginTrack(NSString *track);
 
 @interface FollowerDouble : NSObject
 @property (nonatomic) int restarts;
+@property (nonatomic) BOOL walks;
 - (void)restart;
 @end
 @implementation FollowerDouble
-- (void)restart { self.restarts++; }
+- (void)restart {
+    self.restarts++;
+    if (self.walks && harnessPlayingURI) beginTrack(harnessPlayingURI);
+}
 @end
 
 static SGRPlayerMotionView *sg_motion, *sg_coverClip;
@@ -73,6 +103,18 @@ static void clearForReplacement(BOOL animated, BOOL fieldClipFollows) {
     rebuilds++;
     forget();
 }
+
+static NSString *sg_noClip;
+static const NSTimeInterval kHandOver = 0.4;
+static int visualiserUpdates;
+static BOOL harnessClipWanted = YES;
+BOOL SGRPlayerTrackHasNoClip(void);
+static BOOL clipWanted(void) { return harnessClipWanted; }
+static BOOL seen(SGRPlayerMotionView *view) { return view && harnessAppState == UIApplicationStateActive; }
+static BOOL showStill(void) { return NO; }
+static void SGRPlayerVisualiserUpdate(void) { visualiserUpdates++; }
+// PlayerField.x's, as far as what the field draws: configured for the playing track's answer.
+static void SGRPlayerHoldField(void) { SGRPlayerConfigureField(sg_field, SGRPlayerTrackHasNoClip()); }
 
 static void SGMotionPoster(NSURL *file, void (^done)(UIImage *poster)) {
     posterReads++;
@@ -160,6 +202,120 @@ static void dragLetGoBack(void) {
     show(kTrack, fileB);
     HARNESS_CHECK(posterReads == 1 && rebuilds == 1 && sg_motion && sg_motion != clip);
     puts("motion lifecycle: a close dragged a little and let go back keeps the clip");
+}
+
+// The field goes on drawing while the close is dragged, and stops once the close is over.
+static void fieldThroughDrag(void) {
+    seat();
+    SGRArtworkField *field = sg_field;
+    HARNESS_CHECK(!field.offscreen);
+    field_viewWillDisappear();
+    overlayAlpha(0);
+    HARNESS_CHECK(!SGRPlayerIsVisible() && SGRPlayerClosePending() && !field.offscreen);
+    overlayAlpha(0.5);
+    HARNESS_CHECK(!field.offscreen);
+    overlayAlpha(1);
+    field_viewWillAppear();
+    field_viewDidAppear();
+    HARNESS_CHECK(!field.offscreen);
+    // Let go to close: ended by viewDidDisappear.
+    field_viewWillDisappear();
+    overlayAlpha(0);
+    HARNESS_CHECK(!field.offscreen);
+    field_viewDidDisappear();
+    HARNESS_CHECK(!SGRPlayerClosePending() && field.offscreen);
+    // Ended by the coordinator alone.
+    seat();
+    field_viewWillDisappear();
+    overlayAlpha(0);
+    HARNESS_CHECK(!field.offscreen);
+    post(SGPlayerTransitionEndedNotification);
+    HARNESS_CHECK(!SGRPlayerClosePending() && field.offscreen);
+    // The field out of its window mid close.
+    seat();
+    field_viewWillDisappear();
+    overlayAlpha(0);
+    HARNESS_CHECK(!field.offscreen);
+    inScreen = NO;
+    visibilityChanged();
+    HARNESS_CHECK(!SGRPlayerClosePending() && field.offscreen);
+    inScreen = YES;
+    overlayAlpha(1);
+    field_viewWillAppear();
+    field_viewDidAppear();
+    HARNESS_CHECK(!field.offscreen);
+    puts("motion lifecycle: the field draws through a dragged close and stops when the close is over");
+}
+
+// A song whose walk found no clip, with Colors chosen for it: walking it again (Notification Center, a dragged close
+// let go back) keeps the Colors field, and only an answer changes it.
+static void noClipWalkedAgain(void) {
+    seat();
+    forget();
+    storedNoClip = SGRPlayerBackgroundColours;
+    harnessPlayingURI = kTrack;
+    beginTrack(kTrack);
+    motion_found(kTrack, nil);
+    SGRArtworkField *field = sg_field;
+    HARNESS_CHECK(SGRPlayerTrackHasNoClip() && field.flows && !field.fluid);
+    redraws = 0;
+    sg_follower.walks = YES;
+    int restarts = sg_follower.restarts;
+    post(UIApplicationWillResignActiveNotification);
+    harnessAppState = UIApplicationStateInactive;
+    harnessAppState = UIApplicationStateActive;
+    post(UIApplicationDidBecomeActiveNotification);
+    HARNESS_CHECK(sg_follower.restarts == restarts + 2);
+    HARNESS_CHECK(SGRPlayerTrackHasNoClip() && redraws == 0 && field.flows && !field.fluid);
+    motion_found(kTrack, nil);
+    HARNESS_CHECK(redraws == 0 && field.flows);
+    field_viewWillDisappear();
+    overlayAlpha(0);
+    overlayAlpha(1);
+    field_viewWillAppear();
+    field_viewDidAppear();
+    HARNESS_CHECK(sg_follower.restarts > restarts + 2);
+    HARNESS_CHECK(SGRPlayerTrackHasNoClip() && redraws == 0 && field.flows);
+    motion_found(kTrack, nil);
+    HARNESS_CHECK(redraws == 0 && field.flows && !field.fluid);
+    // A clip found for it later (its Canvas came late): Fluid under the clip, and the Visualizer told.
+    int updates = visualiserUpdates;
+    motion_found(kTrack, fileA);
+    HARNESS_CHECK(!SGRPlayerTrackHasNoClip() && field.fluid && !field.flows && visualiserUpdates > updates && sg_motion);
+    motion_found(kTrack, nil);
+    HARNESS_CHECK(SGRPlayerTrackHasNoClip() && field.flows);
+    // Another track has no answer yet: Fluid until its walk gives one.
+    harnessPlayingURI = @"spotify:track:b";
+    beginTrack(harnessPlayingURI);
+    HARNESS_CHECK(!SGRPlayerTrackHasNoClip() && field.fluid && !field.flows);
+    motion_found(harnessPlayingURI, nil);
+    HARNESS_CHECK(SGRPlayerTrackHasNoClip() && field.flows && !field.fluid);
+    sg_follower.walks = NO;
+    harnessPlayingURI = nil;
+    sg_noClip = nil;
+    puts("motion lifecycle: a song without a clip keeps its Colors field while it is walked again");
+}
+
+// Still or Colors stored before the Visualizer or the full-screen cover was chosen leaves the field Fluid under them.
+static void fieldUnderStandIns(void) {
+    SGRArtworkField *field = [[SGRArtworkField alloc] initWithFrame:CGRectZero];
+    for (NSNumber *stored in @[@(SGRPlayerBackgroundStill), @(SGRPlayerBackgroundColours)]) {
+        storedNoClip = stored.integerValue;
+        SGRPlayerConfigureField(field, YES);
+        HARNESS_CHECK(field.flows == (storedNoClip == SGRPlayerBackgroundColours) && !field.fluid);
+        visualiserOn = YES;
+        SGRPlayerConfigureField(field, YES);
+        HARNESS_CHECK(field.fluid && !field.flows);
+        visualiserOn = NO;
+        stillOn = YES;
+        SGRPlayerConfigureField(field, NO);
+        HARNESS_CHECK(field.fluid && !field.flows);
+        SGRPlayerConfigureField(field, YES);
+        HARNESS_CHECK(field.fluid && !field.flows);
+        stillOn = NO;
+    }
+    storedNoClip = SGRPlayerBackgroundColours;
+    puts("motion lifecycle: the field is Fluid under the Visualizer and the full-screen cover");
 }
 
 static void closeEnds(void) {
@@ -270,6 +426,9 @@ int main(void) { @autoreleasepool {
     puts("motion lifecycle: the background lets the clip go");
     inactiveOverHiddenPlayer();
     inactiveWithoutClip();
+    fieldThroughDrag();
+    noClipWalkedAgain();
+    fieldUnderStandIns();
     puts("motion lifecycle: all checks passed");
     return 0;
 } }

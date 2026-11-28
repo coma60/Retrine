@@ -69,8 +69,11 @@ BOOL SGRPlayerClosePending(void) {
 }
 
 static void updateFieldVisibility(BOOL visible) {
-    // A separate window can hide the portrait player while its own view stays onscreen.
-    sg_field.offscreen = !visible || SGRPlayerLandscapeCovers(sg_field.window);
+    // A close dragged and not over still shows the player under the finger, though the animator's end alpha makes it
+    // read as not visible: the field goes on drawing until the close ends (viewDidDisappear, the coordinator's end or
+    // the field leaving its window), each of which calls visibilityChanged again. A separate window can hide the
+    // portrait player while its own view stays onscreen.
+    sg_field.offscreen = (!visible && !SGRPlayerClosePending()) || SGRPlayerLandscapeCovers(sg_field.window);
 }
 
 static void visibilityChanged(void) {
@@ -152,9 +155,16 @@ void SGRSetPlayerNoClipBackground(SGRPlayerBackgroundKind kind) {
     SGRPlayerHoldField();
 }
 
+// What the field shows for a song without a clip. The full-screen cover and the Visualizer are choices of their own on
+// the same menu (PlayerSettings.m, pickNoClip) that leave an earlier Still or Colors stored: under them the field is
+// Fluid, the Visualizer's hills drawn over it and the cover over it where the full-screen still cannot be shown.
+static SGRPlayerBackgroundKind noClipFieldKind(void) {
+    return SGRPlayerStillOn() || SGRPlayerAnimatedVisualiserOn() ? SGRPlayerBackgroundFluid : SGRPlayerNoClipBackground();
+}
+
 void SGRPlayerConfigureField(SGRArtworkField *field, BOOL withoutClip) {
     SGRPlayerBackgroundKind kind = SGRPlayerArtworkBackground();
-    if (kind == SGRPlayerBackgroundAnimated) kind = withoutClip ? SGRPlayerNoClipBackground() : SGRPlayerBackgroundFluid;
+    if (kind == SGRPlayerBackgroundAnimated) kind = withoutClip ? noClipFieldKind() : SGRPlayerBackgroundFluid;
     field.flows = kind == SGRPlayerBackgroundColours;
     field.fluid = kind == SGRPlayerBackgroundFluid || kind == SGRPlayerBackgroundVisualiser;
 }

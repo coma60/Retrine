@@ -2723,13 +2723,12 @@ Light turns preblurred Core Animation copies, with no Metal renderer or music an
 missing. Smooth, the default, draws on the GPU (Redesigned/Kit/SGRFluidGPU.m):
 three copies of the cover, 1.4, 0.7 and 0.7 units across (a unit half the visible rect's height on a phone) at (0, 0),
 (-0.25, 0.15) and (0.7, 0.7), each turning clockwise about its own center once in 120, 70 and 90 s, the third carried
-about the middle by the first's turn, drawn opaque into a quarter-size half-float picture (as the Music app's, so what the saturation pushes past 0 or 1 is
-kept through the blur) after a mix toward black, a contrast
-about middle gray and a saturation about Rec. 709 luma; the picture blurred by a two-pass Gaussian; then shown through a
+about the middle by the first's turn, drawn opaque into a quarter-size half-float picture after a mix toward black, a contrast
+about middle gray, a saturation about Rec. 709 luma, and a 0-1 clamp before the blur (matching Apple Music's 8-bit copy grading so strong saturation does not pull the lowest channel negative through the blur); the picture blurred by a two-pass Gaussian; then shown through a
 24 x 24 mesh, flat and a quarter larger while held still; flowing (0.8 s between, eased), bent by one of two 6 x 6 grids
 of Retrine's own, made at random per layer (the inner points well off the even grid,
 the second the first with a few points moved, never folding over itself), and breathing from one to the other once in 2 pi * 3.5 s; mixed toward white, read through a 32^3 color table made from
-Retrine's own grade (SGRFluidGradeTable), and its lowest channel taken down by a share of the spread. With these numbers (0.5
+Retrine's own grade (SGRFluidGradeTable), and darkened along the lower part from 20% down along x^1.9 to a 0.4 peak at the foot before grain. Light uses its own preblurred copies with a reduced lowest-channel pull (`kBackdropDepth = 0.10`) and lower shade (hidden while Smooth draws). With these numbers (0.5
 toward black, 2.4 saturation, 0.1 toward white, a 160 pt blur) it matched screenshots of the Music app's player
 closely. Like it, it hears the music (Shared/Player/SGMusicSpectrum.x: each band's
 share of the spectral power of Spotify's output, bass 20-300 Hz, middle 300-3500 Hz, treble 3500-24000 Hz, from an
@@ -2917,24 +2916,23 @@ the width, and the volume row 5 pt past the side margins with a 4 pt glyph gap.
 
 ### Backdrop ink (Redesigned/Kit/SGRBackdropInk.h, in SGRRestyle.m)
 
-The artist, the times and the audio quality badge are white ADDED to the backdrop (plusL), which goes nowhere over a
-light one (a white cover's gray lower half). SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a
-reader that draws it 16 by 48 pixels four times a second (eight during a cover crossfade, once a second in Low Power Mode).
-It runs only while the player is visible and active and weighs the cells behind each label's text; the field is read through the render server
-(drawViewHierarchyInRect:), so Metal (Smooth fluid), the Animated clip and the lower shade count. The Music app adds a
-fixed alpha of white to the backdrop (artist 0.48, times 0.265, badge 0.40 ink and 17/255 fill, footer glyphs 0.46),
-so over a light backdrop its ink goes to white. In Spotify's player plusL does not reach the backdrop, although the
-"ink tree" log lines (SGRRestyle.m) show no mask, rasterized layer or filter between the ink and the field on 9.2.0:
-added that way, the times all but vanished over a light gray cover. So SGRInkFor and SGRInkPlainAlpha draw the ink
-plain at the alpha that lands on the same value over the measured backdrop, alpha / (1 - luma), up to white over a light
-backdrop as the Music app's goes (measured side by side over a light gray and a blue cover), and the alpha as it is with
-no reading yet. The badge's fill (17/255) is drawn the same way, so its box stays as visible over a light backdrop as the Music app's (+19 of 255 over a 184 gray). Under Increase Contrast the times, the artist and the footer are drawn in the label colors. The
-times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge (PlayerControls.x, SGAudioQualitySetRedesignedInk)
-and the footer (refreshFooterInk) take the ink again at each new reading; the badge uses the times' semibold.
+The artist, the times, the audio quality badge, the grabber pill, the progress and volume bars, the speaker glyphs and
+the footer glyphs/active discs are white ADDED to the backdrop (plusL) in the Music app, which lifts each RGB channel
+independently so the ink keeps the backdrop's hue over a colored cover and goes to white over a light gray one.
+SGRBackdropInkSetSource (PlayerField.x) hands the player's field to a reader that draws it 16 by 48 pixels in sRGB four
+times a second (eight during a cover crossfade, once a second in Low Power Mode) and notifies observers whenever any
+cell's luma or RGB channel moves past 0.02. It runs only while the player is visible and active and weighs the cells
+behind each view; the field is read through the render server (drawViewHierarchyInRect:), so Metal (Smooth fluid), the
+Animated clip and the lower shade count. Because plusL does not reach the backdrop inside Spotify's player, `SGRInkSolve`
+(used by `SGRInkFor` and quantized `SGRInkPlainColor`) computes the plain RGB color and alpha that lands on
+`min(1, backdrop + add)` in every channel — matching the backdrop's hue over colored covers while reducing to the same
+neutral white over black or gray (`harness/player/backdrop-ink-check.sh`). Under Increase Contrast the inks fall back to
+opaque/floor whites or label colors. The times (SGRTimeLabelStyle), the artist (PlayerTitle.x), the badge
+(PlayerControls.x, SGAudioQualitySetRedesignedInk), the grabber (PlayerHeader.x), the volume row (PlayerVolume.m) and
+the footer (PlayerFooter.x) update at each reading; the badge uses the times' semibold.
 
 The Fluid field's lower part follows the Music app's player (Mr. Blue Sky cover, measured: ochre at the title, olive at
-the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before), and the
-shade over the bottom starts at 40% of the visible rect and grows along x^1.75 to a peak of 0.30 over a dark cover up to
-0.62 over one at the ceiling (SGRFluid.m, kShade*), the peak read from the lower half of each blurred cover and
-crossfaded with it, so white text keeps 4.5:1 whatever the cover. Not run on a device or simulator: checked by reading
-the code paths only.
+the controls, near black at the foot): each blurred pixel is capped at 0.17 linear luminance (0.07 before). Smooth
+applies its lower shade in `showFragment` (`SGRFluidGPU.m`, from 20% down along x^1.9 to a 0.40 peak), while Light uses
+its gradient shade layer (`SGRFluid.m`, `kShade*`) which hides while Smooth draws so white text keeps 4.5:1 whatever
+the cover. Not run on a device or simulator: checked by reading the code paths and `fluid-fragment-check.sh`.

@@ -401,7 +401,12 @@ come late, out of order, or not at all.
   Fresh portrait players opened with a black or photo background must schedule zero Fluid preparations. Two track
   changes under an opaque landscape window must also schedule zero portrait preparations. Closing the window must
   schedule just one and present the latest cover on the first portrait drawable.
-  `fluid-fragment-check.sh` separately checks Metal's active texture bindings for settled and fading copies.
+  `fluid-fragment-check.sh` separately checks Metal's active texture bindings for settled and fading copies, plus the
+  `showVertex`/`showFragment` pipeline and 64-byte `ShowU` layout.
+  `backdrop-ink-check.sh` checks `SGRInkSolve` and `SGRRestyle.m`'s color backdrop sampling (`SGRInkFor`,
+  `SGRInkPlainColor`, hue-change notifications, split fields and Increase Contrast) on Mac Catalyst.
+  `motion-lifecycle-check.sh` checks `PlayerField.x` and `PlayerMotion.x` clip retention through cancelled closes and
+  Notification Center (and teardown on finished close or background) on Mac Catalyst.
 
 - `automix` is AutoMix's transitions in the player (`PlayerMix.x`, with `PlayerControls.x`, `PlayerQueue.m` and
   `PlayerArtwork.x`) and the AutoMix page's preview card (`Shared/AutoMix/AutoMixSettings.m`, `AutoMixPreview.m`), in

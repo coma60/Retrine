@@ -176,6 +176,8 @@ HARNESSES = [
      "run": "sh harness/player/backdrop-ink-check.sh"},
     {"name": "Player motion lifecycle", "dir": "player",
      "run": "sh harness/player/motion-lifecycle-check.sh"},
+    {"name": "Player footer disc", "dir": "player", "theos": True,
+     "run": "sh harness/player/footer-disc-check.sh"},
     {"name": "Player podcast buffering", "dir": "player", "theos": True,
      "run": "sh harness/player/buffering-check.sh"},
     {"name": "Queue history", "dir": "queue-history",

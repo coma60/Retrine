@@ -1082,7 +1082,11 @@ Shared:
                   the units accepts only touches on a badge that draws (shown, and neither it nor a view above it hidden
                   or under UIKit's 0.01 alpha floor; 4 pt around it), cancels no touches of the views under it, and
                   the redesign's tap to seek leaves that spot alone only while the badge draws. The tap opens a
-                  popover (SGPresentPopover), under the native look with the tier, the playing and output sample rates, whether it is
+                  popover (SGPresentPopover) — in the redesign on iOS 26+ (when Reduce Transparency is off), an arrowless
+                  dark `UIGlassEffectStyleClear` `UIPopoverBackgroundView` (`SGAudioQualityGlassBackground`) tinted darker
+                  over light backdrops (0.48 vs 0.22, 0.55 under Increase Contrast) with the system shadow layers faded so
+                  light covers show through cleanly rather than turning into an opaque slab; under the native look it keeps
+                  the system popover with the tier, the playing and output sample rates, whether it is
                   resampled (only once both rates are reported) and the source by strategy (best_matching and
                   backend_advised streamed, offlined_file downloaded, cached_file cached, local_file a local file).
                   The popover is held weakly with the track it was opened for: it follows that track's later reports

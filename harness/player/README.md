@@ -323,11 +323,11 @@ come late, out of order, or not at all.
   and a more opaque fill under Increase Contrast, the bar's fill and track
   translucent (opacity 0.5–0.7 and 0.15–0.25), the fill lit whole and the times a step lower while a finger scrubs
   (the badge staying put) and back after, the details (glyph, tier, About 160 kbps, a sentence, the footnote naming
-  Spotify's High) in dark glass with no reading of the backdrop, in light glass with dark text over a light backdrop
-  (0.8) and in dark glass over a dark one (0.3) (issue #82: dark glass over a light cover was a flat gray slab), and
-  the native look's badge as it was (Spotify's word, centered on the times). The log ends with
-  `timerow checks: n of 32 right -- PASS` or `FAIL`; on the sources before the time row's change it read 3 of 10, and
-  before issue #82's 31 of 32.
+  Spotify's High) always in dark glass — on iOS 26+ without Reduce Transparency via `SGAudioQualityGlassBackground`
+  (non-interactive Clear glass tinted 0.22 with no reading or over a dark backdrop 0.3, 0.48 over a light backdrop 0.8,
+  system shadow faded, standing off the badge; issues #82 and #83) — and the native look's badge and system dark popover
+  as they were. The log ends with `timerow checks: n of 36 right -- PASS` or `FAIL`; on the sources before the time
+  row's change it read 3 of 10.
 
 - `sponsorblock` is SponsorBlock's marks on the `timerow` mock of Spotify's bar as the redesign draws it
   (`PlayerControls.x`, `Shared/SponsorBlock/SponsorBlockMarkers.m`), run by `../sponsorblock/markers-check.m`: the
@@ -407,6 +407,9 @@ come late, out of order, or not at all.
   `SGRInkPlainColor`, hue-change notifications, split fields and Increase Contrast) on Mac Catalyst.
   `motion-lifecycle-check.sh` checks `PlayerField.x` and `PlayerMotion.x` clip retention through cancelled closes and
   Notification Center (and teardown on finished close or background) on Mac Catalyst.
+  `footer-disc-check.sh` checks `PlayerFooter.x`'s active Lyrics/Queue disc mask (`disc.layer.mask`, no `destOut`),
+  backdrop transparency through the glyph hole, pressed-mask feedback, Increase Contrast and Encore icon updates on Mac
+  Catalyst.
 
 - `automix` is AutoMix's transitions in the player (`PlayerMix.x`, with `PlayerControls.x`, `PlayerQueue.m` and
   `PlayerArtwork.x`) and the AutoMix page's preview card (`Shared/AutoMix/AutoMixSettings.m`, `AutoMixPreview.m`), in

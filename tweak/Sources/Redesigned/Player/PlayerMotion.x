@@ -208,8 +208,12 @@ static const CGFloat kBlurArc = 44;
 // Below such a cover, as on the Music app's player, the playing clip itself is drawn mirrored at the cover's bottom edge
 // and stretched kMirrorStretch times down, live, so a flash in the clip's foot runs on down to the bottom of the screen,
 // under a blur of radius kSoftRadius. The mirror is whole from the cover's edge to the bottom and stands over the
-// still veil, which shows only until the clip draws.
-static const CGFloat kMirrorStretch = 2;
+// still veil, which shows only until the clip draws. The stretch keeps the mirror to the clip's last rows: under a
+// 3:4 cover (533 of 874 pt) twice reached up a third of the cover, and Photograph's X legs and Rich Man's pick tip
+// stood upside down under the controls (134 and 79 of 255 from side to side at the foot), where the Music app's lower
+// part is one color across (within 5). Five times reads only the last 13% of the cover down to the foot, so a flash
+// there still runs down as light, not as a shape.
+static const CGFloat kMirrorStretch = 5;
 // Over it a color adjustment chosen to match the Music app's: a gradient whose alpha takes each color toward kAdjustKeep
 // of itself plus kAdjustLift of white,
 // from none at kAdjustFrom of the screen to whole at its foot, along x^kAdjustEase (x the share of the way from there
@@ -649,6 +653,9 @@ static CAReplicatorLayer *softCopy(void) {
     CAReplicatorLayer *copy = [CAReplicatorLayer layer];
     copy.anchorPoint = CGPointZero; // layoutSoftFor: reflects about the cover's edge in top-origin coordinates.
     copy.instanceCount = 2;
+    // The stretched mirror runs far past the view's foot, where its mask hides it anyway; clipped, the blurred
+    // surface stays the view's size however long the mirror is.
+    copy.masksToBounds = YES;
     copy.hidden = YES;
     CAFilter *blur = [NSClassFromString(@"CAFilter") filterWithType:@"gaussianBlur"];
     if (blur) {

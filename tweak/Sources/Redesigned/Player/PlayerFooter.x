@@ -91,21 +91,12 @@ static __weak SGRGlyphButton *sg_lyricsGlyph, *sg_queueGlyph;
 // out. Taken again at each new reading of the backdrop (refreshFooterInk).
 static const CGFloat kFooterInkAdd = 0.46;
 static NSHashTable<SGRGlyphView *> *sg_standIns;
+
 // Drawn plain at the alpha that lands where the Music app's 0.46 added would (SGRInkFor: plusL does not reach the
-// backdrop in Spotify's player); at least the secondary color under Increase Contrast.
-static UIView *footerInked(UIView *view) {
-    return [view isKindOfClass:SGRGlyphButton.class] ? ((SGRGlyphButton *)view).glyph : view;
-}
-
-static void footerFilter(UIView *view, NSString *filter) {
-    CALayer *layer = footerInked(view).layer;
-    if (![layer.compositingFilter isEqual:filter]) layer.compositingFilter = filter;
-}
-
-// In the backdrop's hue (SGRInkPlainColor): over Coldplay's blue sky the Music app's glyphs stood +117/+123/+123 above
-// it, sky blue, where plain white stood gray. White of the secondary color's alpha under Increase Contrast.
+// backdrop in Spotify's player), in the backdrop's hue (SGRInkPlainColor): over Coldplay's blue sky the Music app's
+// glyphs stood +117/+123/+123 above it, sky blue, where plain white stood gray. White of the secondary color's alpha
+// under Increase Contrast.
 static UIColor *footerRest(UIView *view) {
-    footerFilter(view, nil);
     CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkAdd;
     return SGRInkPlainColor(view, floorAlpha, kFooterInkAdd);
 }
@@ -177,8 +168,6 @@ static void paintEncore(SGRGlyphButton *button) {
     SPTEncoreIconView *encore = objc_getAssociatedObject(button, &kEncoreGlyphKey);
     UIColor *color = button.glyph.tintColor;
     if (encore && ![encore.foregroundColor isEqual:color]) encore.foregroundColor = color;
-    id filter = button.glyph.layer.compositingFilter;
-    if (encore && ![encore.layer.compositingFilter isEqual:filter]) encore.layer.compositingFilter = filter;
 }
 
 static void markQueueGlyph(BOOL animated);
@@ -226,85 +215,118 @@ UIView *SGRPlayerFooterGlyph(SGRGlyphButton *button, NSString *encoreName) {
 #pragma mark - the disc of the control that is on
 
 // The Music app marks the footer control that is on (its lyrics, its queue) with a disc behind the glyph and the glyph
-// cut out of it, so the backdrop shows through the glyph's shape (a white
-// disc behind the label with the label taken out of it; under Increase Contrast a white disc with the label in
-// black). Here the button's own glyph is what cuts it: the disc is a
-// white view masked by a picture of that glyph view as it stands, at its place and size, so the hole has the glyph's very
-// shape, and the glyph itself is drawn clear over it, leaving the hole to show whatever is behind the button. Under
-// Increase Contrast nothing is cut: the glyph itself turns black on the disc. The disc's white lands where the Music
+// cut out of it, so the backdrop shows through the glyph's shape (a white disc behind the label with the label taken
+// out of it; under Increase Contrast a white disc with the label in black). Here the disc is a white view masked by a
+// picture of the button's glyph at its place and size, so the hole has the glyph's very shape, and the glyph itself is
+// drawn clear over it, leaving the hole to show whatever is behind the button. Under Increase Contrast nothing is cut:
+// the mask is the whole round and the glyph itself turns black on the disc. The disc's white lands where the Music
 // app's does: measured on its player 115 of 255 over the backdrop, the footer's rest ink (kFooterInkAdd), and 38 pt
 // across (its footer frame). It comes and goes with a fade, as the Music app animates it on the value.
+// (Cutting it live instead, the glyph's layer drawn with the destOut filter in a button whose private allowsGroupBlending
+// was off, took the backdrop out with it: the hole stood black over gray and blue backdrops on an iPhone 17 on iOS 27.2.1
+// and in the iOS 26.5 Simulator, issue #83.)
 static const CGFloat kActiveDisc = 38;
-static char kDiscKey, kDiscDrawnKey;
+// The Music app's press on its footer's lyrics and queue buttons, as its player shows it: the label alone goes to 0.6
+// while a finger is on it, at once, with no platter and no sink. The label is what is taken out of the disc, so with the
+// disc up the hole fills back to 0.4 of it: the disc's pressed mask cuts the glyph at this alpha (footerPress).
+static const CGFloat kFooterPressedAlpha = 0.6;
+static char kDiscKey, kDiscDrawnKey, kDiscMasksKey;
 
-// Done live: the glyph as it is drawn now (mid symbol transition, pressed) is the hole. Here the button's layer is a
-// group of its own: its private allowsGroupBlending turned off keeps a sublayer's filter inside it (that NO isolates is
-// unproven on a device), and the glyph's layer is drawn over the disc with the destOut filter. Where
-// the layer has no such property the disc is masked by a picture of the glyph instead (discMask).
-static SEL groupBlendingSetter(void) {
-    return NSSelectorFromString(@"setAllowsGroupBlending:");
-}
-
-static BOOL cutsLive(SGRGlyphButton *button) {
-    return [button.layer respondsToSelector:groupBlendingSetter()];
-}
-
-static void makeGroup(SGRGlyphButton *button) {
-    if (!cutsLive(button)) return;
-    ((void (*)(id, SEL, BOOL))objc_msgSend)(button.layer, groupBlendingSetter(), NO);
-}
-
-// `drawn` drawn opaque into the current context at its place in `disc`, its own color put back after.
-static void renderGlyph(UIView *drawn, UIView *disc) {
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGPoint origin = [disc convertPoint:drawn.bounds.origin fromView:drawn];
-    CGContextSaveGState(context);
-    CGContextTranslateCTM(context, origin.x, origin.y);
+// `drawn`'s shape in opaque black and where it lies in `drawn`'s bounds, as it is drawn now.
+static UIImage *glyphShape(UIView *drawn, CGRect *rect) {
+    *rect = drawn.bounds;
     if ([drawn isKindOfClass:SGRGlyphView.class]) {
-        // Its image as the image view lays it out (filled to its bounds, or at its size in the middle), in opaque black:
-        // the view's own drawing follows its tint, which is clear while the disc shows.
-        UIImageView *view = (UIImageView *)drawn;
-        UIImage *image = [view.image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal];
-        CGRect bounds = view.bounds, rect = bounds;
+        // The symbol it shows, in its configuration: setSymbol:animated: hands the image over through the symbol
+        // transition (iOS 17), so the image view's own may still be the last one. Laid out as the image view lays it out
+        // (filled to its bounds, or at its size in the middle), in opaque black: the view's own drawing follows its tint,
+        // which is clear while the disc shows.
+        SGRGlyphView *view = (SGRGlyphView *)drawn;
+        // In the view's traits too (Bold Text), as the image view resolves its own.
+        UIImageSymbolConfiguration *configuration = [view.preferredSymbolConfiguration ?: UIImageSymbolConfiguration.unspecifiedConfiguration
+                                                     configurationWithTraitCollection:view.traitCollection];
+        UIImage *symbol = view.symbol ? [UIImage systemImageNamed:view.symbol withConfiguration:configuration] : nil;
+        UIImage *image = [symbol ?: view.image imageWithTintColor:UIColor.blackColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        if (!image) return nil;
         if (view.contentMode != UIViewContentModeScaleToFill) {
+            CGRect bounds = view.bounds;
             CGSize size = image.size;
-            rect = CGRectMake(CGRectGetMidX(bounds) - size.width / 2, CGRectGetMidY(bounds) - size.height / 2, size.width, size.height);
+            *rect = CGRectMake(CGRectGetMidX(bounds) - size.width / 2, CGRectGetMidY(bounds) - size.height / 2, size.width, size.height);
         }
-        // drawInRect: alone draws in the normal blend mode, whatever the context was set to, which filled the hole back
-        // in: the glyph is taken out of the disc with the blend given here.
-        [image drawInRect:rect blendMode:kCGBlendModeDestinationOut alpha:1];
-    } else if ([drawn isKindOfClass:%c(SPTEncoreIconView)]) {
-        SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
-        UIColor *color = encore.foregroundColor;
-        encore.foregroundColor = UIColor.blackColor;
-        [encore layoutIfNeeded];
-        // Drawn into a picture of its own first, then taken out of the disc with the blend, as the symbol is.
-        UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:encore.traitCollection];
-        format.opaque = NO;
-        UIImage *shape = [[[UIGraphicsImageRenderer alloc] initWithSize:encore.bounds.size format:format]
-                          imageWithActions:^(UIGraphicsImageRendererContext *inner) { [encore.layer renderInContext:inner.CGContext]; }];
-        encore.foregroundColor = color;
-        [shape drawInRect:encore.bounds blendMode:kCGBlendModeDestinationOut alpha:1];
+        return image;
     }
-    CGContextRestoreGState(context);
+    if (![drawn isKindOfClass:%c(SPTEncoreIconView)] || drawn.bounds.size.width < 1 || drawn.bounds.size.height < 1) return nil;
+    // Spotify's glyph draws its color in: drawn in black into a picture of its own, opaque (a press holds it at
+    // kFooterPressedAlpha, and the layer's opacity goes into the picture), its color and alpha put back after, with no
+    // animation of either.
+    SPTEncoreIconView *encore = (SPTEncoreIconView *)drawn;
+    UIColor *color = encore.foregroundColor;
+    CGFloat alpha = encore.alpha;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:encore.traitCollection];
+    format.opaque = NO;
+    format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
+    __block UIImage *shape;
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        encore.foregroundColor = UIColor.blackColor;
+        encore.alpha = 1;
+        [encore layoutIfNeeded];
+        shape = [[[UIGraphicsImageRenderer alloc] initWithSize:encore.bounds.size format:format]
+                 imageWithActions:^(UIGraphicsImageRendererContext *inner) { [encore.layer renderInContext:inner.CGContext]; }];
+        encore.foregroundColor = color;
+        encore.alpha = alpha;
+        [CATransaction commit];
+    }];
+    return shape;
 }
 
-// The disc's mask: opaque round, the glyph's shape taken out.
-static UIImage *discMask(UIView *drawn, UIView *disc) {
+// What the shape is, for telling a new glyph from the one drawn: the symbol's name, or for Spotify's glyph its pixels,
+// so a new icon in the same view is never cut with the last one's mask.
+static id shapeIdentity(UIView *drawn, UIImage *shape) {
+    if ([drawn isKindOfClass:SGRGlyphView.class]) return ((SGRGlyphView *)drawn).symbol ?: @"";
+    CGDataProviderRef provider = shape.CGImage ? CGImageGetDataProvider(shape.CGImage) : NULL;
+    CFDataRef pixels = provider ? CGDataProviderCopyData(provider) : NULL;
+    return pixels ? (__bridge_transfer NSData *)pixels : @"";
+}
+
+// The disc's mask: opaque round, the glyph's shape taken out at `punch` (1 at rest; pressed, kFooterPressedAlpha, which
+// leaves 1 - punch of the disc in the hole).
+static UIImage *discMask(UIView *drawn, UIView *disc, UIImage *shape, CGRect rect, CGFloat punch) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat formatForTraitCollection:drawn.traitCollection];
     format.opaque = NO;
     format.preferredRange = UIGraphicsImageRendererFormatRangeStandard;
     CGRect round = disc.bounds;
-    return [[[UIGraphicsImageRenderer alloc] initWithSize:round.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
-        [UIColor.blackColor setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:round] fill];
-        CGContextSetBlendMode(context.CGContext, kCGBlendModeDestinationOut);
-        renderGlyph(drawn, disc);
+    CGRect cut = [disc convertRect:rect fromView:drawn];
+    __block UIImage *mask;
+    [drawn.traitCollection performAsCurrentTraitCollection:^{
+        mask = [[[UIGraphicsImageRenderer alloc] initWithSize:round.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [UIColor.blackColor setFill];
+            [[UIBezierPath bezierPathWithOvalInRect:round] fill];
+            // drawInRect: alone draws in the normal blend mode, whatever the context was set to, which filled the hole
+            // back in: the glyph is taken out of the disc with the blend given here.
+            [shape drawInRect:cut blendMode:kCGBlendModeDestinationOut alpha:punch];
+        }];
     }];
+    return mask;
+}
+
+// The disc's mask at rest or pressed; under Increase Contrast there is no hole to fill back in.
+static void pressDisc(SGRGlyphButton *button, BOOL pressed) {
+    UIView *disc = objc_getAssociatedObject(button, &kDiscKey);
+    NSArray<UIImage *> *masks = objc_getAssociatedObject(disc, &kDiscMasksKey);
+    CALayer *mask = disc.layer.mask;
+    if (!mask || masks.count != 2 || SGRIncreaseContrast()) return;
+    id contents = (id)masks[pressed ? 1 : 0].CGImage;
+    if (mask.contents == contents) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    [mask removeAnimationForKey:@"contents"];
+    mask.contents = contents;
+    [CATransaction commit];
 }
 
 // The disc behind `button`'s glyph while `on`; gone again while off. Called on every change of the glyph's state and of
-// the backdrop's reading; the mask is drawn again only when the glyph, its traits or the contrast changed.
+// the backdrop's reading; the masks are drawn again only when the glyph, its traits or the contrast changed.
 static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL animated) {
     if (!button || !drawn) return;
     UIView *disc = objc_getAssociatedObject(button, &kDiscKey);
@@ -314,12 +336,7 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
         disc.userInteractionEnabled = NO;
         disc.isAccessibilityElement = NO;
         disc.alpha = 0;
-        if (cutsLive(button)) {
-            makeGroup(button);
-            disc.layer.cornerRadius = kActiveDisc / 2;
-        } else {
-            disc.layer.mask = [CALayer layer];
-        }
+        disc.layer.mask = [CALayer layer];
         objc_setAssociatedObject(button, &kDiscKey, disc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (disc.superview != button) [button insertSubview:disc atIndex:0];
@@ -333,22 +350,44 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
         BOOL contrast = SGRIncreaseContrast();
         UIColor *fill = contrast ? UIColor.whiteColor : SGRInkPlainColor(button, kFooterInkAdd, kFooterInkAdd);
         if (![disc.backgroundColor isEqual:fill]) disc.backgroundColor = fill;
-        NSString *symbol = [drawn isKindOfClass:SGRGlyphView.class] ? ((SGRGlyphView *)drawn).symbol : NSStringFromClass(drawn.class);
-        NSArray *key = @[symbol ?: @"", @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight),
-                         NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];
         CALayer *mask = disc.layer.mask;
-        // Cut live, the glyph is the hole: no picture to draw.
-        if (mask && CGAffineTransformIsIdentity(drawn.transform) && (![objc_getAssociatedObject(disc, &kDiscDrawnKey) isEqual:key] || !mask.contents)) {
-            [CATransaction begin];
-            [CATransaction setDisableActions:YES];
-            mask.frame = disc.bounds;
-            mask.contentsScale = drawn.traitCollection.displayScale ?: UIScreen.mainScreen.scale;
-            // Under Increase Contrast the disc is whole and the glyph itself is black on it.
-            mask.contents = contrast ? nil : (id)discMask(drawn, disc).CGImage;
-            mask.backgroundColor = contrast ? UIColor.blackColor.CGColor : nil;
-            mask.cornerRadius = contrast ? kActiveDisc / 2 : 0;
-            [CATransaction commit];
-            objc_setAssociatedObject(disc, &kDiscDrawnKey, key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (mask && CGAffineTransformIsIdentity(drawn.transform)) {
+            CGRect rect = CGRectZero;
+            UIImage *shape = contrast ? nil : glyphShape(drawn, &rect);
+            NSArray *key = @[contrast || !shape ? @"" : shapeIdentity(drawn, shape), @(contrast), @(drawn.traitCollection.displayScale),
+                             @(drawn.traitCollection.legibilityWeight), NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];
+            NSArray *drawnKey = objc_getAssociatedObject(disc, &kDiscDrawnKey);
+            NSArray<UIImage *> *masks = objc_getAssociatedObject(disc, &kDiscMasksKey);
+            BOOL stale = ![drawnKey isEqual:key] || (!contrast && masks.count != 2);
+            if (stale) {
+                masks = shape ? @[discMask(drawn, disc, shape, rect, 1), discMask(drawn, disc, shape, rect, kFooterPressedAlpha)] : nil;
+                objc_setAssociatedObject(disc, &kDiscMasksKey, masks, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(disc, &kDiscDrawnKey, key, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            // A press in progress keeps its mask through a new reading of the backdrop.
+            BOOL pressed = button.highlighted && button.pressedAlpha > 0;
+            id contents = contrast || masks.count != 2 ? nil : (id)masks[pressed ? 1 : 0].CGImage;
+            if (stale || mask.contents != contents) {
+                // A new symbol on a disc that shows (Lyrics' bubble filling as it opens) crossfades, as the glyph would.
+                BOOL newSymbol = drawnKey && ![drawnKey.firstObject isEqual:key.firstObject] && [drawnKey[1] isEqual:key[1]];
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                mask.frame = disc.bounds;
+                mask.contentsScale = drawn.traitCollection.displayScale ?: UIScreen.mainScreen.scale;
+                // A crossfade still running from the last change would otherwise end on the picture it started for.
+                [mask removeAnimationForKey:@"contents"];
+                mask.contents = contents;
+                // Under Increase Contrast the disc is whole and the glyph itself is black on it.
+                mask.backgroundColor = contrast ? UIColor.blackColor.CGColor : nil;
+                mask.cornerRadius = contrast ? kActiveDisc / 2 : 0;
+                if (newSymbol && animated && disc.alpha > 0.5 && !SGRReduceMotion()) {
+                    CATransition *fade = [CATransition animation];
+                    fade.type = kCATransitionFade;
+                    fade.duration = SGRCrossfade;
+                    [mask addAnimation:fade forKey:@"contents"];
+                }
+                [CATransaction commit];
+            }
         }
     }
     CGFloat alpha = on ? 1 : 0;
@@ -357,19 +396,13 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
     else disc.alpha = alpha;
 }
 
-// The glyph's color while its disc shows: cut live, opaque white drawn with destOut, so it takes its own shape out of
-// the disc; with the masked disc, clear (the mask's hole is the glyph); black on the disc under Increase Contrast, as the
-// Music app draws it. The rest ink otherwise. Changed with a crossfade when animated, as the disc fades.
+// The glyph's color while its disc shows: clear, the mask's hole being the glyph; black on the disc under Increase
+// Contrast, as the Music app draws it. The rest ink otherwise. Changed with a crossfade when animated, as the disc fades.
 static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated) {
-    BOOL contrast = SGRIncreaseContrast(), live = on && !contrast && cutsLive(button);
-    if (live) makeGroup(button);
-    UIColor *tint = on ? (contrast ? UIColor.blackColor : live ? UIColor.whiteColor : UIColor.clearColor) : footerRest(button);
-    NSString *filter = live ? @"destOut" : nil;
-    if ([button.glyph.tintColor isEqual:tint] && [button.glyph.layer.compositingFilter isEqual:filter]) return;
-    if ([button.glyph.tintColor isEqual:tint] && !filter && !button.glyph.layer.compositingFilter) return;
+    UIColor *tint = on ? (SGRIncreaseContrast() ? UIColor.blackColor : UIColor.clearColor) : footerRest(button);
+    if ([button.glyph.tintColor isEqual:tint]) return;
     void (^paint)(void) = ^{
         button.glyph.tintColor = tint;
-        footerFilter(button, filter);
         paintEncore(button);
     };
     if (animated && !SGRReduceMotion()) {
@@ -382,17 +415,17 @@ static void tintFooterGlyph(SGRGlyphButton *button, BOOL on, BOOL animated) {
 
 #pragma mark - the press
 
-// The Music app's press on its footer's lyrics and queue buttons, as its player shows it: the label alone goes to 0.6 while a finger is on it, at once,
-// with no platter and no sink. The label is what is blended out of the disc, so with the disc up the hole fills back
-// to 0.4 of it. Spotify's Encore glyph, drawn instead with Music app icons off, takes the same alpha.
-static const CGFloat kFooterPressedAlpha = 0.6;
-
+// The label goes to kFooterPressedAlpha (SGRGlyphButton's pressedAlpha), Spotify's Encore glyph, drawn instead with Music
+// app icons off, with it. While the disc is up the label is clear and the hole is what fills back in: the disc's mask
+// is swapped for its pressed one at once and back on release. Under Increase Contrast the black label dims instead.
 static void footerPress(SGRGlyphButton *button) {
     button.pressedAlpha = kFooterPressedAlpha;
     __weak SGRGlyphButton *weakButton = button;
     button.onPress = ^(BOOL pressed) {
         SGRGlyphButton *strong = weakButton;
-        SPTEncoreIconView *encore = strong ? objc_getAssociatedObject(strong, &kEncoreGlyphKey) : nil;
+        if (!strong) return;
+        pressDisc(strong, pressed);
+        SPTEncoreIconView *encore = objc_getAssociatedObject(strong, &kEncoreGlyphKey);
         if (!encore) return;
         [encore.layer removeAnimationForKey:@"opacity"];
         encore.alpha = pressed ? kFooterPressedAlpha : 1;

@@ -802,6 +802,8 @@ static CGFloat sg_scrubMiddle;
 @property (nonatomic) CGFloat middle;
 // The volume row's (PlayerVolume.m), whose fill at rest is its own, brighter one.
 @property (nonatomic) BOOL volume;
+// A finger holds it; NO from the moment it lets go, while the rail shrinks back.
+@property (nonatomic) BOOL held;
 @property (nonatomic) NSUInteger generation;
 @end
 @implementation SGRHeldBar
@@ -809,7 +811,8 @@ static CGFloat sg_scrubMiddle;
 
 static void updateHeldBar(UISlider *slider) {
     SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
-    if (!bar) return;
+    // A slider MPVolumeView has just let go, before the row's layout drops its rail: nothing to place it against.
+    if (!bar || !slider.superview) return;
     CGRect bounds = slider.bounds, rect = [slider trackRectForBounds:bounds];
     BOOL rtl = thumbCentre(slider, slider.minimumValue) > thumbCentre(slider, slider.maximumValue);
     CGFloat range = slider.maximumValue - slider.minimumValue;
@@ -884,6 +887,7 @@ static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
         hideTrackImages(slider, bar);
     }
     NSUInteger generation = ++bar.generation;
+    bar.held = on;
     void (^geometry)(void) = ^{
         CGFloat height = on ? bar.heldHeight : bar.restHeight;
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-height)/2);
@@ -925,6 +929,21 @@ void SGRPlayerHeldVolumeBarMoved(UISlider *slider) {
 
 void SGRPlayerDropVolumeBar(UISlider *slider) {
     removeHeldBar(slider);
+}
+
+// The row drew its tracks again in the backdrop's new colors while a rail is over them: the rail takes the colors (the
+// fill only while held; letting go animates it to the rest fill), and the slider's new track images, laid out now, give
+// way to it rather than show through around it.
+void SGRPlayerRepaintHeldVolumeBar(UISlider *slider) {
+    SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
+    if (!bar) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    bar.remaining.backgroundColor = SGRPlayerBarTrackOver(slider).CGColor;
+    if (bar.held) paintHeldFill(bar, SGRPlayerBarFillOver(slider, YES, bar.volume));
+    [CATransaction commit];
+    [slider layoutIfNeeded];
+    SGRPlayerHeldVolumeBarMoved(slider);
 }
 
 // What a track of the bar shows: Spotify's image (`spotify`), the one drawn from it (`drawn`) and its color.

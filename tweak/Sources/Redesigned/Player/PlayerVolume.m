@@ -59,7 +59,9 @@ static const CGFloat kGlyphsHalf = 14;
     CGFloat _panAt;                     // where the finger was at the drag's last write
     float _panStart;                    // the level the finger's distance from _panFrom applies to
     NSMutableSet<NSNumber *> *_panOwn;  // the levels the drag wrote, with the one it began at
-    NSHashTable<UISlider *> *_held;     // the sliders a finger's drag holds, drawn with the held rail
+    // The sliders a finger's drag has held: the held rail stays over each until it has shrunk back after the finger
+    // lets go, so it is kept here past the drag's end, for the layouts and repaints in between.
+    NSHashTable<UISlider *> *_railed;
     BOOL _inkObserved;
     UIColor *_paintedFill, *_paintedTrack;  // the colors the tracks' images were last drawn in
 }
@@ -95,7 +97,7 @@ static UIImageView *glyph(NSString *symbol) {
     [self addSubview:_loud];
     _remote = [UISlider new];
     [_remote setThumbImage:[UIImage new] forState:UIControlStateNormal];
-    _held = [NSHashTable weakObjectsHashTable];
+    _railed = [NSHashTable weakObjectsHashTable];
     [self paint];
     _remote.accessibilityLabel = SGL(@"player.volume", @"Volume");
     SGInstallVolumeFeedback(_remote);
@@ -227,6 +229,19 @@ static UIImageView *glyph(NSString *symbol) {
     [_volume setMaximumVolumeSliderImage:track forState:UIControlStateNormal];
     [_remote setMinimumTrackImage:fill forState:UIControlStateNormal];
     [_remote setMaximumTrackImage:track forState:UIControlStateNormal];
+    // A rail over a slider (a drag, or one shrinking back) in the new colors, the new images under it hidden.
+    for (UISlider *slider in [self railSliders]) SGRPlayerRepaintHeldVolumeBar(slider);
+}
+
+// Every slider that may have a rail over it: the two the row shows now and any a drag held.
+- (NSArray<UISlider *> *)railSliders {
+    NSMutableOrderedSet<UISlider *> *sliders = [NSMutableOrderedSet orderedSet];
+    if (_remote) [sliders addObject:_remote];
+    for (UISlider *slider in _volume.subviews) {
+        if ([slider isKindOfClass:UISlider.class]) [sliders addObject:slider];
+    }
+    [sliders addObjectsFromArray:_railed.allObjects];
+    return sliders.array;
 }
 
 // A slider sends a touch down only for a touch it tracks (one on its thumb), so a drag's look starts with it, never with
@@ -252,14 +267,18 @@ static UIImageView *glyph(NSString *symbol) {
 
 // The held rail grows on the layout spring and back, as the progress bar's does; under Reduce Motion it crossfades.
 - (void)showDrag:(BOOL)dragging on:(UISlider *)slider {
-    if (dragging) [_held addObject:slider];
-    else [_held removeObject:slider];
+    if (dragging) [_railed addObject:slider];
     SGRPlayerHoldVolumeBar(slider, dragging);
 }
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
-    if (!self.window) return;
+    if (!self.window) {
+        // Out of the window no drag goes on (UIKit cancels its touches): no rail is left behind, shrinking or not.
+        for (UISlider *slider in [self railSliders]) SGRPlayerDropVolumeBar(slider);
+        [_railed removeAllObjects];
+        return;
+    }
     if (!_inkObserved) {
         _inkObserved = YES;
         // Painted again at each new reading of the backdrop, in whichever state the bar is.
@@ -289,12 +308,13 @@ static UIImageView *glyph(NSString *symbol) {
         glyphs = CGRectGetMidY([_volume convertRect:slider.frame toView:self]);
         [self followDrags:slider];
     }
-    // A held rail follows its slider; one whose slider MPVolumeView has let go (it makes a new one) goes with it.
-    for (UISlider *slider in _held.allObjects) {
+    // A rail follows its slider, also while it shrinks back after the drag; one whose slider MPVolumeView has let go
+    // (it makes a new one) goes with it.
+    for (UISlider *slider in [self railSliders]) {
         if (slider.superview == _volume || slider == _remote) {
             SGRPlayerHeldVolumeBarMoved(slider);
         } else {
-            [_held removeObject:slider];
+            [_railed removeObject:slider];
             SGRPlayerDropVolumeBar(slider);
         }
     }

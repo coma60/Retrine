@@ -294,6 +294,9 @@ CGFloat SGRPlayerBarDragHeight(CGFloat height);
 void SGRPlayerHoldVolumeBar(UISlider *slider, BOOL held);
 void SGRPlayerHeldVolumeBarMoved(UISlider *slider);
 void SGRPlayerDropVolumeBar(UISlider *slider);
+// After the row painted its sliders' tracks again (a new backdrop reading): the rail, held or shrinking back, in the new
+// colors over the new track images. Nothing for a slider without one.
+void SGRPlayerRepaintHeldVolumeBar(UISlider *slider);
 // YES when the row shows; NO when it is off, has no controls to sit under or no room between them and the footer.
 BOOL SGRPlayerPlaceVolume(UIView *stack, UIView *controls, UIView *row, CGFloat margin, BOOL rhythm);
 

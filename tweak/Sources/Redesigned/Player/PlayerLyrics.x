@@ -382,8 +382,14 @@ static BOOL keepsTitle(void) {
 }
 
 - (void)setHidden:(BOOL)hidden {
+    BOOL changed = self.hidden != hidden;
     [super setHidden:hidden];
     [self updateRendering];
+    if (!changed) return;
+    // UIKit tells the views under it nothing: the queue page (or the side column's list) held in the stage while this
+    // was hidden, as a cancelled swipe down restores it, would stay stopped.
+    SGRPlayerQueueVisibilityChanged(objc_getAssociatedObject(self, &kQueuePageKey));
+    SGRPlayerQueueVisibilityChanged(objc_getAssociatedObject(self, &kQueueKey));
 }
 
 - (void)didMoveToWindow {

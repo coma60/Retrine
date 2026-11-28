@@ -324,6 +324,10 @@ static void checkFetchRecovery(SGRPlayerQueueController *list, NSIndexPath *from
     dropRow(list, from, to);
     check(player.moves == moves + 1 && [list trackAt:from] == original,
           @"a failed read restores the display without releasing the submitted revision for another move");
+    until(@"failed read's move given up at its deadline", ^BOOL { return [list valueForKey:@"snapshot"] != nil; });
+    check(player.moves == moves + 1 && [list trackAt:from] == original && ![list valueForKey:@"submittedKey"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list tableView:list.tableView canMoveRowAtIndexPath:from],
+          @"after a failed read the deadline reads the queue again and gives the grips back");
     state.queueRevision = @"303-retry";
     [list playerStateDidReport:state];
     dropRow(list, from, to);
@@ -353,17 +357,57 @@ static void checkFetchRecovery(SGRPlayerQueueController *list, NSIndexPath *from
     player.delayFetch = NO;
     player.reply(player.currentQueue);
     player.reply = nil;
+    check(player.moves == moves + 3 && [list trackAt:from] == original && ![list valueForKey:@"submittedKey"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list tableView:list.tableView canMoveRowAtIndexPath:from],
+          @"a timeout gives the move up: the retry's same-revision queue is taken as Spotify's and the grips come back");
+
+    // Spotify rejects the move without a new revision and answers the post-drop read with the old queue at once.
     dropRow(list, from, to);
-    check(player.moves == moves + 3 && [list trackAt:from] == original &&
-          ![list tableView:list.tableView canMoveRowAtIndexPath:from],
-          @"the pre-move queue after a timeout cannot authorize another submission on the same revision");
+    check(player.moves == moves + 4 && [list valueForKey:@"submittedKey"] && [list trackAt:to] == original,
+          @"the rejected move is shown optimistically until its deadline");
+    until(@"rejected move's deadline restores an editable snapshot", ^BOOL { return [list valueForKey:@"snapshot"] != nil; });
+    check(player.moves == moves + 4 && [list trackAt:from] == original && ![list valueForKey:@"submittedKey"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list tableView:list.tableView canMoveRowAtIndexPath:from],
+          @"a move rejected within its revision gets Spotify's order and its grips back after the deadline");
+
+    // Hidden and shown again at once while the move waits (its deadline gone with the suspension): the old queue read
+    // on the way back is not taken and allows no second move, and the move is given up once its wait is out.
+    dropRow(list, from, to);
+    UITableView *table = list.tableView;
+    NSArray *waiting = [list valueForKey:@"submittedKey"];
+    table.hidden = YES;
+    check(player.moves == moves + 5 && [[list valueForKey:@"submittedKey"] isEqual:waiting] &&
+          [[list valueForKey:@"optimisticMove"] boolValue], @"a quick suspension keeps the move waiting");
+    NSUInteger fetches = player.fetches;
+    table.hidden = NO;
+    dropRow(list, to, from);
+    check(player.fetches == fetches + 1 && player.moves == moves + 5 && [list trackAt:to] == original &&
+          [[list valueForKey:@"submittedKey"] isEqual:waiting] && [list valueForKey:@"snapshot"] == nil,
+          @"shown again within the wait, the old queue is not taken and a second move is not sent");
+    until(@"suspended move given up after its wait", ^BOOL { return [list valueForKey:@"snapshot"] != nil; });
+    check(player.moves == moves + 5 && [list trackAt:from] == original && ![list valueForKey:@"submittedKey"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list tableView:table canMoveRowAtIndexPath:from],
+          @"once the wait is out the same revision's queue is taken and the grips come back");
+
+    // Hidden past the wait: shown again, the same revision's queue is taken at once.
+    dropRow(list, from, to);
+    table.hidden = YES;
+    NSDate *past = [NSDate dateWithTimeIntervalSinceNow:5.2];
+    while (past.timeIntervalSinceNow > 0) [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];
+    check(player.moves == moves + 6 && [list valueForKey:@"submittedKey"] && [list valueForKey:@"snapshot"] == nil,
+          @"while hidden the move's wait runs out with nothing read");
+    fetches = player.fetches;
+    table.hidden = NO;
+    check(player.fetches == fetches + 1 && [list trackAt:from] == original && ![list valueForKey:@"submittedKey"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list tableView:table canMoveRowAtIndexPath:from],
+          @"shown again past the wait, the same revision's queue is editable at once and the grips come back");
     player.currentQueue.nextTracks = player.sentNextTracks;
     [state setValue:player.sentNextTracks forKey:@"future"];
     QueueTrack *current = (QueueTrack *)state.track;
     current.UID = nil;
     report(@"305");
     dropRow(list, to, from);
-    check(player.moves == moves + 4 && [list trackAt:from] == original,
+    check(player.moves == moves + 7 && [list trackAt:from] == original,
           @"the acknowledged revision permits the next move after timeout recovery");
     player.delayFetch = YES;
     current.UID = @"resolved-current-uid";
@@ -373,12 +417,12 @@ static void checkFetchRecovery(SGRPlayerQueueController *list, NSIndexPath *from
     player.reply(player.currentQueue);
     player.reply = nil;
     dropRow(list, to, from);
-    check(player.moves == moves + 4,
+    check(player.moves == moves + 7,
           @"a late current track UID cannot authorize a second move on the same playback ID and revision");
     state.playbackId = @"new playback";
     [list playerStateDidReport:state];
     dropRow(list, to, from);
-    check(player.moves == moves + 5 && [list trackAt:from] == original,
+    check(player.moves == moves + 8 && [list trackAt:from] == original,
           @"a new playback session can edit its own queue with the same revision number");
     player.currentQueue.nextTracks = player.sentNextTracks;
     [state setValue:player.sentNextTracks forKey:@"future"];
@@ -640,6 +684,38 @@ static void checkQueueVisibility(SGRPlayerQueueController *list, UIViewControlle
     [outer addSubview:page.view];
     check(player.fetches == ++fetches && [player.fetchedRevision isEqual:@"detached-2"],
           @"reattachment fetches only the latest detached revision");
+
+    // A cancelled swipe down puts the page back while an ancestor is still hidden, then shows the ancestor. UIKit tells
+    // the views under it nothing; the caller does (SGRPlayerQueueVisibilityChanged).
+    UIView *holder = [[UIView alloc] initWithFrame:outer.bounds];
+    holder.hidden = YES;
+    [outer addSubview:holder];
+    [page.view removeFromSuperview];
+    [holder addSubview:page.view];
+    check(player.fetches == fetches && [list valueForKey:@"snapshot"] == nil,
+          @"attached under a hidden ancestor, the queue stays suspended");
+    QueueTrack *shownLatest = song(@"ancestor-latest", @"Latest under hidden ancestor");
+    player.currentQueue.nextTracks = @[shownLatest, song(@"ancestor-next", @"Next under hidden ancestor")];
+    stubTransitionSettings = (SGTransitionSettings){YES, YES, 5000};
+    report(@"ancestor-hidden-1");
+    report(@"ancestor-hidden-2");
+    holder.hidden = NO;
+    check(player.fetches == fetches && [list valueForKey:@"snapshot"] == nil && ![[mix valueForKey:@"on"] boolValue],
+          @"the ancestor shown again goes unnoticed without the visibility call");
+    NSUInteger shownAsks = [coverAsks countForObject:shownLatest.trackTitle];
+    SGRPlayerQueueVisibilityChanged(page);
+    [list.tableView layoutIfNeeded];
+    section = list.tableView.numberOfSections - 1;
+    check(player.fetches == ++fetches && [player.fetchedRevision isEqual:@"ancestor-hidden-2"] &&
+          [list valueForKey:@"snapshot"] == player.currentQueue && [list trackAt:row(section, 0)] == shownLatest &&
+          [list tableView:list.tableView canMoveRowAtIndexPath:row(section, 0)] &&
+          [coverAsks countForObject:shownLatest.trackTitle] > shownAsks && [[mix valueForKey:@"on"] boolValue],
+          @"the visibility call resumes the queue: latest rows, editable snapshot, covers and options");
+    [page.view removeFromSuperview];
+    [outer addSubview:page.view];
+    [holder removeFromSuperview];
+    player.currentQueue.nextTracks = originalTracks;
+    report(@"ancestor-restored");
     screen.view.hidden = NO;
 }
 

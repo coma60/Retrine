@@ -25,3 +25,6 @@ UIViewController *SGRPlayerQueuePage(void);
 // list has moved from where it rests (positive as it scrolls up) whenever it moves, so they ride with the list as the
 // Music app's do. Called again whenever the room changes; the list goes back to rest for a new room.
 void SGRPlayerQueuePageConfigure(UIViewController *page, CGFloat headHeight, void (^scrolled)(CGFloat shift));
+// An ancestor of a queue page or list (SGRPlayerQueuePage, SGRPlayerQueueList) changed its `hidden`, which UIKit does
+// not tell the views under it: the queue stops while out of sight and syncs its list, covers and toggles once back.
+void SGRPlayerQueueVisibilityChanged(UIViewController *queue);

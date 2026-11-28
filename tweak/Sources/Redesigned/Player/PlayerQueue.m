@@ -25,6 +25,9 @@
 
 static const NSUInteger kMaxRows = 50;
 static const NSUInteger kHistoryRows = 10;
+// How long after a move a read of its revision may still be the queue before it: the post-drop read's second and
+// refreshQueue's four second deadline. Past it the move is taken as rejected.
+static const CFTimeInterval kSubmittedWait = 5;
 static const CGFloat kBlendPadding = 8, kBlendGap = 6;
 // A row's cover, the Music app's list thumbnail (iOS 26, design/applemusic-gap item 22).
 static const CGFloat kCoverSide = 44;
@@ -520,6 +523,7 @@ static BOOL queueViewIsVisible(UIView *view) {
 - (void)goToRest;
 - (void)placeAtUpcomingForcingLayout:(BOOL)forceLayout;
 - (void)updateQueueVisibility;
+- (void)tableVisibilityChanged;
 @end
 
 static NSArray *reportKey(SPTPlayerState *state) {
@@ -561,6 +565,9 @@ static NSArray *reportKey(SPTPlayerState *state) {
     BOOL _movedRow, _coversChangedDuringReorder, _optimisticMove;
     // The submitted move's playback ID and queue revision. Track metadata can change within that revision.
     NSArray *_submittedKey;
+    // Until when (CACurrentMediaTime) a read of that revision may still predate the move: Spotify can answer before it
+    // applies setQueue. Past it, a move still unanswered within its revision is taken as rejected (kSubmittedWait).
+    CFTimeInterval _submittedUntil;
     id _dragSnapshot;
     NSUInteger _dragGeneration;
     // The Music app's snapping between rest and History: where a drag started, and its tick.
@@ -758,6 +765,10 @@ static NSArray *reportKey(SPTPlayerState *state) {
     _fetchGeneration++;
     _fetching = NO;
     _snapshot = nil;
+    // A move still within its wait stays submitted, so a quick hide and show (a cancelled swipe, Notification Center)
+    // cannot take the old queue for Spotify's or send the move twice; the read on the way back waits out the rest
+    // (refreshQueue). One past its wait, whose deadline went with the fetch, is let go.
+    if (_submittedKey && CACurrentMediaTime() >= _submittedUntil) [self releaseSubmission];
     _completedKey = nil;
     _returnGeneration++;
     _returning = NO;
@@ -1676,13 +1687,23 @@ static const CGFloat kSnapDistance = 200;
     [self placeAtUpcomingForcingLayout:NO];
 }
 
-// Restore the display independently of the last move's write permission.
+// A move given up on: the next read of its revision is Spotify's word on the queue and a write base again.
+- (void)releaseSubmission {
+    _submittedKey = nil;
+    _submittedUntil = 0;
+    _optimisticMove = NO;
+}
+
+// Restore the display. A failed read (`retry` NO) keeps the submitted revision, so the old queue still cannot carry
+// another move; the deadline (`retry` YES) gives the move up, rejected within its revision or never answered, and reads
+// the queue again, which then gives the grips their write base back.
 - (void)restorePlayerStateRetrying:(BOOL)retry {
     _optimisticMove = NO;
     _snapshot = nil;
     SPTPlayerState *state = SGPlayerState();
     NSArray *key = reportKey(state);
     _reportedKey = retry || [_submittedKey isEqual:key.firstObject] ? key : nil;
+    if (retry) [self releaseSubmission];
     [self showPlayerState:state key:key];
     if (retry && key) [self refreshQueue];
 }
@@ -1705,7 +1726,8 @@ static const CGFloat kSnapDistance = 200;
         typeof(self) self = weakSelf;
         if (!self || generation != self->_fetchGeneration) return;
         if (![self queueIsVisible]) { [self suspendQueue]; return; }
-        BOOL retry = self->_optimisticMove || (self->_reportedKey && ![self->_reportedKey isEqual:reported]);
+        BOOL retry = self->_optimisticMove || [self->_submittedKey isEqual:reported.firstObject] ||
+            (self->_reportedKey && ![self->_reportedKey isEqual:reported]);
         self->_fetchGeneration++;
         self->_fetching = NO;
         [self restorePlayerStateRetrying:retry];
@@ -1733,11 +1755,29 @@ static const CGFloat kSnapDistance = 200;
         // Spotify can answer the post-drop fetch before applying setQueue. Keep the optimistic
         // rows and leave the deadline armed until a new revision, even if this read looks editable.
         self->_completedKey = reported;
-        if ([self->_submittedKey isEqual:reported.firstObject]) return;
+        if ([self->_submittedKey isEqual:reported.firstObject]) {
+            CFTimeInterval left = self->_submittedUntil - CACurrentMediaTime();
+            if (left > 0) {
+                // Still within the move's wait. Its own deadline may have gone with a suspension: the move is given up
+                // once the wait is out, whichever of this and refreshQueue's deadline comes first.
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0.05, left) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    typeof(self) self = weakSelf;
+                    if (!self || generation != self->_fetchGeneration || ![self->_submittedKey isEqual:reported.firstObject]) return;
+                    if (![self queueIsVisible]) { [self suspendQueue]; return; }
+                    self->_fetchGeneration++;
+                    self->_fetching = NO;
+                    [self restorePlayerStateRetrying:YES];
+                });
+                return;
+            }
+            // Past the wait the move did not take: this read is the queue as Spotify has it.
+            [self releaseSubmission];
+        }
         self->_fetchGeneration++;
         if (self->_musicStyle) {
             self->_snapshot = queue;
             self->_submittedKey = nil;
+            self->_submittedUntil = 0;
             self->_optimisticMove = NO;
         }
         [self noteHistory:queue.prevTracks current:queue.track];
@@ -2102,6 +2142,7 @@ static const CGFloat kMusicHistoryGap = 25;
     _groups = [self musicGroups];
     _movedRow = YES;
     _submittedKey = _reportedKey.firstObject;
+    _submittedUntil = CACurrentMediaTime() + kSubmittedWait;
     _optimisticMove = YES;
     _snapshot = nil;
     _signature = [self signature];
@@ -2436,6 +2477,7 @@ static UIImage *mixGlyph(void) {
 
 @interface SGRPlayerQueuePageController : UIViewController <SGPlayerStateObserver>
 - (void)setHeadHeight:(CGFloat)height scrolled:(void (^)(CGFloat shift))scrolled;
+- (void)pageVisibilityChanged;
 @end
 
 // Global AutoMix toggle state: reflects Spotify's own Playback transitions once read, so turning both Automix and
@@ -2686,6 +2728,12 @@ UIViewController *SGRPlayerQueuePage(void) {
 
 void SGRPlayerQueuePageConfigure(UIViewController *page, CGFloat headHeight, void (^scrolled)(CGFloat shift)) {
     if ([page isKindOfClass:SGRPlayerQueuePageController.class]) [(SGRPlayerQueuePageController *)page setHeadHeight:headHeight scrolled:scrolled];
+}
+
+void SGRPlayerQueueVisibilityChanged(UIViewController *queue) {
+    if (!queue.isViewLoaded) return;
+    if ([queue isKindOfClass:SGRPlayerQueuePageController.class]) [(SGRPlayerQueuePageController *)queue pageVisibilityChanged];
+    else if ([queue isKindOfClass:SGRPlayerQueueController.class]) [(SGRPlayerQueueController *)queue tableVisibilityChanged];
 }
 
 #pragma mark - opening it

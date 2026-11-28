@@ -52,6 +52,8 @@ static BOOL holdMetadata;
 static dispatch_block_t sendMetadata;
 static NSString *heldRecording;
 static dispatch_block_t sendRecording;
+static NSArray *spotifyArtists;           // the album metadata's artists, none by default
+static NSUInteger spotifyTrackCount = 1;  // its tracks; the first is spotify:track:0000000000000000000001
 BOOL SGMotionAppleMusicOn(void) { return appleOn; }
 dispatch_block_t SGSpotifyMetadataRequestAllowConstrained(NSString *path, NSData *body, BOOL allow, SGSpotifyMetadataReply done) {
     if ([path isEqual:SGSpotifyExtendedMetadataPath]) {
@@ -71,8 +73,11 @@ dispatch_block_t SGSpotifyMetadataRequestAllowConstrained(NSString *path, NSData
     CHECK([path hasPrefix:@"/metadata/4/album/"] && !body && !allow && appleOn);
     metadataGets++;
     NSArray *ids = spotifyUPC ? @[@{@"type": @"upc", @"id": spotifyUPC}] : @[];
-    NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"external_id":ids,
-        @"disc": @[@{@"track": @[@{@"gid": @"00000000000000000000000000000001"}]}]} options:0 error:nil];
+    NSMutableArray *gids = [NSMutableArray array], *artists = [NSMutableArray array];
+    for (NSUInteger i = 1; i <= spotifyTrackCount; i++) [gids addObject:@{@"gid": [NSString stringWithFormat:@"%032lx", (unsigned long)i]}];
+    for (NSString *name in spotifyArtists) [artists addObject:@{@"name": name}];
+    NSData *json = [NSJSONSerialization dataWithJSONObject:@{@"external_id":ids, @"artist":artists,
+        @"disc": @[@{@"track": gids}]} options:0 error:nil];
     dispatch_block_t send = ^{ dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ done(json, 200, nil); }); };
     if (holdMetadata) sendMetadata = send;
     else send();
@@ -571,6 +576,120 @@ static void checkSoundtrack(void) {
     CHECK(([coverSearches isEqual:@[@"Absent", @"Short result"]]));
     coverResults = nil;
 }
+// Issue #82, Apple's US catalog and Spotify's metadata as read on 2026-11-28 (only the fields used here; local video URLs).
+static NSDictionary *appleEdition(NSString *identifier, NSString *name, NSString *artist, NSNumber *tracks, NSString *clip, NSArray *songs) {
+    NSMutableDictionary *attrs = [@{@"name": name, @"artistName": artist, @"isSingle": @NO, @"trackCount": tracks} mutableCopy];
+    if (clip) attrs[@"editorialVideo"] = @{@"motionTallVideo3x4": @{@"video": [NSString stringWithFormat:@"https://fixture.invalid/%@/master.m3u8", clip]}};
+    return @{@"id": identifier, @"attributes": attrs, @"relationships": @{@"tracks": @{@"data": songs ?: @[]}}};
+}
+static NSDictionary *recordingReply(NSArray *albums) {
+    return @{@"data": @[@{@"id": @"song", @"attributes": @{@"isrc": @"GBN9Y2200015"}, @"relationships": @{@"albums": @{@"data": albums}}}]};
+}
+static void clearCatalog(void) {
+    __block BOOL cleared = NO;
+    SGMotionCacheClear(^(BOOL complete) { cleared = YES; });
+    waitFor(^BOOL { return cleared; });
+}
+static NSURL *playerCover(NSString *artist, NSString *album, NSString *song, NSString *uri, NSString *track) {
+    __block BOOL finished = NO;
+    __block NSURL *result;
+    expectedTrack = track;
+    SGMotionRequestSongCover(artist, album, song, uri, track, 720, ^(NSURL *file) { result = file; finished = YES; });
+    waitFor(^BOOL { return finished; });
+    return result;
+}
+// The album page as AlbumHeader.x asks: the identifiers, then the title for a miss or, for a still edition, its year's.
+static NSURL *pageCover(NSString *artist, NSString *album, NSString *uri, SGMotionIdentifierOutcome *outcome) {
+    __block BOOL finished = NO;
+    __block NSURL *result;
+    expectedTrack = @"spotify:track:0000000000000000000001";
+    SGMotionPageIdentifierCover(uri, artist, album, 720, ^(NSURL *file, SGMotionIdentifierOutcome found) {
+        if (outcome) *outcome = found;
+        if (file || (found != SGMotionIdentifierMiss && found != SGMotionIdentifierStill)) { result = file; finished = YES; return; }
+        if (found == SGMotionIdentifierStill)
+            SGMotionPageStillEditionCover(uri, artist, album, 720, ^(NSURL *clip) { result = clip; finished = YES; });
+        else SGMotionPageAlbumCover(artist, album, uri, 720, ^(NSURL *clip, BOOL identified) { result = clip; finished = YES; });
+    });
+    waitFor(^BOOL { return finished; });
+    return result;
+}
+
+static void checkIssue82(void) {
+    NSString *track = @"spotify:track:0000000000000000000002";
+    barcodeReply = @{@"data": @[]};
+    // B4: Spotify's 2016 "Moana (Original Motion Picture Soundtrack)" (45f9e25da809496dbf10f7c811f0696c, UPC
+    // 00050087334925, which Apple does not carry). The ISRCs of "An Innocent Warrior" (NZSO01600013) and the first track
+    // (USWD11677853) are on these six editions whose names lose their brackets to "Moana"; three move, with one video.
+    NSString *moana = @"Moana (Original Motion Picture Soundtrack)", *video = @"P555933341";
+    NSArray *moanaEditions = @[
+        appleEdition(@"1436926792", @"Moana (Original Motion Picture Soundtrack/Japanese Version)", @"Various Artists", @41, nil, nil),
+        appleEdition(@"1442445678", moana, @"Various Artists", @40, nil, nil),
+        appleEdition(@"1442346010", @"Moana (Te Hopukanga Puoro O Te Kiriata Taketake)", @"Various Artists", @42, nil, nil),
+        appleEdition(@"1440639027", @"Moana (Original Motion Picture Soundtrack/Deluxe Edition)", @"Lin-Manuel Miranda & Mark Mancina", @59, video, nil),
+        appleEdition(@"1440634928", moana, @"Lin-Manuel Miranda & Mark Mancina", @40, video, nil),
+        appleEdition(@"1440647431", @"Moana (Original Motion Picture Soundtrack) [Deluxe Edition]",
+                @"Lin-Manuel Miranda, Opetaia Foa’i, Mark Mancina & Auli'i Cravalho", @66, video, nil)];
+    songsReply = recordingReply(moanaEditions);
+    spotifyUPC = @"00050087334925";
+    spotifyTrackCount = 40;
+    spotifyArtists = @[@"Lin-Manuel Miranda", @"Mark Mancina", @"Disney"];
+    clearCatalog();
+    NSString *clip = [NSString stringWithFormat:@"/%@/clip.mp4", video];
+    NSString *player = @"spotify:album:0000000000000000000082";
+    BOOL warrior = [playerCover(@"Vai Mahina, Sulata Foai-Amiatu, Matthew Ineleo", moana, @"An Innocent Warrior", player, track).path isEqual:clip];
+    SGMotionIdentifierOutcome outcome = SGMotionIdentifierUnavailable;
+    BOOL afterPlayer = [pageCover(@"Lin-Manuel Miranda, Mark Mancina, Disney", moana, player, &outcome).path isEqual:clip]
+        && outcome == SGMotionIdentifierClip;
+    BOOL page = [pageCover(@"Lin-Manuel Miranda, Mark Mancina, Disney", moana, @"spotify:album:0000000000000000000083", &outcome).path isEqual:clip]
+        && outcome == SGMotionIdentifierClip;
+    // Without Spotify's album artists the edition named exactly so by Various Artists (still) keeps it ambiguous.
+    spotifyArtists = nil;
+    BOOL guarded = !playerCover(@"Vai Mahina, Sulata Foai-Amiatu, Matthew Ineleo", moana, @"An Innocent Warrior",
+                                @"spotify:album:0000000000000000000084", track);
+    fprintf(stderr, "issue 82 B4: An Innocent Warrior %s; album page after it %s, alone %s; no album artists stays ambiguous %s\n",
+            warrior ? "PASS" : "FAIL", afterPlayer ? "PASS" : "FAIL", page ? "PASS" : "FAIL", guarded ? "PASS" : "FAIL");
+    CHECK(warrior && afterPlayer && page && guarded);
+
+    // B7: Spotify's "Doo-Wops & Hooligans" (1uyf3l2d4XYwiEqAb7t7fX, ten tracks, UPC 075679974563; Marry You USAT21001887).
+    // Apple's UPC reply is fuzzy and has none of it, and the ISRC is only on playlists' compilations, so the title decides:
+    // Apple has the album by Bruno Mars twice, with these ten tracks (moving) and with two bonus tracks (still).
+    NSString *dooWops = @"Doo-Wops & Hooligans";
+    NSArray *marry = @[@{@"attributes": @{@"name": @"Marry You", @"artistName": @"Bruno Mars"}}];
+    barcodeReply = @{@"data": @[appleEdition(@"578054234", dooWops, @"Bruno Mars", @12, nil, nil)]};
+    songsReply = recordingReply(@[appleEdition(@"1632466562", @"Wedding Songs", @"Various Artists", @20, @"wedding", nil)]);
+    coverResults = @[appleEdition(@"576670451", @"Doo-Wops & Hooligans (Deluxe)", @"Bruno Mars", @14, @"deluxe", marry),
+                     appleEdition(@"576654788", dooWops, @"Bruno Mars", @10, @"dw10", marry),
+                     appleEdition(@"578054234", dooWops, @"Bruno Mars", @12, nil, marry),
+                     appleEdition(@"1841435033", @"Doo-Wops & Hooligans (Deluxe)", @"Bruno Mars", @13, nil, marry),
+                     appleEdition(@"894313115", @"Tribute to Bruno Mars: Doo-Wops & Hooligans", @"Molotov Cocktail Piano", @12, nil, @[])];
+    spotifyUPC = @"075679974563";
+    spotifyArtists = @[@"Bruno Mars"];
+    spotifyTrackCount = 10;
+    clearCatalog();
+    // From here on nothing is cleared: what one edition's lookup keeps must not answer another's. Asked without an album
+    // (no track count), the two editions leave the title ambiguous; that must not hold back the edition that has one.
+    BOOL countless = !playerCover(@"Bruno Mars", dooWops, @"Marry You", nil, track);
+    __block BOOL countlessDone = NO, countlessPage = NO;
+    SGMotionPageAlbumCover(@"Bruno Mars", dooWops, nil, 720, ^(NSURL *file, BOOL identified) { countlessPage = !file; countlessDone = YES; });
+    waitFor(^BOOL { return countlessDone; });
+    countless = countless && countlessPage;
+    BOOL marryYou = [playerCover(@"Bruno Mars", dooWops, @"Marry You", @"spotify:album:0000000000000000000085", track).path isEqual:@"/dw10/clip.mp4"];
+    BOOL dooWopsPage = [pageCover(@"Bruno Mars", dooWops, @"spotify:album:0000000000000000000086", &outcome).path isEqual:@"/dw10/clip.mp4"];
+    // Spotify's twelve-track edition is Apple's still one, even after the ten-track edition kept its clip, and an
+    // edition count neither has leaves them ambiguous.
+    spotifyTrackCount = 12;
+    BOOL twelve = !playerCover(@"Bruno Mars", dooWops, @"Marry You", @"spotify:album:0000000000000000000087", track)
+        && !pageCover(@"Bruno Mars", dooWops, @"spotify:album:0000000000000000000089", &outcome);
+    spotifyTrackCount = 11;
+    BOOL eleven = !pageCover(@"Bruno Mars", dooWops, @"spotify:album:0000000000000000000088", &outcome);
+    fprintf(stderr, "issue 82 B7: countless lookups ambiguous %s; Marry You %s; album page %s; twelve-track edition still %s; "
+            "unmatched count ambiguous %s\n", countless ? "PASS" : "FAIL", marryYou ? "PASS" : "FAIL",
+            dooWopsPage ? "PASS" : "FAIL", twelve ? "PASS" : "FAIL", eleven ? "PASS" : "FAIL");
+    CHECK(countless && marryYou && dooWopsPage && twelve && eleven);
+    barcodeReply = nil; songsReply = nil; coverResults = nil; spotifyUPC = nil; spotifyArtists = nil; spotifyTrackCount = 1; expectedTrack = nil;
+    clearCatalog(); // behind every answer write still queued, so the store directory can be removed
+}
+
 static NSData *makeLogo(BOOL red) {
     UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
     format.scale = 1; format.opaque = YES;
@@ -677,7 +796,7 @@ int main(int argc, char **argv) {
             if (!first) {
                 // Another edition was found by title after this release's clip was downloaded.
                 NSMutableDictionary *answers = [[NSDictionary dictionaryWithContentsOfURL:store] mutableCopy];
-                answers[[@"album\n5\npink floyd\n" stringByAppendingString:name.lowercaseString]] =
+                answers[[@"album\n6\npink floyd\n" stringByAppendingString:name.lowercaseString]] =
                     @{@"url":@"https://fixture.invalid/another-edition.mp4", @"at":NSDate.date};
                 CHECK([answers writeToURL:store atomically:YES]);
             }
@@ -724,10 +843,10 @@ int main(int argc, char **argv) {
             CHECK(album(name) != nil);
         }
         waitFor(^BOOL {
-            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n5\nartist\nalbum 200"] != nil;
+            return [NSDictionary dictionaryWithContentsOfURL:store][@"album\n6\nartist\nalbum 200"] != nil;
         });
         NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:store];
-        CHECK(saved.count == 200 && !saved[@"album\n4\nartist\nexpired"] && !saved[@"album\n5\nartist\nalbum 0"]);
+        CHECK(saved.count == 200 && !saved[@"album\n4\nartist\nexpired"] && !saved[@"album\n6\nartist\nalbum 0"]);
         edition = @"second";
         CHECK([album(@"Album 200").absoluteString isEqual:@"https://fixture.invalid/first/Album-200/clip.mp4"]);
         CHECK([album(@"Album 0").absoluteString isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"]);
@@ -762,12 +881,13 @@ int main(int argc, char **argv) {
         blue = YES;
         CHECK(!isBlue(logo(@"Singer 4")));
         CHECK(isBlue(logo(@"Singer 0"))); // five 4 MiB rasters cannot all remain inside 16 MiB
-        [NSURLProtocol unregisterClass:CatalogProtocol.class];
-        if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
         waitFor(^BOOL {
-            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n5\nartist\nalbum 0"][@"url"]
+            return [[NSDictionary dictionaryWithContentsOfURL:store][@"album\n6\nartist\nalbum 0"][@"url"]
                 isEqual:@"https://fixture.invalid/second/Album-0/clip.mp4"];
         });
+        checkIssue82(); // clears the catalog, so it follows every check of the stored answers
+        [NSURLProtocol unregisterClass:CatalogProtocol.class];
+        if (prior) [defaults setObject:prior forKey:tokenKey]; else [defaults removeObjectForKey:tokenKey];
         CHECK([NSFileManager.defaultManager removeItemAtURL:root error:nil]);
         puts("motion state: late Canvas, bounded catalog/album store and logo pixel budget passed");
         return 0;

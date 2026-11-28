@@ -1576,6 +1576,18 @@ static BOOL consumerVisible(void) {
     return !sg_inactive && UIApplication.sharedApplication.applicationState == UIApplicationStateActive && SGRPlayerIsVisible();
 }
 
+// The player out of sight only for a moment (issue #82): Notification or Control Center pulled over it, which leaves
+// the app inactive but not in the background and the player on screen under them, or a close begun and not over, a
+// drag that may yet be let go (SGRPlayerClosePending). The clip on screen stays through it, paused by its own view
+// (mayPlay) on its last frame, so coming back goes on from there instead of showing the cover while the clip is looked
+// up and faded in again. The background, or a close that ended, lets it go as before.
+static BOOL brieflyUnseen(NSNotificationName name) {
+    if (!sg_motion && !sg_coverClip) return NO;
+    if ([name isEqualToString:UIApplicationDidEnterBackgroundNotification] ||
+        UIApplication.sharedApplication.applicationState == UIApplicationStateBackground) return NO;
+    return SGRPlayerClosePending() || (sg_inactive && SGRPlayerIsVisible());
+}
+
 // Spotify's units that are showing its music video, held weakly: one that goes without saying so lets go.
 static NSHashTable *sg_videos;
 
@@ -1673,8 +1685,14 @@ static void showBehind(NSString *track, NSString *name, void (^draw)(SGRPlayerMo
     setCoverShown(NO, animated);
 }
 
+// The track's clip from this file is already the one on screen: a walk begun again for it (the player seen again
+// after a held moment, brieflyUnseen) finds the file it has, and leaves the clip playing instead of fading in a copy.
+static BOOL alreadyShowing(NSString *track, NSURL *file) {
+    return (sg_motion || sg_coverClip) && !sg_stillOf && [track isEqualToString:sg_shown] && [file isEqual:sg_motionFile];
+}
+
 static void show(NSString *track, NSURL *file) {
-    if (!consumerVisible() || !file || ![track isEqualToString:sg_track]) return;
+    if (!consumerVisible() || !file || ![track isEqualToString:sg_track] || alreadyShowing(track, file)) return;
     NSUInteger begun = sg_begun;
     SGMotionPoster(file, ^(UIImage *poster) {
         // A walk begun while the poster was read (switched off, Spotify's video) has the say.
@@ -1828,6 +1846,19 @@ void SGPlayerMenuSetAnimatedArtwork(BOOL on) {
     SGRPlayerVisualiserUpdate();
 }
 
+static void lifecycleChanged(NSNotificationName name) {
+    if ([name isEqualToString:UIApplicationWillResignActiveNotification]) sg_inactive = YES;
+    else if ([name isEqualToString:UIApplicationDidBecomeActiveNotification]) sg_inactive = NO;
+    // Invalidate posters as well as both tickets, including when no player state is available.
+    sg_begun++;
+    if (!consumerVisible()) {
+        // Held: no walk is begun, which would take the clip away for a player that cannot be seen (beginTrack).
+        if (brieflyUnseen(name)) return;
+        clear(NO);
+    }
+    [sg_follower restart];
+}
+
 %group SGRVideoSurfaces
 %hook _TtC28NowPlaying_ContentLayersImpl24HorizontalVideoViewModel
 - (void)videoSurfaceDidAttachVideo:(id)surface {
@@ -1903,14 +1934,9 @@ void SGPlayerMenuSetAnimatedArtwork(BOOL on) {
         SGRPlayerVisualiserUpdate();
     }];
     for (NSNotificationName name in @[UIApplicationWillResignActiveNotification, UIApplicationDidBecomeActiveNotification,
-                                      SGRPlayerVisibilityDidChangeNotification]) {
+                                      UIApplicationDidEnterBackgroundNotification, SGRPlayerVisibilityDidChangeNotification]) {
         [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *note) {
-            if ([note.name isEqualToString:UIApplicationWillResignActiveNotification]) sg_inactive = YES;
-            else if ([note.name isEqualToString:UIApplicationDidBecomeActiveNotification]) sg_inactive = NO;
-            // Invalidate posters as well as both tickets, including when no player state is available.
-            sg_begun++;
-            if (!consumerVisible()) clear(NO);
-            [sg_follower restart];
+            lifecycleChanged(note.name);
         }];
     }
     // A larger cover, or the track's own after the last one's, can make the still: the Kit posts on main.

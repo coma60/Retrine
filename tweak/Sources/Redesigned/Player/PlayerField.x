@@ -23,6 +23,7 @@
 #import "Redesigned/Kit/SGRKit.h"
 #import "Player.h"
 #import "Shared/AnimatedArtwork/AnimatedArtwork.h"
+#import "Shared/Player/PlayerEvents.h"
 
 // Past the plane's edges: above for the pull that dismisses the player, below for the bounce at the end
 // of the cards.
@@ -57,6 +58,16 @@ CGRect SGRSettledPlayerRect(UIWindow *window) {
     return window && window == sg_coveredWindow ? sg_coveredRect : CGRectNull;
 }
 
+// The player's close has begun (viewWillDisappear) and is not over: a drag that may yet be let go, or a close on its
+// way. Spotify's animator gives the player its end alpha as the drag starts, so the player reads as not visible for
+// all of it. The close is over at viewDidDisappear, viewDidAppear (a drag let go back) or the coordinator's end,
+// and each posts the visibility notification, so what waited for it (PlayerMotion.x) learns which it was.
+static BOOL sg_closing, sg_wasClosing;
+
+BOOL SGRPlayerClosePending(void) {
+    return sg_closing && !sg_disappeared && sg_field.window != nil;
+}
+
 static void updateFieldVisibility(BOOL visible) {
     // A separate window can hide the portrait player while its own view stays onscreen.
     sg_field.offscreen = !visible || SGRPlayerLandscapeCovers(sg_field.window);
@@ -69,9 +80,11 @@ static void visibilityChanged(void) {
     SGRBackdropInkSetSource(sampling ? sg_field : nil);
     UIWindow *window = sg_appeared && visible && !sg_followedMorph ? sg_field.window : nil;
     CGRect rect = window ? SGRVisibleRectInWindow(sg_field) : CGRectNull;
-    if (visible == sg_wasVisible && window == sg_coveredWindow &&
+    BOOL closing = SGRPlayerClosePending();
+    if (visible == sg_wasVisible && closing == sg_wasClosing && window == sg_coveredWindow &&
         (!window || CGRectEqualToRect(rect, sg_coveredRect))) return;
     sg_wasVisible = visible;
+    sg_wasClosing = closing;
     sg_coveredWindow = window;
     sg_coveredRect = rect;
     [NSNotificationCenter.defaultCenter postNotificationName:SGRPlayerVisibilityDidChangeNotification object:nil];
@@ -257,16 +270,19 @@ static SGRArtworkField *fieldIn(UIView *plane) {
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     sg_appeared = YES;
+    sg_closing = NO;
     visibilityChanged();
 }
 - (void)viewWillDisappear:(BOOL)animated {
     sg_appeared = NO;
+    sg_closing = YES;
     visibilityChanged();
     %orig;
 }
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
     sg_disappeared = YES;
+    sg_closing = NO;
     visibilityChanged();
 }
 - (void)viewDidLayoutSubviews {
@@ -421,6 +437,11 @@ static SGRPlayerCoverWatcher *sg_coverWatcher;
     %init(SGRFieldMorphCoverage);
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
         SGRBackdropInkSetSource(nil);
+    }];
+    // Whatever the appearance callbacks said, a close the coordinator has ended is over, a drag let go back included.
+    [NSNotificationCenter.defaultCenter addObserverForName:SGPlayerTransitionEndedNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+        sg_closing = NO;
+        visibilityChanged();
     }];
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
         dispatch_async(dispatch_get_main_queue(), ^{

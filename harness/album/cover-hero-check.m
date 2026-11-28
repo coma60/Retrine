@@ -350,7 +350,7 @@ static void checkVerifiedEdition(void) {
     HARNESS_CHECK([NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]);
     NSString *address = @"https://fixture.invalid/edition-b.mp4";
     NSDictionary *answers = @{[@"album\nverified4\n" stringByAppendingString:fixtureURI]: @{@"url":address, @"at":NSDate.date},
-                              @"album\n5\nartist\nfixture album": @{@"url":@"", @"identified":@YES, @"at":NSDate.date}};
+                              @"album\n6\nartist\nfixture album": @{@"url":@"", @"identified":@YES, @"at":NSDate.date}};
     HARNESS_CHECK([answers writeToURL:[folder URLByAppendingPathComponent:@"album answers.plist"] atomically:YES]);
     unsigned char digest[CC_SHA1_DIGEST_LENGTH];
     NSData *bytes = [address dataUsingEncoding:NSUTF8StringEncoding];

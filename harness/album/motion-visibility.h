@@ -178,6 +178,21 @@ static void awaitPausedFrame(UIView *h) {
     });
 }
 
+// Core Animation can keep a finished animation attached while exerciseMotion spins a
+// nested run loop inside a single callback; judge active animations by their end time.
+static BOOL animationActive(CALayer *layer, NSString *key) {
+    CAAnimation *a = [layer animationForKey:key];
+    if (!a) return NO;
+    if (a.beginTime <= 0) return YES;
+    double duration = a.duration > 0 ? a.duration : 0.25;
+    return [layer convertTime:CACurrentMediaTime() fromLayer:nil] < a.beginTime + duration;
+}
+
+static NSString *animationKeysText(CALayer *layer) {
+    NSArray<NSString *> *keys = layer.animationKeys;
+    return keys.count ? [keys componentsJoinedByString:@","] : @"none";
+}
+
 static void awaitLastFrame(UIView *h) {
     awaitPausedFrame(h);
     // This scenario runs inside one main-thread callback. Submit the reveal
@@ -186,13 +201,14 @@ static void awaitLastFrame(UIView *h) {
     CALayer *clip = surface(h);
     AVPlayerLayer *video = [h valueForKeyPath:@"clip.video"];
     double appearanceDeadline = CACurrentMediaTime() + 45;
-    while ([clip animationForKey:@"fade"] || [video animationForKey:@"opacity"] ||
+    while (animationActive(clip, @"fade") || animationActive(video, @"opacity") ||
            clip.presentationLayer.opacity < 0.999 || video.presentationLayer.opacity < 0.999) {
         if (CACurrentMediaTime() >= appearanceDeadline)
-            HARNESS_FAIL(@"clip opacity %g/%g animations %@; video opacity %g/%g animations %@",
-                         clip.opacity, clip.presentationLayer.opacity, clip.animationKeys,
-                         video.opacity, video.presentationLayer.opacity, video.animationKeys);
+            HARNESS_FAIL(@"clip opacity %g/%g animations [%@]; video opacity %g/%g animations [%@]",
+                         clip.opacity, clip.presentationLayer.opacity, animationKeysText(clip),
+                         video.opacity, video.presentationLayer.opacity, animationKeysText(video));
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        [CATransaction flush];
     }
     CIContext *reader = [CIContext contextWithOptions:nil];
     untilMotion(@"green frame 3 displayed", ^BOOL {
@@ -265,7 +281,12 @@ static void exerciseMotion(UINavigationController *nav, BOOL artist) {
     pendingLayer = nil;
     awaitPausedFrame(h);
     HARNESS_CHECK(!graph(h).rate);
-    untilMotion(@"held entrance complete", ^BOOL{ return ![surface(h) animationForKey:@"fade"]; });
+    [CATransaction flush];
+    untilMotion(@"held entrance complete", ^BOOL{
+        [CATransaction flush];
+        CALayer *clip = surface(h);
+        return !animationActive(clip, @"fade") && clip.presentationLayer.opacity >= 0.999;
+    });
     shot(@"held-first", h);
     reduce = NO;
     postMotion(UIAccessibilityReduceMotionStatusDidChangeNotification);
@@ -424,7 +445,12 @@ static void exerciseMotion(UINavigationController *nav, BOOL artist) {
     delaySeek = NO;
     list.hidden = NO;
     awaitPlaying(h);
-    untilMotion(@"replacement entrance complete", ^BOOL{ return ![surface(h) animationForKey:@"fade"]; });
+    [CATransaction flush];
+    untilMotion(@"replacement entrance complete", ^BOOL{
+        [CATransaction flush];
+        CALayer *clip = surface(h);
+        return !animationActive(clip, @"fade") && clip.presentationLayer.opacity >= 0.999;
+    });
     shot(@"replacement", h);
     failCapture = YES;
     releaseCheck(h, ^{ list.hidden = YES; });

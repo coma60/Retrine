@@ -731,18 +731,20 @@ UIColor *SGRPlayerBarTrack(void) {
 // either track 45 (0.175), saturating at white over a light one. The bars here are plain translucent white, which is
 // the same thing over a dark backdrop (kBarFillAlpha, kBarTrackAlpha) and over a lighter one only at the alpha
 // SGRInkPlainAlpha works out: a white cover's fill was 228 of 255 and its track 201 against the Music app's 255 and
-// 237, which left the bar pale on it.
+// 237, which left the bar pale on it. Over a colored backdrop the Music app's bars keep its hue (over Coldplay's blue
+// sky the fill stood +108/+115/+106 above it, sky blue, where plain white stood gray), so they are drawn in the color
+// that lands there (SGRInkPlainColor), in steps that leave the bar's images alone while the field drifts.
 static const CGFloat kBarFillAdd = 0.44, kVolumeFillAdd = 0.55, kBarTrackAdd = 0.175;
 
 UIColor *SGRPlayerBarFillOver(UIView *view, BOOL lit, BOOL volume) {
     if (lit) return SGRPlayerBarFill(YES);
     CGFloat floorAlpha = CGColorGetAlpha(SGRPlayerBarFill(NO).CGColor);
-    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, volume ? kVolumeFillAdd : kBarFillAdd)];
+    return SGRInkPlainColor(view, floorAlpha, volume ? kVolumeFillAdd : kBarFillAdd);
 }
 
 UIColor *SGRPlayerBarTrackOver(UIView *view) {
     CGFloat floorAlpha = CGColorGetAlpha(SGRPlayerBarTrack().CGColor);
-    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kBarTrackAdd)];
+    return SGRInkPlainColor(view, floorAlpha, kBarTrackAdd);
 }
 
 // How much a finger dragging a bar thickens its track; the stretched middle the caps leave a track image.
@@ -846,6 +848,12 @@ static void removeHeldBar(UISlider *slider) {
     objc_setAssociatedObject(slider, &kHeldKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
+// The rail's fill in `color`: opaque in its hue, at its alpha through the layer's opacity, which animates with the rail.
+static void paintHeldFill(SGRHeldBar *bar, UIColor *color) {
+    bar.fill.backgroundColor = [color colorWithAlphaComponent:1].CGColor;
+    bar.fill.opacity = CGColorGetAlpha(color.CGColor);
+}
+
 static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
     SGRHeldBar *bar = objc_getAssociatedObject(slider, &kHeldKey);
     if (!bar) {
@@ -863,7 +871,6 @@ static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
         bar.rail.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [bar addSubview:bar.rail];
         bar.fill = [CALayer layer];
-        bar.fill.backgroundColor = SGRPlayerBarFill(YES).CGColor;
         bar.remaining = [CALayer layer];
         bar.remaining.backgroundColor = SGRPlayerBarTrackOver(slider).CGColor;
         [bar.rail.layer addSublayer:bar.fill];
@@ -873,7 +880,7 @@ static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
         updateHeldBar(slider);
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-bar.restHeight)/2);
         bar.rail.layer.cornerRadius = bar.restHeight/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, NO, volume).CGColor);
+        paintHeldFill(bar, SGRPlayerBarFillOver(slider, NO, volume));
         hideTrackImages(slider, bar);
     }
     NSUInteger generation = ++bar.generation;
@@ -881,12 +888,20 @@ static void setHeldBar(UISlider *slider, BOOL on, BOOL volume) {
         CGFloat height = on ? bar.heldHeight : bar.restHeight;
         bar.rail.frame = CGRectInset(bar.bounds, 0, (bar.heldHeight-height)/2);
         bar.rail.layer.cornerRadius = height/2;
-        bar.fill.opacity = CGColorGetAlpha(SGRPlayerBarFillOver(slider, on, bar.volume).CGColor);
+        paintHeldFill(bar, SGRPlayerBarFillOver(slider, on, bar.volume));
     };
     SGRAnimateLayout(bar, ^{
         // The transition snapshots the rail. Don't also interpolate its bounds during the dissolve.
-        if (SGRReduceMotion()) [UIView performWithoutAnimation:geometry];
-        else geometry();
+        if (SGRReduceMotion()) {
+            [UIView performWithoutAnimation:^{
+                [CATransaction begin];
+                [CATransaction setDisableActions:YES];
+                geometry();
+                [CATransaction commit];
+            }];
+        } else {
+            geometry();
+        }
     }, ^(BOOL finished) {
         if (!on && generation == bar.generation && bar == objc_getAssociatedObject(slider, &kHeldKey))
             removeHeldBar(slider);
@@ -1199,9 +1214,10 @@ static const CGFloat kBadgeLightInk = 0.6;
 static void inkBadge(UIView *host) {
     UIView *badge = SGAudioQualityShownBadge(host);
     if (!badge) return;
+    // In the backdrop's hue (SGRBackdropInk.h), as the Music app's badge is over a colored cover.
     BOOL plusL = YES;
-    CGFloat ink = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL).CGColor);
-    CGFloat fill = CGColorGetAlpha(SGRInkFor(badge, SGAudioQualityStandardFill(), 0, &plusL).CGColor);
+    UIColor *ink = SGRInkFor(badge, SGAudioQualityStandardInk(), kBadgeLightInk, &plusL);
+    UIColor *fill = SGRInkFor(badge, SGAudioQualityStandardFill(), 0, &plusL);
     SGAudioQualitySetRedesignedInk(host, ink, fill, plusL);
     SGAudioQualitySetRedesignedBackdrop(host, SGRBackdropLightnessBehind(badge));
 }

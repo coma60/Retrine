@@ -102,10 +102,12 @@ static void footerFilter(UIView *view, NSString *filter) {
     if (![layer.compositingFilter isEqual:filter]) layer.compositingFilter = filter;
 }
 
+// In the backdrop's hue (SGRInkPlainColor): over Coldplay's blue sky the Music app's glyphs stood +117/+123/+123 above
+// it, sky blue, where plain white stood gray. White of the secondary color's alpha under Increase Contrast.
 static UIColor *footerRest(UIView *view) {
     footerFilter(view, nil);
     CGFloat floorAlpha = SGRIncreaseContrast() ? CGColorGetAlpha(SGRSecondary().CGColor) : kFooterInkAdd;
-    return [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(view, floorAlpha, kFooterInkAdd)];
+    return SGRInkPlainColor(view, floorAlpha, kFooterInkAdd);
 }
 
 // The row's own glyph buttons in the row's weight (the Kit's are regular).
@@ -329,7 +331,8 @@ static void markActive(SGRGlyphButton *button, UIView *drawn, BOOL on, BOOL anim
     }
     if (on) {
         BOOL contrast = SGRIncreaseContrast();
-        disc.backgroundColor = contrast ? UIColor.whiteColor : [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(button, kFooterInkAdd, kFooterInkAdd)];
+        UIColor *fill = contrast ? UIColor.whiteColor : SGRInkPlainColor(button, kFooterInkAdd, kFooterInkAdd);
+        if (![disc.backgroundColor isEqual:fill]) disc.backgroundColor = fill;
         NSString *symbol = [drawn isKindOfClass:SGRGlyphView.class] ? ((SGRGlyphView *)drawn).symbol : NSStringFromClass(drawn.class);
         NSArray *key = @[symbol ?: @"", @(contrast), @(drawn.traitCollection.displayScale), @(drawn.traitCollection.legibilityWeight),
                          NSStringFromCGRect([disc convertRect:drawn.bounds fromView:drawn])];

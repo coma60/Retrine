@@ -810,7 +810,8 @@ NSNotificationName const SGRBackdropInkDidChangeNotification = @"spotifyglass.re
 enum { kInkColumns = 16, kInkRows = 48 };
 // Seconds between readings; four times that in Low Power Mode.
 static const NSTimeInterval kInkEvery = 0.25;
-// A reading is reported when a row moved this much (of 1).
+// A reading is reported when a cell's lightness or any of its channels moved this much (of 1): a backdrop changing hue at
+// the same lightness changes the ink too (SGRInkSolve).
 static const CGFloat kInkReportDelta = 0.02;
 // Never divide by less than this headroom when drawing plusL's result as a normal white.
 static const CGFloat kInkLeastHeadroom = 0.05;
@@ -821,6 +822,9 @@ static NSTimer *sg_inkTimer;
 static NSHashTable<UIView *> *sg_inkObservers;
 static float sg_inkRows[kInkRows];
 static float sg_inkCells[kInkRows][kInkColumns];
+// The same cells and rows in color (encoded sRGB), read from the same drawing.
+static float sg_inkRowsRGB[kInkRows][3];
+static float sg_inkCellsRGB[kInkRows][kInkColumns][3];
 static BOOL sg_inkHave;
 static NSUInteger sg_inkTicks;
 
@@ -869,23 +873,33 @@ static void readField(void) {
     if (!bitmap) return;
     CGContextDrawImage(bitmap, CGRectMake(0, 0, kInkColumns, kInkRows), cg);
     CGContextRelease(bitmap);
-    float rows[kInkRows], cells[kInkRows][kInkColumns];
+    float rows[kInkRows], cells[kInkRows][kInkColumns], rowsRGB[kInkRows][3], cellsRGB[kInkRows][kInkColumns][3];
     for (int y = 0; y < kInkRows; y++) {
-        CGFloat sum = 0;
+        CGFloat sum = 0, sumRGB[3] = {0};
         for (int x = 0; x < kInkColumns; x++) {
             const uint8_t *p = pixels + (y * kInkColumns + x) * 4;
             cells[y][x] = (float)inkLuma(p);
             sum += cells[y][x];
+            for (int c = 0; c < 3; c++) {
+                cellsRGB[y][x][c] = p[c] / 255.0f;
+                sumRGB[c] += cellsRGB[y][x][c];
+            }
         }
         rows[y] = sum / kInkColumns;
+        for (int c = 0; c < 3; c++) rowsRGB[y][c] = sumRGB[c] / kInkColumns;
     }
     BOOL moved = !sg_inkHave;
     for (int y = 0; y < kInkRows && !moved; y++) {
-        for (int x = 0; x < kInkColumns && !moved; x++) moved = fabsf(cells[y][x] - sg_inkCells[y][x]) > kInkReportDelta;
+        for (int x = 0; x < kInkColumns && !moved; x++) {
+            moved = fabsf(cells[y][x] - sg_inkCells[y][x]) > kInkReportDelta;
+            for (int c = 0; c < 3 && !moved; c++) moved = fabsf(cellsRGB[y][x][c] - sg_inkCellsRGB[y][x][c]) > kInkReportDelta;
+        }
     }
     if (!moved) return;
     memcpy(sg_inkRows, rows, sizeof rows);
     memcpy(sg_inkCells, cells, sizeof cells);
+    memcpy(sg_inkRowsRGB, rowsRGB, sizeof rowsRGB);
+    memcpy(sg_inkCellsRGB, cellsRGB, sizeof cellsRGB);
     sg_inkHave = YES;
     notifyInk();
 }
@@ -959,11 +973,12 @@ static CGRect textBounds(UIView *view) {
     return CGRectMake(rtl ? CGRectGetMaxX(bounds) - width : bounds.origin.x, bounds.origin.y, width, bounds.size.height);
 }
 
-CGFloat SGRBackdropLightnessBehind(UIView *view) {
+// The lightness and color behind `view`, each optional; NO while there is no reading.
+static BOOL readBehind(UIView *view, CGFloat *lightness, CGFloat rgb[3]) {
     UIView *source = sg_inkSource;
-    if (!sg_inkHave || !view || !source || !view.window || view.window != source.window) return -1;
+    if (!sg_inkHave || !view || !source || !view.window || view.window != source.window) return NO;
     CGSize size = source.bounds.size;
-    if (size.width < 1 || size.height < 1) return -1;
+    if (size.width < 1 || size.height < 1) return NO;
     CGRect rect = [view convertRect:textBounds(view) toView:source];
     CGFloat top = MAX(0, MIN(1, CGRectGetMinY(rect) / size.height)), bottom = MAX(0, MIN(1, CGRectGetMaxY(rect) / size.height));
     int from = MIN(kInkRows - 1, (int)floor(top * kInkRows)), to = MIN(kInkRows - 1, MAX(from, (int)ceil(bottom * kInkRows) - 1));
@@ -976,18 +991,60 @@ CGFloat SGRBackdropLightnessBehind(UIView *view) {
         left = MAX(0, middle - 0.25);
         right = MIN(kInkColumns, middle + 0.25);
     }
-    CGFloat sum = 0, weights = 0;
+    CGFloat sum = 0, sumRGB[3] = {0}, weights = 0;
     for (int x = (int)floor(left); x < kInkColumns && x < right; x++) {
         CGFloat w = MIN(right, x + 1) - MAX(left, x);
         if (w <= 0) continue;
-        for (int y = from; y <= to; y++) sum += w * sg_inkCells[y][x];
+        for (int y = from; y <= to; y++) {
+            sum += w * sg_inkCells[y][x];
+            for (int c = 0; c < 3; c++) sumRGB[c] += w * sg_inkCellsRGB[y][x][c];
+        }
         weights += w * (to - from + 1);
     }
     if (weights <= 0) {
-        for (int y = from; y <= to; y++) sum += sg_inkRows[y];
-        return sum / (to - from + 1);
+        for (int y = from; y <= to; y++) {
+            sum += sg_inkRows[y];
+            for (int c = 0; c < 3; c++) sumRGB[c] += sg_inkRowsRGB[y][c];
+        }
+        weights = to - from + 1;
     }
-    return sum / weights;
+    if (lightness) *lightness = sum / weights;
+    if (rgb) for (int c = 0; c < 3; c++) rgb[c] = sumRGB[c] / weights;
+    return YES;
+}
+
+CGFloat SGRBackdropLightnessBehind(UIView *view) {
+    CGFloat lightness = -1;
+    return readBehind(view, &lightness, NULL) ? lightness : -1;
+}
+
+BOOL SGRBackdropColorBehind(UIView *view, CGFloat rgb[3]) {
+    return readBehind(view, NULL, rgb);
+}
+
+void SGRInkSolve(const CGFloat backdrop[3], CGFloat add, CGFloat floorAlpha, CGFloat step, CGFloat ink[3], CGFloat *alpha) {
+    CGFloat bg[3], target[3], most = 0;
+    CGFloat added = (isfinite(add) && add > 0) ? add : 0;
+    CGFloat floorClamped = isfinite(floorAlpha) ? MAX(0, MIN(1, floorAlpha)) : 0;
+    for (int c = 0; c < 3; c++) {
+        bg[c] = isfinite(backdrop[c]) ? MAX(0, MIN(1, backdrop[c])) : 0;
+        target[c] = MIN(1, bg[c] + added);
+        most = MAX(most, bg[c]);
+    }
+    // The brightest channel has the least headroom, so it asks the most alpha: (target - bg) / (1 - bg) is
+    // min(1, add / (1 - bg)) in each channel and grows with bg.
+    CGFloat headroom = 1 - most;
+    CGFloat least = added <= 0 ? 0 : (headroom <= added ? 1 : added / headroom);
+    CGFloat drawn = least;
+    if (least > floorClamped && isfinite(step) && step > 0) drawn = MIN(1, ceil(least / step - 1e-6) * step);
+    if (drawn <= 0) {
+        for (int c = 0; c < 3; c++) ink[c] = 1;
+        if (alpha) *alpha = floorClamped;
+        return;
+    }
+    // (1 - a) bg + a ink = target, so ink = bg + (target - bg) / a.
+    for (int c = 0; c < 3; c++) ink[c] = MAX(0, MIN(1, bg[c] + (target[c] - bg[c]) / drawn));
+    if (alpha) *alpha = MIN(1, MAX(drawn, floorClamped));
 }
 
 BOOL SGRInkIsolated(UIView *view) {
@@ -1011,10 +1068,15 @@ UIColor *SGRInkFor(UIView *view, CGFloat alpha, CGFloat lightAlpha, BOOL *plusL)
     // of 255 above the backdrop, to white over the light one, where these drawn as plain white stood 28, 24, 33 and 73.
     (void)lightAlpha;
     noteInkView(view);
+    // In color (SGRBackdropInk.h): over Coldplay's blue sky plain white went gray where the Music app's ink stays sky
+    // blue; over black or a gray the color worked out is white at the alpha above.
     if (plusL) *plusL = NO;
-    CGFloat light = SGRBackdropLightnessBehind(view);
-    if (light < 0) return [UIColor colorWithWhite:1 alpha:alpha];
-    return [UIColor colorWithWhite:1 alpha:MIN(1, alpha / MAX(1 - light, kInkLeastHeadroom))];
+    CGFloat rgb[3];
+    if (!SGRBackdropColorBehind(view, rgb)) return [UIColor colorWithWhite:1 alpha:alpha];
+    CGFloat ink[3], a = alpha;
+    SGRInkSolve(rgb, alpha, 0, 0, ink, &a);
+    if (ink[0] == ink[1] && ink[1] == ink[2]) return [UIColor colorWithWhite:ink[0] alpha:a];
+    return [UIColor colorWithRed:ink[0] green:ink[1] blue:ink[2] alpha:a];
 }
 
 CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {
@@ -1023,6 +1085,18 @@ CGFloat SGRInkPlainAlpha(UIView *view, CGFloat floorAlpha, CGFloat add) {
     if (light < 0 || UIAccessibilityDarkerSystemColorsEnabled()) return floorAlpha;
     CGFloat plain = MIN(1, add / MAX(1 - light, kInkLeastHeadroom));
     return MIN(1, MAX(floorAlpha, round(plain / 0.05) * 0.05));
+}
+
+UIColor *SGRInkPlainColor(UIView *view, CGFloat floorAlpha, CGFloat add) {
+    noteInkView(view);
+    CGFloat rgb[3];
+    if (UIAccessibilityDarkerSystemColorsEnabled() || !SGRBackdropColorBehind(view, rgb)) return [UIColor colorWithWhite:1 alpha:floorAlpha];
+    CGFloat ink[3], a = floorAlpha;
+    SGRInkSolve(rgb, add, floorAlpha, 0.05, ink, &a);
+    // In steps too, so a reading that moves the backdrop a little gives back an equal color, which redraws nothing.
+    for (int c = 0; c < 3; c++) ink[c] = MIN(1, round(ink[c] / 0.025) * 0.025);
+    if (ink[0] == ink[1] && ink[1] == ink[2]) return [UIColor colorWithWhite:ink[0] alpha:a];
+    return [UIColor colorWithRed:ink[0] green:ink[1] blue:ink[2] alpha:a];
 }
 
 #pragma mark - ink tree (diagnostics)

@@ -36,9 +36,10 @@ void SGAudioQualityPlaceBadge(UIView *unitView);
 void SGAudioQualityPlaceRedesignedBadge(UIView *unitView, CGFloat timesDrop);
 // The badge in `unitView` while it draws (shown, and neither it nor any view above it hidden or faded out), else nil:
 // a tap there is the badge's, not a seek.
-// The redesign's ink and fill alphas for the badge's text, glyph and capsule, and whether plusL carries them (NO: they
-// are plain whites already worked out for what is behind). Redrawn when they change; no badge, no effect.
-void SGAudioQualitySetRedesignedInk(UIView *unitView, CGFloat ink, CGFloat fill, BOOL plusL);
+// The redesign's ink and fill colors for the badge's text, glyph and capsule (nil: the standard whites), and whether
+// plusL carries them (NO: they are plain colors already worked out for what is behind, in its hue). Redrawn when they
+// change; no badge, no effect.
+void SGAudioQualitySetRedesignedInk(UIView *unitView, UIColor *ink, UIColor *fill, BOOL plusL);
 // How light the backdrop behind the redesign's badge is, which picks the glass of its details popover.
 void SGAudioQualitySetRedesignedBackdrop(UIView *unitView, CGFloat lightness);
 // The ink and fill the redesign's badge has over a dark backdrop, which a light one raises.

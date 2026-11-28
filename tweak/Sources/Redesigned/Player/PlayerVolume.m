@@ -61,6 +61,7 @@ static const CGFloat kGlyphsHalf = 14;
     NSMutableSet<NSNumber *> *_panOwn;  // the levels the drag wrote, with the one it began at
     NSHashTable<UISlider *> *_held;     // the sliders a finger's drag holds, drawn with the held rail
     BOOL _inkObserved;
+    UIColor *_paintedFill, *_paintedTrack;  // the colors the tracks' images were last drawn in
 }
 
 // How far the fill's end goes from the slider's minimum to its maximum: negative right to left, where it goes leftward.
@@ -211,11 +212,17 @@ static UIImageView *glyph(NSString *symbol) {
 // Both sliders' tracks, of which one shows: the bar's at rest. A finger's drag draws the held rail over them.
 - (void)paint {
     CGFloat height = SGRPlayerBarHeight;
-    UIImage *fill = SGRPlayerBarImage(SGRPlayerBarFillOver(self, NO, YES), height), *track = SGRPlayerBarImage(SGRPlayerBarTrackOver(self), height);
+    // In the backdrop's hue (SGRInkPlainColor), as the Music app's bar and speakers are over a colored cover.
+    UIColor *fillColor = SGRPlayerBarFillOver(self, NO, YES), *trackColor = SGRPlayerBarTrackOver(self);
     // The speaker glyphs stand where the bar's fill does (measured: 0.46 added), so they follow the backdrop the same way.
-    UIColor *ink = [UIColor colorWithWhite:1 alpha:SGRInkPlainAlpha(self, kGlyphInkAlpha, kGlyphInkAdd)];
-    _quiet.tintColor = ink;
-    _loud.tintColor = ink;
+    UIColor *ink = SGRInkPlainColor(self, kGlyphInkAlpha, kGlyphInkAdd);
+    if (![_quiet.tintColor isEqual:ink]) _quiet.tintColor = ink;
+    if (![_loud.tintColor isEqual:ink]) _loud.tintColor = ink;
+    // A reading that leaves the colors as they were draws no image (a drifting field reports several a second).
+    if ([fillColor isEqual:_paintedFill] && [trackColor isEqual:_paintedTrack]) return;
+    _paintedFill = fillColor;
+    _paintedTrack = trackColor;
+    UIImage *fill = SGRPlayerBarImage(fillColor, height), *track = SGRPlayerBarImage(trackColor, height);
     [_volume setMinimumVolumeSliderImage:fill forState:UIControlStateNormal];
     [_volume setMaximumVolumeSliderImage:track forState:UIControlStateNormal];
     [_remote setMinimumTrackImage:fill forState:UIControlStateNormal];
@@ -252,13 +259,15 @@ static UIImageView *glyph(NSString *symbol) {
 
 - (void)didMoveToWindow {
     [super didMoveToWindow];
-    if (!self.window || _inkObserved) return;
-    _inkObserved = YES;
-    // Painted again at each new reading of the backdrop, in whichever state the bar is.
-    __weak SGRVolumeRow *weak = self;
-    SGRBackdropInkObserve(self, ^{
-        [weak paint];
-    });
+    if (!self.window) return;
+    if (!_inkObserved) {
+        _inkObserved = YES;
+        // Painted again at each new reading of the backdrop, in whichever state the bar is.
+        __weak SGRVolumeRow *weak = self;
+        SGRBackdropInkObserve(self, ^{
+            [weak paint];
+        });
+    }
     [self paint];
 }
 

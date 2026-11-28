@@ -321,7 +321,7 @@ static void checkDetails(void) {
 @property (nonatomic) BOOL redesigned;
 // The redesign's ink, fill and whether plusL carries them, as it works them out from the backdrop behind the badge
 // (SGAudioQualitySetRedesignedInk); until then the standard ones.
-@property (nonatomic) CGFloat inkAlpha, fillAlpha;
+@property (nonatomic, strong) UIColor *inkColor, *fillColor;
 @property (nonatomic) BOOL plain;
 // The redesign's reading of the backdrop behind the badge, 0 (black) to 1 (white); -1 with none.
 @property (nonatomic) CGFloat backdropLightness;
@@ -408,10 +408,10 @@ static void checkDetails(void) {
     return self.lit && !_plain;
 }
 
-- (void)setInk:(CGFloat)ink fill:(CGFloat)fill plain:(BOOL)plain {
-    if (ink == _inkAlpha && fill == _fillAlpha && plain == _plain) return;
-    _inkAlpha = ink;
-    _fillAlpha = fill;
+- (void)setInk:(UIColor *)ink fill:(UIColor *)fill plain:(BOOL)plain {
+    if ((ink == _inkColor || [ink isEqual:_inkColor]) && (fill == _fillColor || [fill isEqual:_fillColor]) && plain == _plain) return;
+    _inkColor = ink;
+    _fillColor = fill;
     _plain = plain;
     [self updateCompositing];
     [self setNeedsDisplay];
@@ -448,8 +448,8 @@ static void checkDetails(void) {
     UITraitCollection *traits = self.traitCollection;
     BOOL lit = self.lit;
     CGContextRef context = UIGraphicsGetCurrentContext();
-    UIColor *ink = lit ? [UIColor colorWithWhite:1 alpha:_inkAlpha > 0 ? _inkAlpha : kRedesignInkLight] : [UIColor.secondaryLabelColor resolvedColorWithTraitCollection:traits];
-    UIColor *fill = lit ? [UIColor colorWithWhite:1 alpha:_fillAlpha > 0 ? _fillAlpha : kRedesignFillLight] : [UIColor.quaternaryLabelColor resolvedColorWithTraitCollection:traits];
+    UIColor *ink = lit ? (_inkColor ?: [UIColor colorWithWhite:1 alpha:kRedesignInkLight]) : [UIColor.secondaryLabelColor resolvedColorWithTraitCollection:traits];
+    UIColor *fill = lit ? (_fillColor ?: [UIColor colorWithWhite:1 alpha:kRedesignFillLight]) : [UIColor.quaternaryLabelColor resolvedColorWithTraitCollection:traits];
     [fill setFill];
     if (_redesigned) {
         // Circular corners: the Music app's edge follows a circle's, not UIBezierPath's continuous curve.
@@ -646,7 +646,7 @@ void SGAudioQualityPlaceRedesignedBadge(UIView *unit, CGFloat timesDrop) {
     placeBadge(unit, YES, timesDrop);
 }
 
-void SGAudioQualitySetRedesignedInk(UIView *unit, CGFloat ink, CGFloat fill, BOOL plusL) {
+void SGAudioQualitySetRedesignedInk(UIView *unit, UIColor *ink, UIColor *fill, BOOL plusL) {
     [(SGAudioQualityBadge *)objc_getAssociatedObject(unit, &kBadgeKey) setInk:ink fill:fill plain:!plusL];
 }
 

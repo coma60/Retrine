@@ -210,7 +210,17 @@ static void putButtonsAway(UIView *header, UIView *close, UIControl *route) {
 // area's top), centered in a touch area of at least 44pt.
 static const CGSize kGrabberSize = {60, 4};
 static const CGFloat kGrabberTop = 7, kGrabberTouch = 44;
-static char kRowLookContext;
+// Its pill is light ADDED to what is behind it (measured beside the Music app over Coldplay's blue sky: +83/+83/+63 of
+// 255, sky blue, where plain white of 0.3 stood gray), drawn as the plain color that lands there (SGRInkPlainColor):
+// white of 0.3 over a dark backdrop as before, more opaque under Increase Contrast.
+static const CGFloat kGrabberInk = 0.3, kGrabberContrastInk = 0.5;
+static char kRowLookContext, kGrabberInkKey;
+
+static void inkGrabber(UIView *pill) {
+    if (!pill) return;
+    UIColor *ink = SGRIncreaseContrast() ? [UIColor colorWithWhite:1 alpha:kGrabberContrastInk] : SGRInkPlainColor(pill, kGrabberInk, kGrabberInk);
+    if (![pill.backgroundColor isEqual:ink]) pill.backgroundColor = ink;
+}
 
 @interface SGRPlayerGrabber : UIControl
 @property (nonatomic, weak) UIControl *close;
@@ -304,6 +314,7 @@ static char kRowLookContext;
 // out with it, after this pass.
 - (void)layoutSubviews {
     [super layoutSubviews];
+    if (_pill.bounds.size.width > 0) inkGrabber(_pill);
     UIView *player = self.superview, *row = _row;
     if (!player || _tie.active) return;
     if ([row isDescendantOfView:player]) {
@@ -477,11 +488,16 @@ static void placeGrabber(UIView *header, UIView *close, UIControl *route, UIView
     // Spotify's words for its arrow, which the grabber stands in for.
     NSString *label = close.accessibilityLabel.length ? close.accessibilityLabel : SGL(@"player.grabber.close", @"Close Player");
     if (![grabber.accessibilityLabel isEqualToString:label]) grabber.accessibilityLabel = label;
-    grabber.pill.backgroundColor = [UIColor colorWithWhite:1 alpha:SGRIncreaseContrast() ? 0.5 : 0.3];
+    if (!objc_getAssociatedObject(grabber, &kGrabberInkKey)) {
+        objc_setAssociatedObject(grabber, &kGrabberInkKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        __weak UIView *pill = grabber.pill;
+        SGRBackdropInkObserve(grabber, ^{ inkGrabber(pill); });
+    }
     // Constraints, not a place worked out here: Spotify moves the row by its top constraint with no layout of the
     // header (9.2.0 simulator, 2026-11-19: the row one row lower carried a pill placed in it to 114pt, where the phone
     // had it), and the engine keeps the grabber where it is pinned.
     [grabber follow:header in:player];
+    inkGrabber(grabber.pill);
 
     static dispatch_once_t once;
     dispatch_once(&once, ^{
